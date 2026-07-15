@@ -1,0 +1,104 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>404 · 找不到页面 · AOG 知识库</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          colors: {
+            primary: { DEFAULT: '#1e40af', 50: '#eff6ff', 100: '#dbeafe', 500: '#3b82f6', 600: '#2563eb', 700: '#1d4ed8', 900: '#1e3a8a' },
+            secondary: { DEFAULT: '#0891b2', 50: '#ecfeff', 500: '#06b6d4', 600: '#0891b2' },
+            ink: { 900: '#111827', 700: '#374151', 500: '#6b7280', 300: '#d1d5db', 100: '#f3f4f6', 50: '#f9fafb' },
+            success: { DEFAULT: '#16a34a', 50: '#f0fdf4', 600: '#16a34a', 700: '#15803d' },
+            warning: { DEFAULT: '#d97706', 50: '#fffbeb', 600: '#d97706' },
+            danger:  { DEFAULT: '#dc2626', 50: '#fef2f2', 600: '#dc2626' }
+          },
+          boxShadow: { 'soft': '0 1px 2px 0 rgb(0 0 0 / 0.04), 0 1px 3px 0 rgb(0 0 0 / 0.06)', 'pop': '0 10px 25px -5px rgb(0 0 0 / 0.10), 0 8px 10px -6px rgb(0 0 0 / 0.06)' },
+          fontFamily: { sans: ['-apple-system','BlinkMacSystemFont','"PingFang SC"','"Hiragino Sans GB"','"Microsoft YaHei"','"Helvetica Neue"','Arial','sans-serif'] }
+        }
+      }
+    };
+  </script>
+</head>
+<body class="font-sans text-ink-900 bg-white antialiased">
+
+  <!-- Top Nav -->
+  <header class="sticky top-0 z-30 border-b border-ink-100 bg-white/80 backdrop-blur">
+    <div class="mx-auto flex h-16 max-w-7xl items-center justify-between px-4 sm:px-6 lg:px-8">
+      <a href="index.html" class="flex items-center gap-2">
+        <span class="grid h-9 w-9 place-items-center rounded-lg bg-primary text-white shadow-soft">
+          <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17.8 19.2 16 11l3.5-3.5C21 6 21.5 4 21 3c-1-.5-3 0-4.5 1.5L13 8 4.8 6.2c-.5-.1-.9.1-1.1.5l-.3.5c-.2.5-.1 1 .3 1.3L9 12l-2 3H4l-1 1 3 2 2 3 1-1v-3l3-2 3.5 5.3c.3.4.8.5 1.3.3l.5-.2c.4-.3.6-.7.5-1.2z"/></svg>
+        </span>
+        <div class="leading-tight">
+          <div class="text-base font-semibold text-ink-900">AOG 知识库</div>
+          <div class="text-[11px] text-ink-500">航材 AOG 智能伙伴</div>
+        </div>
+      </a>
+      <nav class="hidden gap-1 md:flex">
+        <a href="index.html" class="rounded-md px-3 py-1.5 text-sm font-medium text-ink-700 hover:bg-ink-50">首页</a>
+        <a href="experiences.html" class="rounded-md px-3 py-1.5 text-sm font-medium text-ink-700 hover:bg-ink-50">保障经验</a>
+      </nav>
+    </div>
+  </header>
+
+  <main class="mx-auto flex min-h-[70vh] max-w-3xl flex-col items-center justify-center px-4 py-12 text-center sm:px-6 lg:px-8">
+    <!-- Big 404 with plane illustration -->
+    <div class="relative">
+      <div class="text-[120px] font-extrabold leading-none text-primary-50 sm:text-[160px]">404</div>
+      <div class="absolute inset-0 flex items-center justify-center">
+        <svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="#1e40af" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" class="opacity-50"><path d="M17.8 19.2 16 11l3.5-3.5C21 6 21.5 4 21 3c-1-.5-3 0-4.5 1.5L13 8 4.8 6.2c-.5-.1-.9.1-1.1.5l-.3.5c-.2.5-.1 1 .3 1.3L9 12l-2 3H4l-1 1 3 2 2 3 1-1v-3l3-2 3.5 5.3c.3.4.8.5 1.3.3l.5-.2c.4-.3.6-.7.5-1.2z"/></svg>
+      </div>
+    </div>
+
+    <h1 class="-mt-6 text-2xl font-bold text-ink-900 sm:text-3xl">这架航班没有找到目的地</h1>
+    <p class="mt-2 max-w-md text-sm text-ink-500">
+      抱歉，你访问的页面不存在。可能链接已过期，或城市 / 经验已迁移。
+    </p>
+
+    <div class="mt-6 flex w-full max-w-md flex-col gap-2 sm:flex-row">
+      <input id="searchInput" type="search" placeholder="试试搜「北京大兴」「B787 风挡」" class="flex-1 rounded-md border border-ink-100 bg-white px-3 py-2 text-sm placeholder:text-ink-500 focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20" />
+      <a href="index.html" class="inline-flex items-center justify-center gap-1 rounded-md bg-primary px-4 py-2 text-sm font-medium text-white shadow-soft hover:bg-primary-700">
+        <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m3 9 9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>
+        返回首页
+      </a>
+    </div>
+
+    <div class="mt-8 grid w-full max-w-2xl grid-cols-1 gap-3 sm:grid-cols-3">
+      <a href="city.html#B-北京大兴" class="rounded-xl border border-ink-100 bg-white p-4 text-left shadow-soft hover:border-primary">
+        <div class="text-xs font-medium text-primary">热门城市</div>
+        <div class="mt-1 text-sm font-semibold text-ink-900">北京大兴</div>
+        <div class="mt-0.5 text-xs text-ink-500">PKX · 华北 · 现行</div>
+      </a>
+      <a href="city.html#S-上海浦东" class="rounded-xl border border-ink-100 bg-white p-4 text-left shadow-soft hover:border-primary">
+        <div class="text-xs font-medium text-primary">热门城市</div>
+        <div class="mt-1 text-sm font-semibold text-ink-900">上海浦东</div>
+        <div class="mt-0.5 text-xs text-ink-500">PVG · 华东 · 现行</div>
+      </a>
+      <a href="experiences.html" class="rounded-xl border border-ink-100 bg-white p-4 text-left shadow-soft hover:border-primary">
+        <div class="text-xs font-medium text-primary">全部经验</div>
+        <div class="mt-1 text-sm font-semibold text-ink-900">保障经验库</div>
+        <div class="mt-0.5 text-xs text-ink-500">18 个实战经验</div>
+      </a>
+    </div>
+  </main>
+
+  <!-- Footer -->
+  <footer class="border-t border-ink-100 bg-ink-50">
+    <div class="mx-auto flex max-w-7xl flex-col gap-2 px-4 py-6 text-xs text-ink-500 sm:flex-row sm:items-center sm:justify-between sm:px-6 lg:px-8">
+      <div>© 2026 AOG 知识库 · v0.1.0-mockup</div>
+      <div>数据更新时间：2026-04-22 16:02 · 共 252 份文档</div>
+    </div>
+  </footer>
+
+  <!-- ChatWidget mount -->
+  <div id="chatMount"></div>
+
+  <script src="data/cities.js"></script>
+  <script src="data/experiences.js"></script>
+  <script src="components/chat-widget.js"></script>
+</body>
+</html>

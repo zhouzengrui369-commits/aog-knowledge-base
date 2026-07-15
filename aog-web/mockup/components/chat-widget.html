@@ -1,0 +1,173 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>ChatWidget · AOG AI 助手 组件</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          colors: {
+            primary: { DEFAULT: '#1e40af', 50: '#eff6ff', 100: '#dbeafe', 500: '#3b82f6', 600: '#2563eb', 700: '#1d4ed8', 900: '#1e3a8a' },
+            secondary: { DEFAULT: '#0891b2', 50: '#ecfeff', 500: '#06b6d4', 600: '#0891b2' },
+            ink: { 900: '#111827', 700: '#374151', 500: '#6b7280', 300: '#d1d5db', 100: '#f3f4f6', 50: '#f9fafb' },
+            success: { DEFAULT: '#16a34a', 50: '#f0fdf4', 600: '#16a34a', 700: '#15803d' },
+            warning: { DEFAULT: '#d97706', 50: '#fffbeb', 600: '#d97706' },
+            danger:  { DEFAULT: '#dc2626', 50: '#fef2f2', 600: '#dc2626' }
+          },
+          boxShadow: {
+            'soft': '0 1px 2px 0 rgb(0 0 0 / 0.04), 0 1px 3px 0 rgb(0 0 0 / 0.06)',
+            'pop':  '0 10px 25px -5px rgb(0 0 0 / 0.10), 0 8px 10px -6px rgb(0 0 0 / 0.06)'
+          },
+          fontFamily: {
+            sans: ['-apple-system','BlinkMacSystemFont','"PingFang SC"','"Hiragino Sans GB"','"Microsoft YaHei"','"Helvetica Neue"','Arial','sans-serif']
+          }
+        }
+      }
+    };
+  </script>
+  <style>
+    body { font-feature-settings: "tnum" 1, "ss01" 1; }
+    .preview {
+      position: relative;
+      background: linear-gradient(135deg, #f1f5f9 0%, #e2e8f0 100%);
+      border-radius: 16px;
+      min-height: 600px;
+      overflow: hidden;
+    }
+    .preview::before {
+      content: '页面预览区（点击右下角打开 AI 助手）';
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      color: #94a3b8;
+      font-size: 14px;
+    }
+  </style>
+</head>
+<body class="font-sans text-ink-900 bg-white antialiased">
+  <main class="mx-auto max-w-5xl px-4 py-10 sm:px-6">
+    <header class="mb-6">
+      <h1 class="text-2xl font-bold">ChatWidget · AOG AI 助手</h1>
+      <p class="mt-1 text-sm text-ink-500">右下角浮窗 / 桌面抽屉 / 移动全屏 · mock AI 回复（带参考资料引用）</p>
+    </header>
+
+    <!-- Visual preview box -->
+    <div class="preview mb-8"></div>
+
+    <!-- Static screenshots of the widget (used in slides / design review) -->
+    <div class="grid grid-cols-1 gap-6 md:grid-cols-2">
+      <!-- Closed state -->
+      <section>
+        <h2 class="mb-3 text-sm font-medium text-ink-700">关闭态：右下角按钮</h2>
+        <div class="relative h-72 rounded-xl border border-ink-100 bg-ink-50">
+          <button type="button" class="absolute bottom-5 right-5 grid h-14 w-14 place-items-center rounded-full bg-primary text-white shadow-pop hover:scale-105">
+            <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 8V4H8"/><rect width="16" height="12" x="4" y="8" rx="2"/><path d="M2 14h2"/><path d="M20 14h2"/><path d="M15 13v2"/><path d="M9 13v2"/></svg>
+            <span class="absolute -top-1 -right-1 grid h-5 w-5 place-items-center rounded-full bg-warning text-[10px] font-bold text-white ring-2 ring-white">AI</span>
+          </button>
+        </div>
+      </section>
+
+      <!-- Open state -->
+      <section>
+        <h2 class="mb-3 text-sm font-medium text-ink-700">展开态：抽屉（桌面）</h2>
+        <div class="relative h-72 rounded-xl border border-ink-100 bg-ink-50">
+          <div class="absolute bottom-5 right-5 w-[360px] h-[420px] rounded-2xl border border-ink-100 bg-white shadow-pop flex flex-col overflow-hidden">
+            <div class="flex items-center justify-between border-b border-ink-100 bg-gradient-to-r from-primary to-primary-700 px-4 py-3">
+              <div class="flex items-center gap-2">
+                <div class="grid h-8 w-8 place-items-center rounded-lg bg-white/15 text-white">
+                  <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 8V4H8"/><rect width="16" height="12" x="4" y="8" rx="2"/><path d="M2 14h2"/><path d="M20 14h2"/><path d="M15 13v2"/><path d="M9 13v2"/></svg>
+                </div>
+                <div class="leading-tight text-white">
+                  <div class="text-sm font-semibold">AI 助手</div>
+                  <div class="text-[10px] text-white/70">MiniMax M3 · Mock</div>
+                </div>
+              </div>
+              <button class="grid h-8 w-8 place-items-center rounded-md text-white/80 hover:bg-white/10">
+                <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
+              </button>
+            </div>
+            <div class="flex-1 space-y-3 overflow-hidden bg-ink-50/50 px-4 py-4">
+              <div class="flex justify-start">
+                <div class="max-w-[85%] rounded-2xl rounded-tl-sm border border-ink-100 bg-white px-3.5 py-2.5 text-xs leading-relaxed">你好，我是 AOG AI 助手。可以问我城市预案、备件库存、保障经验等问题，每个回答都会附带真实文档引用。</div>
+              </div>
+              <div class="flex justify-end">
+                <div class="max-w-[85%] rounded-2xl rounded-tr-sm bg-primary px-3.5 py-2.5 text-xs leading-relaxed text-white">B787 风挡 AOG 怎么处理？</div>
+              </div>
+              <div class="flex justify-start">
+                <div class="max-w-[85%] rounded-2xl rounded-tl-sm border border-ink-100 bg-white px-3.5 py-2.5 text-xs leading-relaxed">
+                  B787 风挡 AOG 一般按以下步骤处理：<br>
+                  1. <strong>现场评估</strong>：机务登机检查裂纹 / 破损范围…<br>
+                  2. <strong>备件调度</strong>：浦东主基地常备 8AG1841-1…<br>
+                  3. <strong>更换施工</strong>：使用 BQG-1 密封胶…
+                </div>
+              </div>
+              <div class="flex justify-start">
+                <div class="max-w-[85%] rounded-2xl rounded-tl-sm border border-ink-100 bg-white px-3.5 py-2 text-[11px]">
+                  <div class="mb-1 flex items-center gap-1 text-ink-500">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>
+                    参考资料
+                  </div>
+                  <ul class="space-y-0.5">
+                    <li><a href="experience.html#b787-windshield-aog" class="text-primary hover:underline">B787 风挡 AOG 处理流程</a></li>
+                    <li><a href="experience.html#aog-workflow-r1" class="text-primary hover:underline">AOG 保障工作流 R1</a></li>
+                    <li><a href="city.html#B-北京大兴" class="text-primary hover:underline">B-北京大兴（航材库 / 联系人）</a></li>
+                  </ul>
+                </div>
+              </div>
+            </div>
+            <div class="border-t border-ink-100 bg-white px-3 py-2">
+              <div class="mb-1 text-[10px] text-ink-500">试试这些问题：</div>
+              <div class="flex flex-wrap gap-1.5">
+                <span class="rounded-full border border-ink-100 bg-ink-50 px-2.5 py-1 text-[11px] text-ink-700">B787 风挡 AOG 怎么处理？</span>
+                <span class="rounded-full border border-ink-100 bg-ink-50 px-2.5 py-1 text-[11px] text-ink-700">浦东 AOG 联系人？</span>
+                <span class="rounded-full border border-ink-100 bg-ink-50 px-2.5 py-1 text-[11px] text-ink-700">BMS9-3 玻璃纤维布哪里备？</span>
+              </div>
+            </div>
+            <form class="flex items-center gap-2 border-t border-ink-100 bg-white px-3 py-3">
+              <input type="text" placeholder="输入你的 AOG 问题…" class="flex-1 rounded-md border border-ink-100 bg-ink-50 px-3 py-2 text-xs placeholder:text-ink-500" />
+              <button type="submit" class="grid h-9 w-9 place-items-center rounded-md bg-primary text-white">
+                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m22 2-7 20-4-9-9-4Z"/><path d="M22 2 11 13"/></svg>
+              </button>
+            </form>
+          </div>
+        </div>
+      </section>
+    </div>
+
+    <!-- Notes -->
+    <section class="mt-10 rounded-xl border border-ink-100 bg-ink-50 p-5 text-sm text-ink-700">
+      <h2 class="mb-2 text-base font-semibold text-ink-900">组件规范</h2>
+      <ul class="list-disc space-y-1 pl-5">
+        <li>触发器：右下角圆形按钮（h-14 w-14），hover scale 1.05，右上角 "AI" 角标</li>
+        <li>展开：桌面端右下半屏抽屉（420 × 640 max），移动端全屏覆盖</li>
+        <li>头部：渐变 primary-700 → primary，标题 + 模型名 + 关闭按钮</li>
+        <li>消息流：用户消息右对齐蓝底白字，AI 消息左对齐白底灰边</li>
+        <li>引用：AI 消息下方独立的"参考资料"白卡，链接列表（必须 ≥ 1 个）</li>
+        <li>输入：底部固定，发送按钮 primary，输入框聚焦时 ring-2 primary/20</li>
+        <li>快捷提问：首次展开展示 3 个示例 chips（B787 / 浦东 / BMS9-3），用户发问后隐藏</li>
+        <li>loading：三圆点 bounce 动画，700ms 后出答案</li>
+      </ul>
+    </section>
+
+    <!-- Sample AI questions (visible text — real data per PRD §7) -->
+    <section class="mt-6 rounded-xl border border-ink-100 bg-white p-5">
+      <h2 class="mb-2 text-base font-semibold text-ink-900">预设 AI 提问样例（PRD §7）</h2>
+      <ul class="space-y-1.5 text-sm text-ink-700">
+        <li>• "B787 风挡 AOG 怎么处理？"</li>
+        <li>• "浦东 AOG 联系人？"</li>
+        <li>• "BMS9-3 玻璃纤维布哪里备？"</li>
+      </ul>
+    </section>
+  </main>
+
+  <!-- Live widget mount -->
+  <div id="chatMount"></div>
+  <script src="../data/cities.js"></script>
+  <script src="../data/experiences.js"></script>
+  <script src="chat-widget.js"></script>
+</body>
+</html>
