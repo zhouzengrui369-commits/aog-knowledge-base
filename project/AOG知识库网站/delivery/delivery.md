@@ -17,7 +17,7 @@
 | T1 | 后端骨架（FastAPI + Chroma + 解析器） | done | sub-agent backend-agent | 2026-07-15 | 2026-07-15 | Wave 1 |
 | T2 | 前端骨架（Next.js + 三大页面） | done | sub-agent frontend-agent | 2026-07-15 | 2026-07-15 | Wave 1 |
 | T3 | 数据 pipeline（解析 + 向量化） | done | sub-agent data-agent + PM 接管 | 2026-07-15 | 2026-07-16 | Wave 1 |
-| T4 | 前后端集成 | pending | sub-agent integrator | D4 | - | Wave 2 |
+| T4 | 前后端集成 | done | PM 自主 (Wave 1 端到端 PASS) | 2026-07-15 | 2026-07-15 | Wave 2 |
 | T5 | Railway + Vercel 部署 | pending | sub-agent devops-agent | D4-5 | - | Wave 2 |
 | T6 | 增量同步（定时轮询 v1.1） | done | sub-agent devops-agent | 2026-07-16 | 2026-07-16 | Wave 2 |
 | T7 | 真机访问 + 截图 | pending | NJX (PM 验收) | D6 | - | Wave 3 |
