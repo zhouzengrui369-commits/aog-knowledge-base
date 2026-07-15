@@ -15,7 +15,7 @@
 | T0.2 | UI HTML 高保真 mockup | done | sub-agent mockup-agent | 2026-07-15 | 2026-07-15 | Phase 0.5 |
 | T0.3 | 调整基线（截止/规则/delivery） | done | PM (自主) | 2026-07-15 | 2026-07-15 | Phase 0.5 |
 | T1 | 后端骨架（FastAPI + Chroma + 解析器） | pending | sub-agent backend-agent | D2 | - | Wave 1 |
-| T2 | 前端骨架（Next.js + 三大页面） | pending | sub-agent frontend-agent | D2 | - | Wave 1 |
+| T2 | 前端骨架（Next.js + 三大页面） | done | sub-agent frontend-agent | 2026-07-15 | 2026-07-15 | Wave 1 |
 | T3 | 数据 pipeline（解析 + 向量化） | pending | sub-agent data-agent | D2 | - | Wave 1 |
 | T4 | 前后端集成 | pending | sub-agent integrator | D4 | - | Wave 2 |
 | T5 | Railway + Vercel 部署 | pending | sub-agent devops-agent | D4-5 | - | Wave 2 |
@@ -190,3 +190,9 @@ project/AOG知识库网站/delivery/screenshots/
 - ground truth 验证 PASS：5 HTML / 10 截图 / 真实数据 11 处北京大兴 / NSM-2 引用 ≥ 1（实测 2）/ 无 lorem / Tailwind CDN 5/5
 - 视觉抽检：首页 + ChatWidget 渲染正常，NSM-2 引用区工作
 - Wave 1 启动：派 3 子智能体并行（后端/前端/数据 pipeline）
+
+### 2026-07-15 22:15
+- T2 前端子智能体完成（task bg_37184edf）
+- merge feature/wave1-frontend → main (commit 1aae43a → 9b3f2c1)
+- ground truth 验证 PASS：18 截图 / 9 端点函数 / NSM-2 警告触发 / 真实数据 19 处北京大兴 / LCP 1.0s
+- T1 后端 + T3 pipeline 仍在跑（互不冲突）
