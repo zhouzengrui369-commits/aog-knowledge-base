@@ -1,0 +1,297 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>AOG 应急保障知识库 · 航材 AOG 智能伙伴</title>
+  <meta name="description" content="航材 AOG 智能伙伴 — 城市预案、保障经验、AI 对话一站式查询" />
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          colors: {
+            primary: { DEFAULT: '#1e40af', 50: '#eff6ff', 100: '#dbeafe', 500: '#3b82f6', 600: '#2563eb', 700: '#1d4ed8', 900: '#1e3a8a' },
+            secondary: { DEFAULT: '#0891b2', 50: '#ecfeff', 500: '#06b6d4', 600: '#0891b2', 700: '#0e7490' },
+            ink: { 900: '#111827', 700: '#374151', 500: '#6b7280', 300: '#d1d5db', 100: '#f3f4f6', 50: '#f9fafb' },
+            success: { DEFAULT: '#16a34a', 50: '#f0fdf4', 600: '#16a34a', 700: '#15803d' },
+            warning: { DEFAULT: '#d97706', 50: '#fffbeb', 600: '#d97706', 700: '#b45309' },
+            danger:  { DEFAULT: '#dc2626', 50: '#fef2f2', 600: '#dc2626', 700: '#b91c1c' }
+          },
+          boxShadow: {
+            'soft': '0 1px 2px 0 rgb(0 0 0 / 0.04), 0 1px 3px 0 rgb(0 0 0 / 0.06)',
+            'pop':  '0 10px 25px -5px rgb(0 0 0 / 0.10), 0 8px 10px -6px rgb(0 0 0 / 0.06)'
+          },
+          fontFamily: {
+            sans: ['-apple-system','BlinkMacSystemFont','"PingFang SC"','"Hiragino Sans GB"','"Microsoft YaHei"','"Helvetica Neue"','Arial','sans-serif']
+          }
+        }
+      }
+    };
+  </script>
+  <style>
+    body { font-feature-settings: "tnum" 1, "ss01" 1; }
+    .alpha-btn[data-empty="true"] { color:#d1d5db; cursor: not-allowed; }
+    .alpha-btn[data-empty="true"]:hover { background: transparent; }
+    .hero-gradient {
+      background:
+        radial-gradient(1200px 400px at 20% 0%, rgba(30,64,175,.10), transparent 60%),
+        radial-gradient(900px 300px at 90% 10%, rgba(8,145,178,.10), transparent 60%),
+        linear-gradient(180deg, #f8fafc 0%, #ffffff 70%);
+    }
+    .scrollbar-thin::-webkit-scrollbar { height: 6px; }
+    .scrollbar-thin::-webkit-scrollbar-thumb { background: #e5e7eb; border-radius: 3px; }
+  </style>
+</head>
+<body class="font-sans text-ink-900 bg-white antialiased">
+
+  <!-- Top Nav -->
+  <header class="sticky top-0 z-30 border-b border-ink-100 bg-white/80 backdrop-blur">
+    <div class="mx-auto flex h-16 max-w-7xl items-center justify-between px-4 sm:px-6 lg:px-8">
+      <a href="index.html" class="flex items-center gap-2">
+        <span class="grid h-9 w-9 place-items-center rounded-lg bg-primary text-white shadow-soft">
+          <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17.8 19.2 16 11l3.5-3.5C21 6 21.5 4 21 3c-1-.5-3 0-4.5 1.5L13 8 4.8 6.2c-.5-.1-.9.1-1.1.5l-.3.5c-.2.5-.1 1 .3 1.3L9 12l-2 3H4l-1 1 3 2 2 3 1-1v-3l3-2 3.5 5.3c.3.4.8.5 1.3.3l.5-.2c.4-.3.6-.7.5-1.2z"/></svg>
+        </span>
+        <div class="leading-tight">
+          <div class="text-base font-semibold text-ink-900">AOG 知识库</div>
+          <div class="text-[11px] text-ink-500">航材 AOG 智能伙伴</div>
+        </div>
+      </a>
+      <nav class="hidden gap-1 md:flex">
+        <a href="index.html" class="rounded-md px-3 py-1.5 text-sm font-medium text-primary bg-primary-50">首页</a>
+        <a href="experiences.html" class="rounded-md px-3 py-1.5 text-sm font-medium text-ink-700 hover:bg-ink-50">保障经验</a>
+        <a href="#" class="cursor-not-allowed rounded-md px-3 py-1.5 text-sm font-medium text-ink-300">课件<span class="ml-1 rounded bg-ink-100 px-1.5 py-0.5 text-[10px] text-ink-500">v2</span></a>
+      </nav>
+      <div class="flex items-center gap-2">
+        <div class="hidden sm:block">
+          <label class="relative block">
+            <span class="pointer-events-none absolute inset-y-0 left-3 flex items-center text-ink-500">
+              <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
+            </span>
+            <input id="navSearch" type="search" placeholder="搜航站 / 城市 / 经验…" class="w-64 rounded-md border border-ink-100 bg-ink-50 py-1.5 pl-9 pr-3 text-sm placeholder:text-ink-500 focus:border-primary focus:bg-white focus:outline-none focus:ring-2 focus:ring-primary/20" />
+          </label>
+        </div>
+        <a href="https://github.com/" target="_blank" rel="noreferrer" class="hidden text-ink-500 hover:text-ink-900 sm:block" title="GitHub">
+          <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><path d="M12 .5C5.4.5 0 5.9 0 12.5c0 5.3 3.4 9.8 8.2 11.4.6.1.8-.3.8-.6v-2.1c-3.3.7-4-1.6-4-1.6-.5-1.4-1.3-1.8-1.3-1.8-1.1-.7.1-.7.1-.7 1.2.1 1.8 1.2 1.8 1.2 1 1.8 2.8 1.3 3.5 1 .1-.8.4-1.3.7-1.6-2.7-.3-5.5-1.3-5.5-6 0-1.3.5-2.4 1.2-3.2-.1-.3-.5-1.5.1-3.2 0 0 1-.3 3.3 1.2 1-.3 2-.4 3-.4s2 .1 3 .4c2.3-1.6 3.3-1.2 3.3-1.2.6 1.7.2 2.9.1 3.2.8.8 1.2 1.9 1.2 3.2 0 4.6-2.8 5.6-5.5 6 .4.4.8 1.1.8 2.2v3.3c0 .3.2.7.8.6C20.6 22.3 24 17.8 24 12.5 24 5.9 18.6.5 12 .5z"/></svg>
+        </a>
+      </div>
+    </div>
+  </header>
+
+  <!-- Hero -->
+  <section class="hero-gradient">
+    <div class="mx-auto max-w-7xl px-4 pb-10 pt-12 sm:px-6 sm:pt-16 lg:px-8 lg:pt-20">
+      <div class="mx-auto max-w-3xl text-center">
+        <div class="mb-4 inline-flex items-center gap-2 rounded-full border border-primary-100 bg-primary-50 px-3 py-1 text-xs font-medium text-primary-700">
+          <span class="h-1.5 w-1.5 rounded-full bg-success"></span>
+          数据已更新 · 220 城市预案 + 18 实战经验 + 14 核心预案
+        </div>
+        <h1 class="text-3xl font-bold tracking-tight text-ink-900 sm:text-4xl lg:text-5xl">
+          AOG 应急保障<span class="text-primary">知识库</span>
+        </h1>
+        <p class="mt-3 text-base text-ink-500 sm:text-lg">航材 AOG 智能伙伴 · 一站查询城市预案、保障经验、AI 对话</p>
+
+        <form id="heroSearch" class="mx-auto mt-8 max-w-2xl" autocomplete="off">
+          <div class="relative">
+            <span class="pointer-events-none absolute inset-y-0 left-4 flex items-center text-ink-500">
+              <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
+            </span>
+            <input id="heroSearchInput" type="search" placeholder="搜索航站、城市或经验，如「北京大兴」「B787 风挡」" class="block w-full rounded-xl border border-ink-100 bg-white py-4 pl-12 pr-32 text-base shadow-soft placeholder:text-ink-500 focus:border-primary focus:outline-none focus:ring-4 focus:ring-primary/15" />
+            <button type="submit" class="absolute right-2 top-2 bottom-2 inline-flex items-center gap-1 rounded-lg bg-primary px-5 text-sm font-medium text-white shadow-soft hover:bg-primary-700">
+              搜索
+              <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14"/><path d="m12 5 7 7-7 7"/></svg>
+            </button>
+          </div>
+        </form>
+
+        <div class="mt-4 flex flex-wrap items-center justify-center gap-2 text-xs text-ink-500">
+          <span>热门：</span>
+          <a class="rounded-full border border-ink-100 bg-white px-2.5 py-1 hover:border-primary hover:text-primary" href="city.html#B-北京大兴">北京大兴</a>
+          <a class="rounded-full border border-ink-100 bg-white px-2.5 py-1 hover:border-primary hover:text-primary" href="city.html#S-上海浦东">上海浦东</a>
+          <a class="rounded-full border border-ink-100 bg-white px-2.5 py-1 hover:border-primary hover:text-primary" href="experiences.html?q=B787">B787 风挡</a>
+          <a class="rounded-full border border-ink-100 bg-white px-2.5 py-1 hover:border-primary hover:text-primary" href="experiences.html?q=BMS9-3">BMS9-3 玻璃纤维布</a>
+        </div>
+
+        <!-- AI 快捷提问（PRD §7 真实样例） -->
+        <div class="mt-3 flex flex-wrap items-center justify-center gap-1.5 text-[11px] text-ink-500">
+          <span>问 AI：</span>
+          <button type="button" data-ai-q="B787 风挡 AOG 怎么处理？" class="rounded-full bg-primary-50 px-2.5 py-1 text-primary-700 hover:bg-primary hover:text-white">B787 风挡 AOG 怎么处理？</button>
+          <button type="button" data-ai-q="浦东 AOG 联系人？" class="rounded-full bg-primary-50 px-2.5 py-1 text-primary-700 hover:bg-primary hover:text-white">浦东 AOG 联系人？</button>
+          <button type="button" data-ai-q="BMS9-3 玻璃纤维布哪里备？" class="rounded-full bg-primary-50 px-2.5 py-1 text-primary-700 hover:bg-primary hover:text-white">BMS9-3 玻璃纤维布哪里备？</button>
+        </div>
+      </div>
+
+      <!-- Alphabet nav -->
+      <div class="mx-auto mt-10 max-w-5xl">
+        <div class="rounded-xl border border-ink-100 bg-white p-4 shadow-soft">
+          <div class="mb-2 flex items-center justify-between">
+            <h2 class="text-sm font-medium text-ink-700">按首字母浏览</h2>
+            <span class="text-xs text-ink-500">共 220 个城市预案 · 已索引 220</span>
+          </div>
+          <div id="alphaNav" class="flex flex-wrap gap-1 scrollbar-thin">
+            <!-- generated by JS -->
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Recommended cities -->
+  <section class="mx-auto max-w-7xl px-4 py-10 sm:px-6 lg:px-8">
+    <div class="mb-4 flex items-end justify-between">
+      <div>
+        <h2 class="text-xl font-semibold text-ink-900">推荐城市</h2>
+        <p class="mt-1 text-sm text-ink-500">现行有效 · 高频查询航站</p>
+      </div>
+      <a href="#" class="hidden text-sm text-primary hover:underline sm:inline">查看全部 →</a>
+    </div>
+
+    <div id="cityGrid" class="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+      <!-- generated by JS -->
+    </div>
+  </section>
+
+  <!-- Entry cards -->
+  <section class="mx-auto max-w-7xl px-4 pb-12 sm:px-6 lg:px-8">
+    <div class="mb-4">
+      <h2 class="text-xl font-semibold text-ink-900">快速入口</h2>
+      <p class="mt-1 text-sm text-ink-500">从最常用的场景进入</p>
+    </div>
+    <div class="grid grid-cols-1 gap-4 md:grid-cols-3">
+      <a href="#alphaNav" class="group rounded-xl border border-ink-100 bg-white p-6 shadow-soft transition hover:border-primary hover:shadow-pop">
+        <div class="mb-3 grid h-10 w-10 place-items-center rounded-lg bg-primary-50 text-primary">
+          <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 10c0 4.993-5.539 10.193-7.399 11.799a1 1 0 0 1-1.202 0C9.539 20.193 4 14.993 4 10a8 8 0 0 1 16 0"/><circle cx="12" cy="10" r="3"/></svg>
+        </div>
+        <div class="text-base font-semibold text-ink-900 group-hover:text-primary">航站查询</div>
+        <p class="mt-1 text-sm text-ink-500">220 个城市的应急保障预案，支持按首字母 / 地区过滤</p>
+      </a>
+      <a href="experiences.html" class="group rounded-xl border border-ink-100 bg-white p-6 shadow-soft transition hover:border-primary hover:shadow-pop">
+        <div class="mb-3 grid h-10 w-10 place-items-center rounded-lg bg-secondary/10 text-secondary">
+          <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/><path d="M16 13H8"/><path d="M16 17H8"/><path d="M10 9H8"/></svg>
+        </div>
+        <div class="text-base font-semibold text-ink-900 group-hover:text-primary">保障经验</div>
+        <p class="mt-1 text-sm text-ink-500">18 个实战经验库 · 流程/规范/案例/培训/技术/管理</p>
+      </a>
+      <div class="relative cursor-not-allowed rounded-xl border border-dashed border-ink-100 bg-ink-50/50 p-6 opacity-60">
+        <div class="absolute right-3 top-3 rounded bg-ink-100 px-1.5 py-0.5 text-[10px] text-ink-500">v2 灰显</div>
+        <div class="mb-3 grid h-10 w-10 place-items-center rounded-lg bg-ink-100 text-ink-500">
+          <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></svg>
+        </div>
+        <div class="text-base font-semibold text-ink-700">课件</div>
+        <p class="mt-1 text-sm text-ink-500">v1 不上线 · 已在库但暂不开放</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- Footer -->
+  <footer class="border-t border-ink-100 bg-ink-50">
+    <div class="mx-auto flex max-w-7xl flex-col gap-2 px-4 py-6 text-xs text-ink-500 sm:flex-row sm:items-center sm:justify-between sm:px-6 lg:px-8">
+      <div>© 2026 AOG 知识库 · v0.1.0-mockup</div>
+      <div>数据更新时间：2026-04-22 16:02 · 共 252 份文档</div>
+      <div class="flex items-center gap-3">
+        <a href="#" class="hover:text-ink-900">使用文档</a>
+        <a href="404.html" class="hover:text-ink-900">404 测试</a>
+        <a href="https://github.com/" target="_blank" rel="noreferrer" class="hover:text-ink-900">GitHub</a>
+      </div>
+    </div>
+  </footer>
+
+  <!-- ChatWidget mount -->
+  <div id="chatMount"></div>
+
+  <!-- Data + scripts -->
+  <script src="data/cities.js"></script>
+  <script src="data/experiences.js"></script>
+  <script src="components/chat-widget.js"></script>
+  <script>
+    // Cities featured on home — 真实数据 from PRD §7
+    const FEATURED_CITIES = [
+      { code: 'B-北京大兴', name: '北京大兴', region: '华北', status: 'active',  blurb: '国际枢纽航站，AOG 备件 24h 响应', iata: 'PKX' },
+      { code: 'S-上海浦东', name: '上海浦东', region: '华东', status: 'active',  blurb: '国内最大国际枢纽，常备波音/空客件', iata: 'PVG' },
+      { code: 'G-广州白云', name: '广州白云', region: '华南', status: 'active',  blurb: '东南亚枢纽，AOG 经验丰富', iata: 'CAN' },
+      { code: 'H-香港',     name: '香港',     region: '华南', status: 'active',  blurb: '国际货运转运中心', iata: 'HKG' }
+    ];
+
+    // Build alphabet nav
+    const ALPHA = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'.split('');
+    const citiesByAlpha = (window.CITIES || []).reduce((acc, c) => {
+      const k = c.name.charAt(0).toUpperCase();
+      (acc[k] = acc[k] || []).push(c);
+      return acc;
+    }, {});
+    const alphaNav = document.getElementById('alphaNav');
+    ALPHA.forEach(letter => {
+      const has = (citiesByAlpha[letter] || []).length > 0;
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.textContent = letter;
+      btn.className = 'alpha-btn grid h-9 w-9 place-items-center rounded-md border text-sm font-medium transition ' +
+        (has
+          ? 'border-ink-100 bg-white text-ink-700 hover:border-primary hover:bg-primary-50 hover:text-primary'
+          : 'border-transparent bg-transparent text-ink-300');
+      btn.dataset.empty = has ? 'false' : 'true';
+      btn.disabled = !has;
+      btn.addEventListener('click', () => {
+        if (!has) return;
+        const first = citiesByAlpha[letter][0];
+        window.location.href = `city.html#${first.code}`;
+      });
+      alphaNav.appendChild(btn);
+    });
+
+    // Build city cards
+    const grid = document.getElementById('cityGrid');
+    FEATURED_CITIES.forEach(c => {
+      const a = document.createElement('a');
+      a.href = `city.html#${c.code}`;
+      a.className = 'group block rounded-xl border border-ink-100 bg-white p-5 shadow-soft transition hover:border-primary hover:shadow-pop';
+      a.innerHTML = `
+        <div class="flex items-start justify-between">
+          <div>
+            <div class="text-base font-semibold text-ink-900 group-hover:text-primary">${c.name}</div>
+            <div class="mt-0.5 text-xs text-ink-500">${c.iata} · ${c.region}</div>
+          </div>
+          <span class="inline-flex items-center gap-1 rounded-full bg-success-50 px-2 py-0.5 text-[11px] font-medium text-success-700">
+            <span class="h-1.5 w-1.5 rounded-full bg-success"></span>现行
+          </span>
+        </div>
+        <p class="mt-3 text-sm text-ink-500">${c.blurb}</p>
+        <div class="mt-4 flex items-center justify-between text-xs text-ink-500">
+          <span>预案 / 联系人 / 备件 / 物流</span>
+          <span class="text-primary group-hover:underline">查看详情 →</span>
+        </div>
+      `;
+      grid.appendChild(a);
+    });
+
+    // Search submit (mock — go to city or experience)
+    function handleSearch(q) {
+      if (!q) return;
+      q = q.trim();
+      const city = (window.CITIES || []).find(c => c.name.includes(q) || c.code.includes(q) || (c.iata || '').toLowerCase() === q.toLowerCase());
+      if (city) { window.location.href = `city.html#${city.code}`; return; }
+      const exp = (window.EXPERIENCES || []).find(e => e.title.toLowerCase().includes(q.toLowerCase()));
+      if (exp)  { window.location.href = `experience.html#${exp.id}`; return; }
+      window.location.href = `experiences.html?q=${encodeURIComponent(q)}`;
+    }
+    document.getElementById('heroSearch').addEventListener('submit', (e) => {
+      e.preventDefault();
+      handleSearch(document.getElementById('heroSearchInput').value);
+    });
+    document.getElementById('navSearch').addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') { e.preventDefault(); handleSearch(e.target.value); }
+    });
+
+    // AI quick questions → open chat widget + ask
+    document.querySelectorAll('[data-ai-q]').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const q = btn.dataset.aiQ;
+        if (window.AOGChat) {
+          window.AOGChat.open();
+          setTimeout(() => window.AOGChat.ask(q), 100);
+        }
+      });
+    });
+  </script>
+</body>
+</html>

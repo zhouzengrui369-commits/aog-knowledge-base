@@ -1,0 +1,260 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>经验详情 · AOG 知识库</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          colors: {
+            primary: { DEFAULT: '#1e40af', 50: '#eff6ff', 100: '#dbeafe', 500: '#3b82f6', 600: '#2563eb', 700: '#1d4ed8', 900: '#1e3a8a' },
+            secondary: { DEFAULT: '#0891b2', 50: '#ecfeff', 500: '#06b6d4', 600: '#0891b2' },
+            ink: { 900: '#111827', 700: '#374151', 500: '#6b7280', 300: '#d1d5db', 100: '#f3f4f6', 50: '#f9fafb' },
+            success: { DEFAULT: '#16a34a', 50: '#f0fdf4', 600: '#16a34a', 700: '#15803d' },
+            warning: { DEFAULT: '#d97706', 50: '#fffbeb', 600: '#d97706' },
+            danger:  { DEFAULT: '#dc2626', 50: '#fef2f2', 600: '#dc2626' }
+          },
+          boxShadow: { 'soft': '0 1px 2px 0 rgb(0 0 0 / 0.04), 0 1px 3px 0 rgb(0 0 0 / 0.06)', 'pop': '0 10px 25px -5px rgb(0 0 0 / 0.10), 0 8px 10px -6px rgb(0 0 0 / 0.06)' },
+          fontFamily: { sans: ['-apple-system','BlinkMacSystemFont','"PingFang SC"','"Hiragino Sans GB"','"Microsoft YaHei"','"Helvetica Neue"','Arial','sans-serif'] }
+        }
+      }
+    };
+  </script>
+  <style>
+    body { font-feature-settings: "tnum" 1, "ss01" 1; }
+    .prose-body h2 { font-size: 1.25rem; font-weight: 600; color: #111827; margin-top: 2rem; margin-bottom: 0.75rem; padding-bottom: 0.5rem; border-bottom: 1px solid #f3f4f6; scroll-margin-top: 80px; }
+    .prose-body h2:first-child { margin-top: 0; }
+    .prose-body p { color: #374151; line-height: 1.8; margin-bottom: 0.75rem; }
+    .prose-body ul { list-style: disc; padding-left: 1.5rem; color: #374151; line-height: 1.8; margin-bottom: 1rem; }
+    .prose-body li { margin-bottom: 0.25rem; }
+    .prose-body strong { color: #111827; font-weight: 600; }
+    .toc-link.active { color: #1e40af; font-weight: 600; }
+  </style>
+</head>
+<body class="font-sans text-ink-900 bg-white antialiased">
+
+  <!-- Top Nav -->
+  <header class="sticky top-0 z-30 border-b border-ink-100 bg-white/80 backdrop-blur">
+    <div class="mx-auto flex h-16 max-w-7xl items-center justify-between px-4 sm:px-6 lg:px-8">
+      <a href="index.html" class="flex items-center gap-2">
+        <span class="grid h-9 w-9 place-items-center rounded-lg bg-primary text-white shadow-soft">
+          <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17.8 19.2 16 11l3.5-3.5C21 6 21.5 4 21 3c-1-.5-3 0-4.5 1.5L13 8 4.8 6.2c-.5-.1-.9.1-1.1.5l-.3.5c-.2.5-.1 1 .3 1.3L9 12l-2 3H4l-1 1 3 2 2 3 1-1v-3l3-2 3.5 5.3c.3.4.8.5 1.3.3l.5-.2c.4-.3.6-.7.5-1.2z"/></svg>
+        </span>
+        <div class="leading-tight">
+          <div class="text-base font-semibold text-ink-900">AOG 知识库</div>
+          <div class="text-[11px] text-ink-500">航材 AOG 智能伙伴</div>
+        </div>
+      </a>
+      <nav class="hidden gap-1 md:flex">
+        <a href="index.html" class="rounded-md px-3 py-1.5 text-sm font-medium text-ink-700 hover:bg-ink-50">首页</a>
+        <a href="experiences.html" class="rounded-md px-3 py-1.5 text-sm font-medium text-ink-700 hover:bg-ink-50">保障经验</a>
+        <a href="#" class="cursor-not-allowed rounded-md px-3 py-1.5 text-sm font-medium text-ink-300">课件<span class="ml-1 rounded bg-ink-100 px-1.5 py-0.5 text-[10px] text-ink-500">v2</span></a>
+      </nav>
+      <div class="flex items-center gap-2">
+        <a href="experiences.html" class="text-sm text-ink-500 hover:text-ink-900">← 返回经验列表</a>
+      </div>
+    </div>
+  </header>
+
+  <!-- Breadcrumb -->
+  <div class="mx-auto max-w-7xl px-4 pt-6 sm:px-6 lg:px-8">
+    <nav class="text-xs text-ink-500">
+      <a href="index.html" class="hover:text-primary">首页</a>
+      <span class="mx-1">/</span>
+      <a href="experiences.html" class="hover:text-primary">保障经验</a>
+      <span class="mx-1">/</span>
+      <span class="text-ink-700" id="bcTitle">B787 风挡 AOG 处理流程</span>
+    </nav>
+    <!-- Inline default fallback -->
+    <noscript>
+      <div class="mt-3 rounded-lg border border-primary-100 bg-primary-50 px-4 py-3 text-sm text-primary-700">
+        默认查看 <strong>B787 风挡 AOG 处理流程</strong>（案例 / 现行）· 现场评估 → 备件调度 → 更换施工 → 放行签派。
+      </div>
+    </noscript>
+    <!-- Quick links to related city pages (real data references) -->
+    <div class="mt-3 flex flex-wrap items-center gap-1.5 text-[11px] text-ink-500">
+      <span>相关航站：</span>
+      <a href="city.html#B-北京大兴" class="rounded-full bg-ink-50 px-2.5 py-1 hover:bg-primary-50 hover:text-primary">北京大兴（华北）</a>
+      <a href="city.html#S-上海浦东" class="rounded-full bg-ink-50 px-2.5 py-1 hover:bg-primary-50 hover:text-primary">上海浦东（华东）</a>
+      <a href="city.html#G-广州白云" class="rounded-full bg-ink-50 px-2.5 py-1 hover:bg-primary-50 hover:text-primary">广州白云（华南）</a>
+    </div>
+  </div>
+
+  <!-- Article header -->
+  <section class="mx-auto max-w-7xl px-4 pt-4 sm:px-6 lg:px-8">
+    <div class="rounded-2xl border border-ink-100 bg-white p-6 shadow-soft">
+      <div class="flex flex-wrap items-center gap-2">
+        <span id="topicPill" class="rounded-full bg-primary-50 px-2.5 py-0.5 text-xs font-medium text-primary-700">流程</span>
+        <span id="statusPill" class="inline-flex items-center gap-1 rounded-full bg-success-50 px-2.5 py-0.5 text-xs font-medium text-success-700">
+          <span class="h-1.5 w-1.5 rounded-full bg-success"></span>现行
+        </span>
+      </div>
+      <h1 id="title" class="mt-2 text-2xl font-bold text-ink-900 sm:text-3xl">经验标题</h1>
+      <p id="summary" class="mt-2 text-sm text-ink-700"></p>
+      <div class="mt-3 flex flex-wrap items-center gap-3 text-xs text-ink-500">
+        <span>创建 <span id="created">—</span></span>
+        <span class="text-ink-300">·</span>
+        <span>更新 <span id="updated">—</span></span>
+        <span class="text-ink-300">·</span>
+        <span>作者 <span id="author">—</span></span>
+        <span class="ml-auto flex items-center gap-2">
+          <a href="#" class="inline-flex items-center gap-1 rounded-md border border-ink-100 bg-white px-2.5 py-1 text-xs font-medium text-ink-700 hover:border-primary hover:text-primary">
+            <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" x2="12" y1="15" y2="3"/></svg>
+            下载 docx
+          </a>
+          <button id="askAiBtn" class="inline-flex items-center gap-1 rounded-md bg-primary px-2.5 py-1 text-xs font-medium text-white shadow-soft hover:bg-primary-700">
+            <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 8V4H8"/><rect width="16" height="12" x="4" y="8" rx="2"/><path d="M2 14h2"/><path d="M20 14h2"/><path d="M15 13v2"/><path d="M9 13v2"/></svg>
+            问 AI
+          </button>
+        </span>
+      </div>
+      <div id="tags" class="mt-3 flex flex-wrap gap-1.5"></div>
+    </div>
+  </section>
+
+  <!-- Body grid: content + TOC -->
+  <section class="mx-auto max-w-7xl px-4 py-6 sm:px-6 lg:px-8">
+    <div class="grid grid-cols-1 gap-6 lg:grid-cols-[1fr_240px]">
+      <article id="content" class="rounded-2xl border border-ink-100 bg-white p-6 shadow-soft prose-body">
+        <p class="text-ink-500">载入中…</p>
+      </article>
+
+      <aside class="hidden lg:block">
+        <div class="sticky top-20 rounded-xl border border-ink-100 bg-ink-50/50 p-4">
+          <h3 class="mb-2 text-xs font-semibold uppercase tracking-wide text-ink-500">目录</h3>
+          <nav id="toc" class="space-y-1 text-sm"></nav>
+        </div>
+      </aside>
+    </div>
+  </section>
+
+  <!-- Related experiences -->
+  <section class="mx-auto max-w-7xl px-4 pb-12 sm:px-6 lg:px-8">
+    <h2 class="mb-3 text-lg font-semibold text-ink-900">相关经验</h2>
+    <div id="related" class="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3"></div>
+  </section>
+
+  <!-- Footer -->
+  <footer class="border-t border-ink-100 bg-ink-50">
+    <div class="mx-auto flex max-w-7xl flex-col gap-2 px-4 py-6 text-xs text-ink-500 sm:flex-row sm:items-center sm:justify-between sm:px-6 lg:px-8">
+      <div>© 2026 AOG 知识库 · v0.1.0-mockup</div>
+      <div>数据更新时间：2026-04-22 16:02 · 共 252 份文档</div>
+      <div class="flex items-center gap-3">
+        <a href="index.html" class="hover:text-ink-900">首页</a>
+        <a href="404.html" class="hover:text-ink-900">404 测试</a>
+      </div>
+    </div>
+  </footer>
+
+  <!-- ChatWidget mount -->
+  <div id="chatMount"></div>
+
+  <script src="data/cities.js"></script>
+  <script src="data/experiences.js"></script>
+  <script src="components/chat-widget.js"></script>
+  <script>
+    function getExpFromHash() {
+      const h = decodeURIComponent((location.hash || '').replace(/^#/, ''));
+      if (!h) return null;
+      return (window.EXPERIENCES || []).find(x => x.id === h) || (window.EXPERIENCES || [])[0];
+    }
+
+    function render() {
+      const e = getExpFromHash();
+      if (!e) { document.body.innerHTML = '<div class="p-10 text-center text-ink-500">未找到该经验。</div>'; return; }
+      if (location.hash.replace(/^#/, '') !== e.id) history.replaceState(null, '', '#' + e.id);
+
+      document.title = e.title + ' · AOG 知识库';
+      document.getElementById('bcTitle').textContent = e.title;
+      document.getElementById('title').textContent = e.title;
+      document.getElementById('summary').textContent = e.summary || '';
+      document.getElementById('created').textContent = e.created || '—';
+      document.getElementById('updated').textContent = e.updated || '—';
+      document.getElementById('author').textContent  = e.author  || '—';
+
+      // topic pill
+      const tc = { '流程':'bg-primary-50 text-primary-700', '规范':'bg-secondary/10 text-secondary', '案例':'bg-warning-50 text-warning-700', '培训':'bg-success-50 text-success-700', '技术':'bg-ink-100 text-ink-700', '管理':'bg-ink-100 text-ink-700' };
+      const tp = document.getElementById('topicPill');
+      tp.className = 'rounded-full px-2.5 py-0.5 text-xs font-medium ' + (tc[e.topic] || 'bg-ink-100 text-ink-700');
+      tp.textContent = e.topic;
+
+      // status
+      const sp = document.getElementById('statusPill');
+      const sc = { active: 'bg-success-50 text-success-700', paused: 'bg-warning-50 text-warning-700', retired: 'bg-danger-50 text-danger' };
+      const sd = { active: 'bg-success', paused: 'bg-warning', retired: 'bg-danger' };
+      const sl = { active: '现行', paused: '暂停', retired: '已废止' };
+      sp.className = 'inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-xs font-medium ' + (sc[e.status] || sc.active);
+      sp.innerHTML = `<span class="h-1.5 w-1.5 rounded-full ${sd[e.status] || sd.active}"></span>${sl[e.status] || '现行'}`;
+
+      // tags
+      document.getElementById('tags').innerHTML = (e.tags || []).map(t => `<span class="rounded bg-ink-50 px-2 py-0.5 text-xs text-ink-500">#${t}</span>`).join('');
+
+      // content
+      const content = document.getElementById('content');
+      if (e.content && e.content.length) {
+        content.innerHTML = e.content.map(sec => {
+          let inner = '';
+          if (sec.type === 'list') {
+            inner = '<ul>' + sec.items.map(i => `<li>${i}</li>`).join('') + '</ul>';
+          } else {
+            inner = `<p>${sec.text}</p>`;
+          }
+          const id = 'h-' + sec.h.replace(/[一二三四五六七八九十]+、?\s*/g, '').replace(/[^\w\u4e00-\u9fa5]+/g, '-').toLowerCase().slice(0, 30);
+          return `<h2 id="${id}">${sec.h}</h2>${inner}`;
+        }).join('');
+        // TOC
+        const toc = document.getElementById('toc');
+        toc.innerHTML = e.content.map(sec => {
+          const id = 'h-' + sec.h.replace(/[一二三四五六七八九十]+、?\s*/g, '').replace(/[^\w\u4e00-\u9fa5]+/g, '-').toLowerCase().slice(0, 30);
+          return `<a href="#${id}" class="toc-link block rounded px-2 py-1 text-ink-700 hover:bg-white hover:text-primary">${sec.h.replace(/^[一二三四五六七八九十]+、\s*/, '')}</a>`;
+        }).join('');
+        // scroll-spy
+        const tocLinks = toc.querySelectorAll('.toc-link');
+        const headings = content.querySelectorAll('h2');
+        const onScroll = () => {
+          let active = null;
+          headings.forEach(h => { if (h.getBoundingClientRect().top < 100) active = h.id; });
+          tocLinks.forEach(l => l.classList.toggle('active', l.getAttribute('href') === '#' + active));
+        };
+        window.addEventListener('scroll', onScroll, { passive: true });
+        onScroll();
+      } else {
+        content.innerHTML = `<p class="text-ink-500">该经验暂无详细内容，可参考相关经验或联系 AOG 中心获取完整版。</p>`;
+        document.getElementById('toc').innerHTML = '';
+      }
+
+      // related
+      const relatedIds = e.related || [];
+      const list = (window.EXPERIENCES || []).filter(x => relatedIds.includes(x.id));
+      // fallback: by same topic if no explicit related
+      const final = list.length ? list : (window.EXPERIENCES || []).filter(x => x.id !== e.id && x.topic === e.topic).slice(0, 3);
+      document.getElementById('related').innerHTML = final.map(r => `
+        <a href="experience.html#${r.id}" class="group block rounded-xl border border-ink-100 bg-white p-4 shadow-soft hover:border-primary">
+          <div class="mb-1 flex items-center gap-2">
+            <span class="rounded-full px-2 py-0.5 text-[10px] font-medium ${tc[r.topic] || 'bg-ink-100 text-ink-700'}">${r.topic}</span>
+          </div>
+          <div class="text-sm font-semibold text-ink-900 group-hover:text-primary">${r.title}</div>
+          <p class="mt-1 line-clamp-2 text-xs text-ink-500">${r.summary}</p>
+        </a>
+      `).join('');
+    }
+
+    // ask AI
+    function init() {
+      render();
+      window.addEventListener('hashchange', render);
+      document.getElementById('askAiBtn').addEventListener('click', () => {
+        if (window.AOGChat) {
+          window.AOGChat.open();
+          setTimeout(() => window.AOGChat.ask(document.getElementById('title').textContent + '？'), 100);
+        }
+      });
+    }
+    if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init);
+    else init();
+  </script>
+</body>
+</html>

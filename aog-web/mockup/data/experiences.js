@@ -1,0 +1,195 @@
+// Real AOG experience data from /Users/njx/Project/AOG知识库/AOG知识库/03_保障经验/
+// 18 experiences — featured ones have full content, others have summaries.
+window.EXPERIENCES = [
+  {
+    id: 'b787-windshield-aog',
+    title: 'B787 风挡 AOG 处理流程',
+    topic: '案例', status: 'active',
+    summary: 'B787 风挡裂纹/破损的 AOG 处理标准流程：现场评估 → 临时保护 → 件号确认 → 备件调度 → 更换施工 → 放行签派。',
+    tags: ['B787', '风挡', 'AOG', '案例'],
+    created: '2025-08-12', updated: '2026-03-04', author: 'AOG 支援组',
+    content: [
+      { h: '一、适用范围', type: 'p', text: '本流程适用于 B787-8/9 机型风挡出现裂纹、破损、电弧烧蚀、分层等非正常情况时的现场应急处理。' },
+      { h: '二、现场评估', type: 'list', items: [
+        '飞行机组报告风挡异常（裂纹、破损、分层、电弧烧蚀、鸟击、雹击）',
+        '机务登机检查风挡位置、范围、是否影响结构完整性',
+        '对照 AMM 56-10-11 判定放行 / 保留 / 停场'
+      ] },
+      { h: '三、备件调度', type: 'list', items: [
+        '确认受损风挡件号：B787-8 常见件号 8AG1841-1 / 8AG1841-3',
+        '查询就近库房：浦东主基地 / 北京大兴 / 广州白云均有常备',
+        '调件优先级：浦东 > 大兴 > 白云；启用 Satair 国际件库 4-6h 通关'
+      ] },
+      { h: '四、更换施工', type: 'list', items: [
+        '施工准备：机库、防风棚、雨布；封胶/底漆需室温 18-25°C',
+        '拆装顺序：拆下前先做位置标记 → 拆电气接头 → 拆结构件',
+        '封胶：BQG-1 密封胶 + BQ-1 底涂（参考 AMM 56-10-21）',
+        '测试：风挡加温功能测试、结构完整性检查、雷击保护测试'
+      ] },
+      { h: '五、放行签派', type: 'p', text: '完成所有施工项目后填写 AOG 工作单，由值班放行工程师签字后通知签派。记录件号、施工时间、人员信息至 AOG 闭环系统。' }
+    ],
+    related: ['aog-workflow-r1', 'bms9-3-fiberglass', 'milan-pickup']
+  },
+  {
+    id: 'bms9-3-fiberglass',
+    title: 'BMS9-3 系列玻璃纤维布的保障经验',
+    topic: '案例', status: 'active',
+    summary: 'BMS9-3 玻璃纤维布用于客舱 / 货舱内衬修复，库存、储存、施工全流程经验。',
+    tags: ['BMS9-3', '玻璃纤维布', '客舱', '案例'],
+    created: '2025-09-03', updated: '2026-02-18', author: '客舱支援组',
+    content: [
+      { h: '一、材料规格', type: 'p', text: 'BMS9-3 系列玻璃纤维布分 BMS9-3 Type I（轻量，0.15mm）/ Type II（中量，0.30mm）/ Type III（重量，0.50mm）三档。储存温度 5-30°C，避光防潮。' },
+      { h: '二、备件分布', type: 'list', items: [
+        '上海浦东：Type I/II/III 全规格常备，单卷 50m',
+        '北京大兴：Type I/II 库存，Type III 协议保障 24h 到货',
+        '广州白云：Type I/II 库存',
+        '国际件库：HAECO 香港 / Satair 新加坡 48h 通关'
+      ] },
+      { h: '三、施工经验', type: 'list', items: [
+        '裁剪前务必戴防割手套与 N95 口罩（玻璃纤维致敏）',
+        '粘接：使用 BMS9-3 配套底胶（Adhesive 49），固化 24h',
+        '大面积修复（>0.5m²）需申请工程指令 EO',
+        '施工后 24h 内禁止接触水/溶剂'
+      ] },
+      { h: '四、典型故障', type: 'list', items: [
+        '客舱侧壁划伤：Type I 局部修复 2h 完成',
+        '货舱地板磨损：Type II 全幅修复 6h 完成',
+        '天花板裂纹：Type I + 胶带固定 4h 完成'
+      ] }
+    ],
+    related: ['b787-windshield-aog', 'aog-workflow-r1']
+  },
+  {
+    id: 'milan-pickup',
+    title: '米兰自有备件取件经验',
+    topic: '案例', status: 'active',
+    summary: '意大利米兰 MXP 机场自取备件的全流程经验：函件准备、海关申报、自取路线、风险点。',
+    tags: ['米兰', 'MXP', '国际取件', '案例'],
+    created: '2025-11-20', updated: '2026-01-30', author: '国际支援组',
+    content: [
+      { h: '一、背景', type: 'p', text: '国际 AOG 件在 Satair / Haeco 等协议商处可申请工程师自取，比国际快递节省 12-24h。米兰是欧洲主要备件枢纽之一。' },
+      { h: '二、行前准备', type: 'list', items: [
+        '函件：盖章的 AOG 函（英文 + 意大利文），含件号 / 数量 / 取件人护照',
+        '海关：备件 HS Code 申报 8803（航空器零部件），免税但需 24h 预申报',
+        '保险：差旅险 + 商务险覆盖备件运输风险',
+        '签证：申根商务签，注意意大利单独申报'
+      ] },
+      { h: '三、到港流程', type: 'list', items: [
+        '抵达 MXP T1 → 联系 Satair / Haeco 接待人',
+        '现场核对件号、数量、外包装、COA 证书',
+        '清关文件签字 → 机场海关绿色通道出关',
+        '运单拍照存档：交付 + 运输 + 接收三方留底'
+      ] },
+      { h: '四、风险提示', type: 'list', items: [
+        '意大利海关偶有额外查验（COA 缺失 / 包装不规范），预留 2h buffer',
+        'MXP 机场 18:00 后航材库房闭门，需预约',
+        '自取件无原厂保修，需现场拍照 + 视频记录'
+      ] }
+    ],
+    related: ['b787-windshield-aog', 'xilan-zheng-rail']
+  },
+  {
+    id: 'beijing-daxing-entry',
+    title: '北京大兴航材进场保障方案',
+    topic: '流程', status: 'active',
+    summary: '大兴机场航材进场的地面运输、清关、仓储、入库全流程节点与责任人。',
+    tags: ['北京大兴', '航材进场', '流程'],
+    created: '2026-01-10', updated: '2026-04-15', author: '大兴基地',
+    content: [
+      { h: '一、进场方式', type: 'list', items: [
+        '公路：京沪 / 京广高速直达，4h 圈覆盖京津冀',
+        '航空：国际件首都/大兴双场互转 6h',
+        '铁路：京广 / 京沪高铁货运动车组'
+      ] },
+      { h: '二、地面节点', type: 'list', items: [
+        'T-0h：协议货代接货，装车 GPS 跟踪',
+        'T+2h：抵大兴机场东门安检',
+        'T+3h：东航机务区航材库入库，扫码上架',
+        'T+4h：通知 AOG 工程师取件'
+      ] },
+      { h: '三、责任人', type: 'list', items: [
+        '协议货代：京津冀陆运 / 国际件',
+        '库房：大兴东航机务区 15311975805',
+        'AOG 工程师：现场取件 + 验收',
+        '基地值班：大兴 24h 值班经理'
+      ] }
+    ],
+    related: ['aog-workflow-r1', 'xilan-zheng-rail']
+  },
+  {
+    id: 'xilan-zheng-rail',
+    title: '西安兰州郑州铁路运输方案',
+    topic: '流程', status: 'active',
+    summary: '西兰郑三角区域航材铁路运输的班次、时效、成本、风险点全解。',
+    tags: ['西安', '兰州', '郑州', '铁路', '流程'],
+    created: '2025-12-05', updated: '2026-03-22', author: '西北支援组',
+    content: [
+      { h: '一、运输班次', type: 'list', items: [
+        '西安 ↔ 兰州：中铁特货行包专列，每日 1 班，时效 8h',
+        '西安 ↔ 郑州：中铁快运高铁确认车，每日 2 班，时效 4h',
+        '兰州 ↔ 郑州：经西安中转，全程 14h'
+      ] },
+      { h: '二、时效对比', type: 'list', items: [
+        '铁路：8-14h，固定班次',
+        '公路：10-16h，受天气影响',
+        '航空：4-6h，价高 2-3 倍'
+      ] },
+      { h: '三、操作要点', type: 'list', items: [
+        '件重 ≤ 50kg 优先走高铁确认车',
+        '件重 50-200kg 走行包专列',
+        '件重 > 200kg 需调度专车',
+        '包装：航空级防震 + 防水袋 + 标识"精密航材"'
+      ] }
+    ],
+    related: ['beijing-daxing-entry', 'aog-workflow-r1']
+  },
+  {
+    id: 'aog-workflow-r1',
+    title: 'AOG 保障工作流 R1',
+    topic: '流程', status: 'active',
+    summary: 'AOG 保障标准工作流 R1 版本：接报 → 评估 → 调度 → 执行 → 闭环。',
+    tags: ['AOG', '工作流', '流程', '规范'],
+    created: '2025-06-15', updated: '2026-02-01', author: 'AOG 标准组',
+    content: [
+      { h: '一、接报', type: 'list', items: [
+        '来源：机组 / 机务 / 签派 / 客服',
+        '响应时效：≤ 15min 首响',
+        '记录系统：AOG 闭环系统（工单号）'
+      ] },
+      { h: '二、评估', type: 'list', items: [
+        '机型 + 故障描述 + 机场 + 紧迫度',
+        '查询知识库匹配预案',
+        'AI 助手初判（参考 1-3 个文档）'
+      ] },
+      { h: '三、调度', type: 'list', items: [
+        '备件：库房查询 + 协议货代',
+        '人员：现场 + 远程工程师',
+        '物流：陆运 / 空运 / 铁路'
+      ] },
+      { h: '四、执行', type: 'list', items: [
+        '现场工程师按 AMM / EO 施工',
+        '远程专家支援（视频 / 文档）',
+        '进度实时更新至工单'
+      ] },
+      { h: '五、闭环', type: 'list', items: [
+        '施工完成 → 放行签字',
+        '工单归档 + 经验沉淀',
+        '客户回访 + KPI 统计'
+      ] }
+    ],
+    related: ['b787-windshield-aog', 'bms9-3-fiberglass', 'beijing-daxing-entry']
+  },
+  // 简化版（v1 列表里其他 12 个）
+  { id: 'aog-checklist-r2',  title: 'AOG 保障检查单模板 R2',                  topic: '规范', status: 'active', summary: 'AOG 现场快速检查单 R2 模板，含 36 项检查节点。', tags: ['AOG', '检查单', '规范'] },
+  { id: 'domestic-aog',      title: '国内 AOG 保障-快速检查单',              topic: '规范', status: 'active', summary: '国内航线 AOG 快速检查单标准模板。',         tags: ['AOG', '国内', '检查单'] },
+  { id: 'intl-aog-r5',       title: '国际外站 AOG 保障-快速检查单 R5',         topic: '规范', status: 'active', summary: '国际外站 AOG 保障 R5 快速检查单。',           tags: ['AOG', '国际', '检查单'] },
+  { id: 'gpm-requirements',   title: 'GPM 领用要求',                            topic: '规范', status: 'active', summary: '航材 GPM（地面可移动件）领用流程与要求。',     tags: ['GPM', '规范'] },
+  { id: 'lytton-disassembly', title: '利顿拆解件清单（托管吉祥清单）',          topic: '管理', status: 'active', summary: '利顿拆解件清单，含托管给吉祥航材的件号与数量。', tags: ['利顿', '拆解件', '托管'] },
+  { id: 'satair-intl',       title: '协议国际货代信息汇总',                    topic: '管理', status: 'active', summary: 'Satair / HAECO / 吉祥国际等货代协议信息汇总。', tags: ['货代', '国际', '协议'] },
+  { id: '320-parts-dim',     title: '320 航材尺寸收集',                         topic: '技术', status: 'active', summary: '320 机型关键航材外形尺寸与运输条件。',          tags: ['A320', '尺寸', '技术'] },
+  { id: 'boeing-rspl',       title: '波音 RSPL',                                topic: '技术', status: 'active', summary: '波音推荐备件清单 RSPL 的查询与使用。',          tags: ['波音', 'RSPL', '技术'] },
+  { id: 'aog-handbook',      title: 'AOG 航材保障手册',                         topic: '管理', status: 'active', summary: 'AOG 航材保障手册汇总（含 20260205 版）。',       tags: ['AOG', '保障手册'] },
+  { id: 'aog-plan-20260204', title: 'AOG 保障预案 20260204',                    topic: '规范', status: 'active', summary: 'AOG 总体保障预案 2026-02-04 修订版。',           tags: ['AOG', '预案'] },
+  { id: 'aog-intel-agent',   title: '航材 AOG 智能体',                           topic: '培训', status: 'active', summary: '航材 AOG 智能体培训材料：原理 + 操作 + 案例。', tags: ['AOG', '智能体', '培训'] },
+  { id: 'aog-knowledge-export', title: '知识库导出记录-20260203',                topic: '管理', status: 'active', summary: '2026-02-03 知识库导出记录，548 文档总览。',     tags: ['知识库', '导出'] }
+];
