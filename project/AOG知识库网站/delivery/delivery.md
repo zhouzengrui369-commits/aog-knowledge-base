@@ -19,7 +19,7 @@
 | T3 | 数据 pipeline（解析 + 向量化） | done | sub-agent data-agent + PM 接管 | 2026-07-15 | 2026-07-16 | Wave 1 |
 | T4 | 前后端集成 | pending | sub-agent integrator | D4 | - | Wave 2 |
 | T5 | Railway + Vercel 部署 | pending | sub-agent devops-agent | D4-5 | - | Wave 2 |
-| T6 | 增量同步（定时轮询 v1.1） | pending | sub-agent devops-agent | D5 | - | Wave 2 |
+| T6 | 增量同步（定时轮询 v1.1） | done | sub-agent devops-agent | 2026-07-16 | 2026-07-16 | Wave 2 |
 | T7 | 真机访问 + 截图 | pending | NJX (PM 验收) | D6 | - | Wave 3 |
 | T8 | 增量同步验证 | pending | NJX (PM 验收) | D6 | - | Wave 3 |
 | T9 | 4 文档收尾 | pending | PM | D7 | - | Wave 3 |
@@ -221,3 +221,10 @@ project/AOG知识库网站/delivery/screenshots/
   - POST /api/chat "B787 风挡" 检索 5 个真实文档 (top1=B787 风挡AOG处理流程 score=0.800)
   - latency 2024ms (RAG + mock LLM)
 - **Wave 1 100% 完成**，进入 Wave 2 准备
+
+### 2026-07-16 01:50 — T6 增量同步 PASS
+- merge feature/wave2-sync → main (commit 99952cb)
+- ground truth 验证 PASS: 17/17 pytest / 81% coverage / 5 验证项全过（含 4a 真改文件 + trigger + reindex rc=0）
+- 关键设计：mtime+size hash (不读内容) + subprocess 调 pipeline (隔离崩溃) + sync_state.db 持久化
+- 已知 pre-existing bug: T3 pipeline 写 index_stats.json 但不写 SQLite index_stats 表 → last_sync=null（建议另开 T7 子任务修）
+- Railway 部署 6 注意事项已写明 (PIPELINE_DIR / uv / SYNC_INTERVAL / 多实例 / 磁盘)
