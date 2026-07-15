@@ -1,0 +1,38 @@
+[project]
+name = "aog-pipeline"
+version = "0.1.0"
+description = "AOG 知识库数据 pipeline — 解析 md/docx/xlsx/pdf → 向量化 → 写 Chroma + SQLite"
+readme = "README.md"
+requires-python = ">=3.11,<3.15"
+dependencies = [
+    "python-docx>=1.1.0",
+    "openpyxl>=3.1.2",
+    "pypdf>=4.3.0",
+    "markdown-it-py>=3.0.0",
+    "chromadb>=0.5.0",
+    "sentence-transformers>=3.0.0",
+    "torch>=2.1.0",
+    "tqdm>=4.66.0",
+    "pypinyin>=0.51.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0.0",
+    "pytest-cov>=5.0.0",
+]
+
+[project.scripts]
+aog-build = "pipeline.build_index:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["pipeline"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+addopts = "-v --tb=short"
