@@ -14,7 +14,7 @@
 | T0.1 | PRD 精简版 | done | PM (自主) | 2026-07-15 | 2026-07-15 | Phase 0.5 |
 | T0.2 | UI HTML 高保真 mockup | done | sub-agent mockup-agent | 2026-07-15 | 2026-07-15 | Phase 0.5 |
 | T0.3 | 调整基线（截止/规则/delivery） | done | PM (自主) | 2026-07-15 | 2026-07-15 | Phase 0.5 |
-| T1 | 后端骨架（FastAPI + Chroma + 解析器） | pending | sub-agent backend-agent | D2 | - | Wave 1 |
+| T1 | 后端骨架（FastAPI + Chroma + 解析器） | done | sub-agent backend-agent | 2026-07-15 | 2026-07-15 | Wave 1 |
 | T2 | 前端骨架（Next.js + 三大页面） | done | sub-agent frontend-agent | 2026-07-15 | 2026-07-15 | Wave 1 |
 | T3 | 数据 pipeline（解析 + 向量化） | pending | sub-agent data-agent | D2 | - | Wave 1 |
 | T4 | 前后端集成 | pending | sub-agent integrator | D4 | - | Wave 2 |
@@ -196,3 +196,10 @@ project/AOG知识库网站/delivery/screenshots/
 - merge feature/wave1-frontend → main (commit 1aae43a → 9b3f2c1)
 - ground truth 验证 PASS：18 截图 / 9 端点函数 / NSM-2 警告触发 / 真实数据 19 处北京大兴 / LCP 1.0s
 - T1 后端 + T3 pipeline 仍在跑（互不冲突）
+
+### 2026-07-15 22:30
+- T1 后端子智能体完成（task bg_29029230）
+- merge feature/wave1-backend → main (commit 6f8a91e)
+- ground truth 验证 PASS：8 端点 / 7 测试 / 61 pytest pass / 85% coverage / NSM-2 兜底 3 层链 / mock 模式 830ms
+- T3 pipeline 仍在跑（用 data/ 目录，写 Chroma + SQLite）
+- Wave 1 进度：2/3 完成
