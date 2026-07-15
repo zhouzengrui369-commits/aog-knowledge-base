@@ -28,6 +28,8 @@ def _test_env():
     os.environ["CORS_ALLOW_ORIGINS"] = "http://localhost:3000,http://test"
     os.environ["KNOWLEDGE_BASE_PATH"] = str(TEST_ROOT / "kb")
     os.environ["RAW_PATH"] = str(TEST_ROOT / "raw")
+    os.environ["SYNC_ENABLED"] = "false"  # T6: 测试期间不启动后台 poll, 避免 subprocess
+    os.environ["SYNC_STATE_DB_PATH"] = str(test_data / "sync_state.db")
     (TEST_ROOT / "kb").mkdir(parents=True, exist_ok=True)
     (TEST_ROOT / "raw").mkdir(parents=True, exist_ok=True)
 
@@ -47,10 +49,12 @@ async def client() -> AsyncGenerator[AsyncClient, None]:
     from aog_web.config import reset_settings_cache
     from aog_web.services.chroma_client import reset_chroma_client
     from aog_web.services.sqlite_client import reset_sqlite_client
+    from aog_web.services.sync import reset_sync_service
 
     reset_settings_cache()
     reset_chroma_client()
     reset_sqlite_client()
+    reset_sync_service()
 
     # 重新加载 .env 读取 (确保走 test env vars)
     # 关键: 必须在 import app 之前 reset

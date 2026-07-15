@@ -68,7 +68,7 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.warning("Chroma init issue (will continue): %s", e)
 
-    # 3. Sync service (mock)
+    # 3. Sync service (T6 真实实现 - 启动后台 poll 任务)
     sync_svc = get_sync_service()
     await sync_svc.start()
 

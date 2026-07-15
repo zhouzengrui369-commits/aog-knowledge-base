@@ -43,7 +43,14 @@ class Settings(BaseSettings):
     RAW_PATH: str = "/Users/njx/Project/AOG知识库/RAW"
 
     # ===== 运行时 =====
+    SYNC_ENABLED: bool = True
     SYNC_INTERVAL_S: int = 300
+    # 增量同步状态缓存 (mtime + size hash) - 默认 ./data/sync_state.db
+    SYNC_STATE_DB_PATH: str = "./data/sync_state.db"
+    # 监听目录 (逗号分隔, 空 = 用默认 01/02/03)
+    SYNC_WATCH_DIRS: str = ""
+    # Pipeline 工作目录 (build_index.py 所在 package 根)
+    PIPELINE_DIR: str = str(_backend_root().parent / "pipeline")
     LOG_LEVEL: str = "INFO"
     CORS_ALLOW_ORIGINS: str = "http://localhost:3000,http://127.0.0.1:3000"
 
@@ -76,6 +83,31 @@ class Settings(BaseSettings):
     @property
     def raw_path(self) -> Path:
         return Path(self.RAW_PATH).resolve()
+
+    @property
+    def sync_state_db_path(self) -> Path:
+        """增量同步状态缓存 DB 路径"""
+        p = Path(self.SYNC_STATE_DB_PATH)
+        if not p.is_absolute():
+            p = self.backend_root / p
+        return p.resolve()
+
+    @property
+    def watch_dirs(self) -> List[Path]:
+        """监听目录列表 (空 = 用默认 01/02/03 三目录)"""
+        if self.SYNC_WATCH_DIRS.strip():
+            return [Path(d).strip() for d in self.SYNC_WATCH_DIRS.split(",") if d.strip()]
+        kb = self.knowledge_base_path
+        return [
+            kb / "01_AOG预案",
+            kb / "02_外战预案",
+            kb / "03_保障经验",
+        ]
+
+    @property
+    def pipeline_dir(self) -> Path:
+        """T3 pipeline 包根目录 (含 pyproject.toml + pipeline/ 子包)"""
+        return Path(self.PIPELINE_DIR).resolve()
 
     @property
     def cors_origins(self) -> List[str]:
