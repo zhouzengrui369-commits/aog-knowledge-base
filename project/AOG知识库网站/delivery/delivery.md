@@ -18,7 +18,7 @@
 | T2 | 前端骨架（Next.js + 三大页面） | done | sub-agent frontend-agent | 2026-07-15 | 2026-07-15 | Wave 1 |
 | T3 | 数据 pipeline（解析 + 向量化） | done | sub-agent data-agent + PM 接管 | 2026-07-15 | 2026-07-16 | Wave 1 |
 | T4 | 前后端集成 | done | PM 自主 (Wave 1 端到端 PASS) | 2026-07-15 | 2026-07-15 | Wave 2 |
-| T5 | Railway + Vercel 部署 | pending | sub-agent devops-agent | D4-5 | - | Wave 2 |
+| T5 | CloudBase 部署 (pgvector 替代 Chroma) | in_progress | PM 接管 (NJX 1:57 选 CloudBase) | 2026-07-16 | - | Wave 2 |
 | T6 | 增量同步（定时轮询 v1.1） | done | sub-agent devops-agent | 2026-07-16 | 2026-07-16 | Wave 2 |
 | T7 | 真机访问 + 截图 | pending | NJX (PM 验收) | D6 | - | Wave 3 |
 | T8 | 增量同步验证 | pending | NJX (PM 验收) | D6 | - | Wave 3 |
@@ -228,3 +228,11 @@ project/AOG知识库网站/delivery/screenshots/
 - 关键设计：mtime+size hash (不读内容) + subprocess 调 pipeline (隔离崩溃) + sync_state.db 持久化
 - 已知 pre-existing bug: T3 pipeline 写 index_stats.json 但不写 SQLite index_stats 表 → last_sync=null（建议另开 T7 子任务修）
 - Railway 部署 6 注意事项已写明 (PIPELINE_DIR / uv / SYNC_INTERVAL / 多实例 / 磁盘)
+
+### 2026-07-16 01:58 — NJX 拍板：CloudBase (替代 Vercel+Railway)
+- T5 方向调整：停止 Vercel+Railway agent (bg_963226fd)，PM 接管 CloudBase 路径
+- 3 个关键差异要处理：
+  1. **静态托管**：CloudBase 静态托管替代 Vercel（`next build` + `next export` 上传）
+  2. **云函数**：FastAPI 后端要包成 CloudBase 云函数（SCF 兼容，不能直接 uvicorn）
+  3. **向量库**：CloudBase 无原生 Chroma → 换 **pgvector**（CloudBase 云数据库 PostgreSQL 扩展）
+- 影响：T1 chroma_client 要重写为 pgvector 适配层（保留接口）
