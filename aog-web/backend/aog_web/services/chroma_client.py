@@ -1,7 +1,7 @@
 """Chroma 向量检索客户端 - 持久化到 ./data/chroma
 
 设计:
-- 单一 collection: aog_documents
+- 单一 collection: aog_knowledge (CONTRACT §5 规范)
 - 由 Wave 1 T3 pipeline 写入 (id / text / metadata)
 - 后端只读, 提供 query(q, n_results, where) 检索
 - ★ NSM-2: 即使 collection 为空, 也要返回结构化空结果, chat 端点再补 mock 引用
@@ -19,7 +19,7 @@ from aog_web.config import get_settings
 
 logger = logging.getLogger(__name__)
 
-COLLECTION_NAME = "aog_documents"
+COLLECTION_NAME = "aog_knowledge"  # PM 2026-07-16 修：CONTRACT §5 规范为 aog_knowledge，T1 agent 误用 aog_documents
 
 
 class ChromaClient:

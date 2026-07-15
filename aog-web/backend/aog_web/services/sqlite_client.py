@@ -33,38 +33,55 @@ class Base(DeclarativeBase):
 
 
 class CityRow(Base):
+    """镜像 T3 pipeline 实际写的 schema（CONTRACT §1.1 1:1，独立列）"""
     __tablename__ = "cities"
 
     code: Mapped[str] = mapped_column(String, primary_key=True)
     name: Mapped[str] = mapped_column(String, index=True)
-    region: Mapped[str] = mapped_column(String, index=True)
-    status: Mapped[str] = mapped_column(String, index=True)
+    airport: Mapped[str] = mapped_column(String, default="")
     iata: Mapped[str] = mapped_column(String, default="")
     pinyin: Mapped[str] = mapped_column(String, default="", index=True)
+    region: Mapped[str] = mapped_column(String, index=True)
+    status: Mapped[str] = mapped_column(String, index=True)
     # JSON 序列化字段
-    data_json: Mapped[str] = mapped_column(Text, default="{}")
-    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    tags: Mapped[str] = mapped_column(Text, default="[]")
+    fleet: Mapped[str] = mapped_column(Text, default="[]")
+    parts: Mapped[str] = mapped_column(Text, default="[]")
+    contacts: Mapped[str] = mapped_column(Text, default="[]")
+    warehouse: Mapped[str] = mapped_column(Text, default="{}")
+    logistics: Mapped[str] = mapped_column(Text, default="{}")
+    content_md: Mapped[str] = mapped_column(Text, default="")
+    source_path: Mapped[str] = mapped_column(String, default="")
+    updated_at: Mapped[Optional[str]] = mapped_column(String, nullable=True)
 
 
 class ExperienceRow(Base):
+    """镜像 T3 pipeline 实际写的 schema（CONTRACT §1.2 1:1）"""
     __tablename__ = "experiences"
 
     id: Mapped[str] = mapped_column(String, primary_key=True)
     title: Mapped[str] = mapped_column(String, index=True)
     category: Mapped[str] = mapped_column(String, index=True)
     status: Mapped[str] = mapped_column(String, index=True, default="现行")
-    data_json: Mapped[str] = mapped_column(Text, default="{}")
-    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    # JSON 序列化字段
+    tags: Mapped[str] = mapped_column(Text, default="[]")
+    summary: Mapped[str] = mapped_column(Text, default="")
+    content_md: Mapped[str] = mapped_column(Text, default="")
+    related_pn: Mapped[str] = mapped_column(Text, default="[]")
+    source_path: Mapped[str] = mapped_column(String, default="")
+    updated_at: Mapped[Optional[str]] = mapped_column(String, nullable=True)
 
 
 class CorePlanRow(Base):
+    """镜像 T3 pipeline 实际写的 schema（CONTRACT §1.3 1:1）"""
     __tablename__ = "core_plans"
 
     id: Mapped[str] = mapped_column(String, primary_key=True)
     title: Mapped[str] = mapped_column(String, index=True)
     type: Mapped[str] = mapped_column(String, index=True)
-    data_json: Mapped[str] = mapped_column(Text, default="{}")
-    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    content_md: Mapped[str] = mapped_column(Text, default="")
+    source_path: Mapped[str] = mapped_column(String, default="")
+    updated_at: Mapped[Optional[str]] = mapped_column(String, nullable=True)
 
 
 class IndexStatsRow(Base):
@@ -235,61 +252,66 @@ class SQLiteClient:
 
 
 def _decode_city(row: CityRow) -> Dict[str, Any]:
-    try:
-        data = json.loads(row.data_json or "{}")
-    except json.JSONDecodeError:
-        data = {}
-    # 主键 + 索引字段从 data 取, 索引字段回填
+    """T3 schema: 所有复杂字段独立列 + JSON 序列化（tags/fleet/parts/contacts/warehouse/logistics）"""
+    def _j(s: str, default):
+        if not s:
+            return default
+        try:
+            return json.loads(s)
+        except json.JSONDecodeError:
+            return default
     return {
         "code": row.code,
         "name": row.name,
-        "iata": row.iata or data.get("iata", ""),
-        "pinyin": row.pinyin or data.get("pinyin", ""),
-        "region": row.region,
-        "status": row.status,
-        "tags": data.get("tags", []),
-        "fleet": data.get("fleet", []),
-        "parts": data.get("parts", []),
-        "contacts": data.get("contacts", []),
-        "warehouse": data.get("warehouse", {"location": "", "main": []}),
-        "logistics": data.get("logistics", {"rail": "", "air": "", "road": ""}),
-        "content_md": data.get("content_md", ""),
-        "source_path": data.get("source_path", ""),
-        "updated_at": data.get("updated_at", row.updated_at.isoformat() if row.updated_at else ""),
+        "airport": row.airport or "",
+        "iata": row.iata or "",
+        "pinyin": row.pinyin or "",
+        "region": row.region or "",
+        "status": row.status or "",
+        "tags": _j(row.tags, []),
+        "fleet": _j(row.fleet, []),
+        "parts": _j(row.parts, []),
+        "contacts": _j(row.contacts, []),
+        "warehouse": _j(row.warehouse, {"location": "", "main": []}),
+        "logistics": _j(row.logistics, {"rail": "", "air": "", "road": ""}),
+        "content_md": row.content_md or "",
+        "source_path": row.source_path or "",
+        "updated_at": row.updated_at or "",
     }
 
 
 def _decode_experience(row: ExperienceRow) -> Dict[str, Any]:
-    try:
-        data = json.loads(row.data_json or "{}")
-    except json.JSONDecodeError:
-        data = {}
+    """T3 schema: 独立列（tags/summary/content_md/related_pn 都是列，tags/related_pn JSON）"""
+    def _j(s: str, default):
+        if not s:
+            return default
+        try:
+            return json.loads(s)
+        except json.JSONDecodeError:
+            return default
     return {
         "id": row.id,
         "title": row.title,
-        "category": row.category,
-        "status": row.status,
-        "tags": data.get("tags", []),
-        "summary": data.get("summary", ""),
-        "content_md": data.get("content_md", ""),
-        "related_pn": data.get("related_pn", []),
-        "source_path": data.get("source_path", ""),
-        "updated_at": data.get("updated_at", row.updated_at.isoformat() if row.updated_at else ""),
+        "category": row.category or "",
+        "status": row.status or "",
+        "tags": _j(row.tags, []),
+        "summary": row.summary or "",
+        "content_md": row.content_md or "",
+        "related_pn": _j(row.related_pn, []),
+        "source_path": row.source_path or "",
+        "updated_at": row.updated_at or "",
     }
 
 
 def _decode_core_plan(row: CorePlanRow) -> Dict[str, Any]:
-    try:
-        data = json.loads(row.data_json or "{}")
-    except json.JSONDecodeError:
-        data = {}
+    """T3 schema: 独立列（content_md/source_path）"""
     return {
         "id": row.id,
         "title": row.title,
-        "type": row.type,
-        "content_md": data.get("content_md", ""),
-        "source_path": data.get("source_path", ""),
-        "updated_at": data.get("updated_at", row.updated_at.isoformat() if row.updated_at else ""),
+        "type": row.type or "",
+        "content_md": row.content_md or "",
+        "source_path": row.source_path or "",
+        "updated_at": row.updated_at or "",
     }
 
 
