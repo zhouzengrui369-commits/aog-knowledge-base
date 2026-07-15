@@ -1,0 +1,137 @@
+// API client — 1:1 对应 CONTRACT §2 端点
+// 错误兜底：fetch 失败或后端未启动 → 降级到 lib/mock 数据
+// 验证：Lighthouse 测试时需 NEXT_PUBLIC_API_BASE=http://localhost:8000
+
+import type {
+  City,
+  Experience,
+  ChatRequest,
+  ChatResponse,
+  CorePlan,
+  SyncStatus,
+} from "@/lib/types";
+import { MOCK_CITIES } from "@/lib/mock/cities";
+import { MOCK_EXPERIENCES } from "@/lib/mock/experiences";
+
+const BASE = process.env.NEXT_PUBLIC_API_BASE || "http://localhost:8000";
+
+/** fetch 包装：超时 + 错误捕获 */
+async function safeFetch<T>(
+  path: string,
+  init?: RequestInit & { timeoutMs?: number }
+): Promise<T | null> {
+  const { timeoutMs = 4000, ...rest } = init || {};
+  const ac = new AbortController();
+  const t = setTimeout(() => ac.abort(), timeoutMs);
+  try {
+    const res = await fetch(`${BASE}${path}`, {
+      ...rest,
+      signal: ac.signal,
+      headers: { "Content-Type": "application/json", ...(rest?.headers || {}) },
+    });
+    if (!res.ok) {
+      console.warn(`[api] ${path} → HTTP ${res.status}`);
+      return null;
+    }
+    return (await res.json()) as T;
+  } catch (err) {
+    // 静默降级 — 不污染服务器日志
+    console.warn(`[api] ${path} failed:`, err instanceof Error ? err.message : err);
+    return null;
+  } finally {
+    clearTimeout(t);
+  }
+}
+
+/** 城市列表 — 支持 region/status/letter 过滤 (CONTRACT §2.2) */
+export async function getCities(params?: {
+  region?: string;
+  status?: string;
+  letter?: string;
+}): Promise<City[]> {
+  const qs = new URLSearchParams();
+  if (params?.region) qs.set("region", params.region);
+  if (params?.status) qs.set("status", params.status);
+  if (params?.letter) qs.set("letter", params.letter);
+  const q = qs.toString() ? `?${qs}` : "";
+  const data = await safeFetch<City[]>(`/api/cities${q}`);
+  if (data) return data;
+  // 降级 mock
+  let list = [...MOCK_CITIES];
+  if (params?.region) list = list.filter((c) => c.region === params.region);
+  if (params?.status) list = list.filter((c) => c.status === params.status);
+  if (params?.letter) {
+    const letter = params.letter.toUpperCase();
+    list = list.filter((c) => c.name.charAt(0).toUpperCase() === letter);
+  }
+  return list;
+}
+
+/** 城市详情 (CONTRACT §2.3) — code URL-encoded */
+export async function getCity(code: string): Promise<City | null> {
+  const encoded = encodeURIComponent(code);
+  const data = await safeFetch<City>(`/api/city/${encoded}`);
+  if (data) return data;
+  return MOCK_CITIES.find((c) => c.code === code) || null;
+}
+
+/** 经验列表 (CONTRACT §2.4) */
+export async function getExperiences(params?: {
+  category?: string;
+  status?: string;
+  q?: string;
+}): Promise<Experience[]> {
+  const qs = new URLSearchParams();
+  if (params?.category) qs.set("category", params.category);
+  if (params?.status) qs.set("status", params.status);
+  if (params?.q) qs.set("q", params.q);
+  const q = qs.toString() ? `?${qs}` : "";
+  const data = await safeFetch<Experience[]>(`/api/experiences${q}`);
+  if (data) return data;
+  let list = [...MOCK_EXPERIENCES];
+  if (params?.category) list = list.filter((e) => e.category === params.category || e.topic === params.category);
+  if (params?.status) list = list.filter((e) => e.status === params.status);
+  if (params?.q) {
+    const k = params.q.toLowerCase();
+    list = list.filter(
+      (e) =>
+        e.title.toLowerCase().includes(k) ||
+        e.summary.toLowerCase().includes(k) ||
+        (e.tags || []).some((t) => t.toLowerCase().includes(k))
+    );
+  }
+  return list;
+}
+
+/** 经验详情 (CONTRACT §2.5) */
+export async function getExperience(id: string): Promise<Experience | null> {
+  const data = await safeFetch<Experience>(`/api/experience/${encodeURIComponent(id)}`);
+  if (data) return data;
+  return MOCK_EXPERIENCES.find((e) => e.id === id) || null;
+}
+
+/** 核心预案 (CONTRACT §2.6) */
+export async function getCorePlans(): Promise<CorePlan[]> {
+  const data = await safeFetch<CorePlan[]>(`/api/core-plans`);
+  return data || [];
+}
+
+/** AI 对话 (CONTRACT §2.7) — 必须 references.length >= 1 (NSM-2) */
+export async function chat(req: ChatRequest): Promise<ChatResponse | null> {
+  const data = await safeFetch<ChatResponse>(`/api/chat`, {
+    method: "POST",
+    body: JSON.stringify(req),
+    timeoutMs: 10000,
+  });
+  return data;
+}
+
+/** 同步状态 (CONTRACT §2.9) */
+export async function getSyncStatus(): Promise<SyncStatus | null> {
+  return safeFetch<SyncStatus>(`/api/sync/status`);
+}
+
+/** 健康检查 (CONTRACT §2.1) */
+export async function health(): Promise<{ status: string; version?: string } | null> {
+  return safeFetch(`/api/health`);
+}
