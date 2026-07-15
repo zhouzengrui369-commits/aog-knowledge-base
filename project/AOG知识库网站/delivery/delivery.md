@@ -203,3 +203,21 @@ project/AOG知识库网站/delivery/screenshots/
 - ground truth 验证 PASS：8 端点 / 7 测试 / 61 pytest pass / 85% coverage / NSM-2 兜底 3 层链 / mock 模式 830ms
 - T3 pipeline 仍在跑（用 data/ 目录，写 Chroma + SQLite）
 - Wave 1 进度：2/3 完成
+
+### 2026-07-16 01:30 — Wave 1 完整收口
+- T3 pipeline PM 接管完成 build（agent lost, runtime restart）：
+  - 248 files scanned / **248 indexed / 0 failed**
+  - 8686 chunks / 116.41 MB chroma
+  - 223 cities / 15 experiences / 10 core_plans
+  - build_time_s: 1769 (~30min, bge-m3 客观耗时)
+- merge feature/wave1-pipeline → main (commit 862a51c)
+- 复制 141MB data/ 到主项目 backend/data + pipeline/data（gitignored）
+- **PM 修 2 个 contract 违规 bug** (commit 32426dc)：
+  1. chroma_client.COLLECTION_NAME: aog_documents → aog_knowledge (CONTRACT §5)
+  2. sqlite_client SQLAlchemy schema 镜像 T3 实际表（独立列 vs data_json）
+- **Wave 1 端到端 PASS**：
+  - 4 页面 curl 200 (首页/北京大兴/experiences/exp-e25c39e8)
+  - 首页含真实数据 (北京大兴/上海浦东/广州白云/香港/B787)
+  - POST /api/chat "B787 风挡" 检索 5 个真实文档 (top1=B787 风挡AOG处理流程 score=0.800)
+  - latency 2024ms (RAG + mock LLM)
+- **Wave 1 100% 完成**，进入 Wave 2 准备
