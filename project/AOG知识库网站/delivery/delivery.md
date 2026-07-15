@@ -11,6 +11,9 @@
 
 | ID | 任务 | 状态 | 验收人 | 派发日期 | 完成日期 | 备注 |
 |---|---|---|---|---|---|---|
+| T0.1 | PRD 精简版 | done | PM (自主) | 2026-07-15 | 2026-07-15 | Phase 0.5 |
+| T0.2 | UI HTML 高保真 mockup | in_progress | sub-agent mockup-agent | 2026-07-15 | - | Phase 0.5 |
+| T0.3 | 调整基线（截止/规则/delivery） | done | PM (自主) | 2026-07-15 | 2026-07-15 | Phase 0.5 |
 | T1 | 后端骨架（FastAPI + Chroma + 解析器） | pending | sub-agent backend-agent | D2 | - | Wave 1 |
 | T2 | 前端骨架（Next.js + 三大页面） | pending | sub-agent frontend-agent | D2 | - | Wave 1 |
 | T3 | 数据 pipeline（解析 + 向量化） | pending | sub-agent data-agent | D2 | - | Wave 1 |
@@ -24,6 +27,29 @@
 ---
 
 ## §2 详细验收清单
+
+### T0.2 UI HTML 高保真 mockup
+- [ ] `aog-web/mockup/` 目录存在
+- [ ] 5 个 HTML 页面：index.html / city.html / experiences.html / experience.html / 404.html
+- [ ] 城市详情页支持 URL hash 参数（如 `city.html#B-北京大兴`）
+- [ ] 3 断点响应式：mobile 360 / tablet 768 / desktop 1280
+- [ ] Tailwind CSS 加载（CDN 即可）
+- [ ] shadcn/ui 风格组件（按钮/卡片/输入框/抽屉/标签）
+- [ ] lucide-react 风格 SVG 图标
+- [ ] 字母导航 26 字母可点击（无数据字母灰显）
+- [ ] 首页推荐城市卡片 ≥ 3 张
+- [ ] 经验列表 18 个卡片（用 PRD §7 真实样例）
+- [ ] ChatWidget 浮窗：右下角按钮 + 展开抽屉 + 3 个示例问题 + mock AI 回复
+- [ ] 真实 AOG 数据：北京大兴/上海浦东/广州白云/香港 + B787 风挡/米兰取件等
+- [ ] 文件大小合理（每页 < 200KB HTML）
+- 截图（存 `delivery/screenshots/T0.2/`）：
+  - 01_home_desktop.png / 02_home_tablet.png / 03_home_mobile.png
+  - 04_city_desktop.png / 05_city_mobile.png
+  - 06_experiences_desktop.png
+  - 07_experience_desktop.png
+  - 08_chat_desktop.png / 09_chat_mobile.png
+  - 10_404.png
+  - 合计 ≥ 10 张
 
 ### T1 后端骨架
 - [ ] `uvicorn aog_web.main:app --port 8000` 启动成功

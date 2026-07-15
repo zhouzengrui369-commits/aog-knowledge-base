@@ -3,23 +3,54 @@
 > 项目: AOG AI 知识库网站
 > PM: Mavis (mavis)
 > 最后更新: 2026-07-15
-> 截止: 2026-07-22 (1 周 MVP, 7 天)
+> 截止: 2026-07-23 (1 周 MVP, 7 天 — 7/22 → 7/23 加 1 天 Phase 0.5)
+
+---
+
+## §0 Phase 0.5 立项补完（NJX 7/15 拍板加入）
+
+> 触发：NJX 4 文档签字时反问"PRD 确认清楚了吗？UI 高保真原型图什么时候出？"
+> 处理：Vibe Coding §0.7.2 阶段 4（PRD）+ 阶段 6（UI 原型）我之前跳过，必须补完才进 Wave 1。
+
+```
+Phase 0.5 (D0.5-D1.5, 1.5 天)
+├── T0.1 PRD 精简版（PM 自主，30min）       ✓ done 2026-07-15 21:30
+├── T0.2 UI HTML 高保真 mockup（sub-agent 1 天）
+│   ├── 5 页：首页/城市详情/经验列表/经验详情/404
+│   ├── 3 断点：mobile 360 / tablet 768 / desktop 1280
+│   ├── 技术：Tailwind + shadcn/ui（HTML 静态版）+ lucide-react
+│   ├── 数据：用 PRD §7 真实样例（不是 lorem ipsum）
+│   ├── ChatWidget 浮窗（UI + mock 回复）
+│   ├── 截图：15 张（5 页 × 3 断点）+ 3 张 ChatWidget
+│   └── 输出：aog-web/mockup/ 目录，PM 验收
+└── T0.3 调整基线（PM）
+    ├── 截止 7/22 → 7/23
+    ├── rules.md 加 mockup 验收项
+    └── delivery.md 加 T0.2 验收清单
+```
+
+**为什么 HTML mockup 不是 Figma**：
+- 1 周节奏 Figma 设计太重（1-2 天纯设计 + 切图）
+- HTML mockup 可直接当 Next.js 前端骨架（T2 agent 复用）
+- 浏览器即开，截图方便验收
+- 像素级精度，NJX 一眼判断
 
 ---
 
 ## §1 阶段总览（Phase / Sprint / Wave）
 
 ```
-Phase 1 (MVP, 7 天)
-├── Wave 1 (Day 1-3): 骨架 + 并行 3 子智能体
+Phase 1 (MVP, 7 天: 7/16-7/23)
+├── Phase 0.5 (D0.5-D1.5, 7/16-7/17 中): PRD + UI mockup
+├── Wave 1 (D2-D3, 7/18-7/19): 骨架 + 并行 3 子智能体
 │   ├── T1 后端骨架 (FastAPI + Chroma + 解析器)
-│   ├── T2 前端骨架 (Next.js 15 + 三大页面)
+│   ├── T2 前端骨架 (Next.js 15 — 基于 mockup 转)
 │   └── T3 数据 pipeline (md/docx/xlsx/pdf 解析 + 向量化)
-├── Wave 2 (Day 4-5): 集成 + 部署
+├── Wave 2 (D4-D5, 7/20-7/21): 集成 + 部署
 │   ├── T4 前后端集成 (API 联调 + E2E 本地跑通)
 │   ├── T5 Railway + Vercel 部署
 │   └── T6 增量同步 (定时轮询 v1.1)
-└── Wave 3 (Day 6-7): 真 E2E 验收 + 截图 + 文档
+└── Wave 3 (D6-D7, 7/22-7/23): 真 E2E 验收 + 截图 + 文档
     ├── T7 真机访问 + 截图
     ├── T8 增量同步验证
     └── T9 4 文档收尾 + Changelog
