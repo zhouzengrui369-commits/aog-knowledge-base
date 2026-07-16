@@ -19,6 +19,9 @@ dependencies = [
     "pypdf>=4.3.0",
     "python-docx>=1.1.0",
     "openpyxl>=3.1.0",
+    # CloudBase COS 持久化 — 容器冷启动从 COS 拉 chroma + aog.db
+    # 本地 dev 不填 COS_* env 也能跑 (storage_cos.py 会 skip download)
+    "cos-python-sdk-v5>=1.9.29",
 ]
 
 [project.optional-dependencies]
