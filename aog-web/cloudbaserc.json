@@ -1,0 +1,36 @@
+{
+  "version": "2.0",
+  "envId": "REPLACE_WITH_REAL_ENV_ID",
+  "framework": {
+    "name": "aog-web",
+    "runtime": "Container"
+  },
+  "settings": {
+    "container": {
+      "image": "aog-web-backend:latest",
+      "port": 8000,
+      "env": {
+        "PYTHONUNBUFFERED": "1",
+        "PORT": "8000"
+      },
+      "resources": {
+        "cpu": "1",
+        "memory": "2Gi"
+      },
+      "mounts": [
+        {
+          "name": "aog-data",
+          "mountPath": "/app/aog-web/backend/data",
+          "sourceType": "COSBucket",
+          "sourceName": "REPLACE_WITH_REAL_COS_BUCKET"
+        }
+      ]
+    }
+  },
+  "functions": [],
+  "hosting": {
+    "static": {
+      "domain": "REPLACE_WITH_REAL_DOMAIN"
+    }
+  }
+}
