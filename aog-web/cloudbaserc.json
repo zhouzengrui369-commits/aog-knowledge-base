@@ -1,33 +1,35 @@
 {
   "version": "2.0",
-  "envId": "REPLACE_WITH_REAL_ENV_ID",
-  "framework": {
-    "name": "aog-web",
-    "runtime": "Container"
-  },
-  "settings": {
-    "container": {
-      "image": "aog-web-backend:latest",
-      "port": 8000,
-      "env": {
-        "PYTHONUNBUFFERED": "1",
-        "PORT": "8000"
-      },
-      "resources": {
-        "cpu": "1",
-        "memory": "2Gi"
-      },
-      "mounts": [
-        {
-          "name": "aog-data",
-          "mountPath": "/app/aog-web/backend/data",
-          "sourceType": "COSBucket",
-          "sourceName": "REPLACE_WITH_REAL_COS_BUCKET"
-        }
-      ]
+  "envId": "njx-copilot-d6gs7642f8fa17122",
+  "functionRoot": "functions/aog-api",
+  "functions": [
+    {
+      "name": "aog-api",
+      "timeout": 60,
+      "memorySize": 512,
+      "runtime": "Python3.11",
+      "installDependency": true,
+      "handler": "main.main_handler",
+      "envVariables": {
+        "RAG_BACKEND": "fts5",
+        "FTS5_PATH": "/tmp/aog_fts5.db",
+        "CHROMA_PATH": "/tmp/chroma",
+        "SQLITE_PATH": "/tmp/aog.db",
+        "COS_BUCKET": "aog-prod-data-1343051603",
+        "COS_REGION": "ap-shanghai",
+        "COS_SECRET_ID": "${COS_SECRET_ID}",
+        "COS_SECRET_KEY": "${COS_SECRET_KEY}",
+        "MINIMAX_API_KEY": "${MINIMAX_API_KEY}",
+        "MINIMAX_BASE_URL": "https://api.MiniMax.chat/v1",
+        "MINIMAX_MODEL": "minimax-m3",
+        "CORS_ALLOW_ORIGINS": "https://njx-copilot-d6gs7642f8fa17122.ap-shanghai.app.tcloudbase.com,https://aog.njx.com,http://localhost:3000",
+        "LOG_LEVEL": "INFO",
+        "SYNC_ENABLED": "false",
+        "KNOWLEDGE_BASE_PATH": "/tmp",
+        "RAW_PATH": "/tmp"
+      }
     }
-  },
-  "functions": [],
+  ],
   "hosting": {
     "static": {
       "domain": "REPLACE_WITH_REAL_DOMAIN"

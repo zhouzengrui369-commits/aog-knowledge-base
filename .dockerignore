@@ -1,0 +1,32 @@
+# AOG Web Docker 忽略 - 防止镜像爆炸
+# build context 是 /Users/njx/Project/AOG知识库 (parent of aog-web/)
+
+# === 知识库原始数据 (只读, 不进镜像) ===
+AOG知识库/
+RAW/
+
+# === node / python 编译产物 ===
+**/node_modules/
+**/.next/
+**/dist/
+**/__pycache__/
+**/.pytest_cache/
+**/.venv/
+**/venv/
+
+# === git / IDE ===
+.git/
+.gitignore
+.idea/
+.vscode/
+*.swp
+.DS_Store
+
+# === worktrees (本地开发分支) ===
+worktrees/
+
+# === 临时文件 ===
+*.log
+*.tmp
+*.bak
+**/data/

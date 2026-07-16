@@ -2,3 +2,7 @@ __pycache__/
 *.pyc
 *.pyo
 .env
+# 部署时由 cloudbaserc.json installDependency=true 在 SCF 平台自动跑 pip install
+# 本地 physical copy 仅用于本地测试
+third_party/
+scf_bootstrap_runtime/
