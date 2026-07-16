@@ -1,48 +1,57 @@
-import { notFound } from "next/navigation";
+"use client";
+import { useEffect, useState } from "react";
 import Link from "next/link";
-import type { Metadata } from "next";
 import { NavBar } from "@/components/nav-bar";
 import { CityTabs } from "@/components/city-tabs";
 import { getCity, getCities } from "@/lib/api";
 import { normalizeCityStatus, STATUS_LABEL, cn, fmtDate } from "@/lib/utils";
 import { Download, Bot, ChevronLeft, AlertTriangle } from "lucide-react";
 import type { City } from "@/lib/types";
-import { CityDetailClient } from "@/components/city-detail-client";
 
-interface PageProps {
-  params: Promise<{ code: string }>;
-}
+export function CityDetailClient({ code }: { code: string }) {
+  const [city, setCity] = useState<City | null | undefined>(undefined);
+  const [related, setRelated] = useState<City[]>([]);
 
-/** 静态生成 — 列出 featured 城市 (其余 client-side 加载, 避开 SCF cold start 30-60s) */
-export async function generateStaticParams() {
-  // mock 4 个城市数据 (避免 build 时 fetch SCF cold start)
-  return [
-    { code: encodeURIComponent("B-北京大兴") },
-    { code: encodeURIComponent("S-上海浦东") },
-    { code: encodeURIComponent("G-广州") },
-    { code: encodeURIComponent("X-西安") },
-  ];
-}
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      const c = await getCity(code);
+      if (cancelled) return;
+      setCity(c);
+      if (c) {
+        const all = await getCities();
+        if (cancelled) return;
+        const others = all.filter((x) => x.code !== c.code);
+        const sameRegion = others.filter((x) => x.region === c.region).slice(0, 3);
+        const fill = others.filter((x) => x.region !== c.region).slice(0, 3 - sameRegion.length);
+        setRelated([...sameRegion, ...fill].slice(0, 3));
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [code]);
 
-/** 动态 SEO metadata */
-export async function generateMetadata({ params }: PageProps): Promise<Metadata> {
-  // metadata 失败用默认, 不阻塞 build
-  return { title: "城市详情 · AOG 知识库" };
-}
-
-export default async function CityPage({ params }: PageProps) {
-  const { code } = await params;
-  const decoded = decodeURIComponent(code);
-
-  // 用超时 1s 的 fetch 拉数据, 失败用 mock fallback (build 时不会卡 30s+ cold start)
-  const city = await Promise.race([
-    getCity(decoded),
-    new Promise<null>((r) => setTimeout(() => r(null), 1000)),
-  ]).catch(() => null);
-
-  if (!city) {
-    // fallback: 直接渲染 client 组件让浏览器去 fetch
-    return <CityDetailClient code={decoded} />;
+  if (city === undefined) {
+    return (
+      <>
+        <NavBar />
+        <div className="mx-auto max-w-7xl px-4 pt-6 sm:px-6 lg:px-8">
+          <div className="text-ink-500 text-sm">加载中…</div>
+        </div>
+      </>
+    );
+  }
+  if (city === null) {
+    return (
+      <>
+        <NavBar />
+        <div className="mx-auto max-w-7xl px-4 pt-6 sm:px-6 lg:px-8">
+          <div className="text-ink-700">城市未找到</div>
+          <Link href="/" className="text-sm text-primary hover:underline mt-2 inline-block">
+            返回首页
+          </Link>
+        </div>
+      </>
+    );
   }
 
   const st = STATUS_LABEL[normalizeCityStatus(city.status)] || { cls: "", text: city.status };
@@ -112,6 +121,19 @@ export default async function CityPage({ params }: PageProps) {
                 下载预案 PDF
               </button>
             </div>
+            {related.length > 0 && (
+              <div className="rounded-lg border border-surface-3 bg-white p-4 space-y-3">
+                <h3 className="text-sm font-semibold text-ink-800">相关航站</h3>
+                <div className="space-y-2">
+                  {related.map((c) => (
+                    <Link key={c.code} href={`/city/${encodeURIComponent(c.code)}`} className="block rounded-md p-2 hover:bg-surface-2">
+                      <div className="text-sm font-medium text-ink-800">{c.name}</div>
+                      <div className="text-xs text-ink-500">{c.region} · {c.iata || "—"}</div>
+                    </Link>
+                  ))}
+                </div>
+              </div>
+            )}
           </aside>
         </div>
         {city.updated_at && (
@@ -127,9 +149,4 @@ export default async function CityPage({ params }: PageProps) {
       </main>
     </>
   );
-}
-
-// Fallback: 数据拉不到时 (build / 冷启动 / mock), 用 client 组件让浏览器 fetch
-function CityFallback({ code }: { code: string }) {
-  return <CityDetailClient code={code} />;
 }

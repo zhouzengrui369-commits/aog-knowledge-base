@@ -20,6 +20,17 @@ interface PageProps {
   params: Promise<{ id: string }>;
 }
 
+export async function generateStaticParams() {
+  // 跟 T2 mockup 里的 featured 经验对齐, 其他经验 client-side 加载
+  const featured = [
+    "b787-windshield-aog",
+    "aog-workflow-r1",
+    "exp-001",
+    "exp-002",
+  ];
+  return featured.map((id) => ({ id }));
+}
+
 export async function generateMetadata({ params }: PageProps): Promise<Metadata> {
   const { id } = await params;
   const exp = await getExperience(decodeURIComponent(id));
