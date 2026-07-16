@@ -15,12 +15,12 @@ interface PageProps {
 
 /** 静态生成 — 列出 featured 城市 (其余 client-side 加载, 避开 SCF cold start 30-60s) */
 export async function generateStaticParams() {
-  // mock 4 个城市数据 (避免 build 时 fetch SCF cold start)
+  // 不 encode URI, Next.js 会自动处理 path segment encoding
   return [
-    { code: encodeURIComponent("B-北京大兴") },
-    { code: encodeURIComponent("S-上海浦东") },
-    { code: encodeURIComponent("G-广州") },
-    { code: encodeURIComponent("X-西安") },
+    { code: "B-北京大兴" },
+    { code: "S-上海浦东" },
+    { code: "G-广州白云" },
+    { code: "X-西安" },
   ];
 }
 

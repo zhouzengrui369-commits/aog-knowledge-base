@@ -43,10 +43,20 @@ export async function generateMetadata({ params }: PageProps): Promise<Metadata>
 
 export default async function ExperiencePage({ params }: PageProps) {
   const { id } = await params;
-  const exp = await getExperience(decodeURIComponent(id));
-  if (!exp) notFound();
+  // 用 1s timeout 拉数据, 失败 fallback to client component
+  const exp = await Promise.race([
+    getExperience(decodeURIComponent(id)),
+    new Promise<null>((r) => setTimeout(() => r(null), 1000)),
+  ]).catch(() => null);
+  if (!exp) {
+    const { ExperienceDetailClient } = await import("@/components/experience-detail-client");
+    return <ExperienceDetailClient id={decodeURIComponent(id)} />;
+  }
 
-  const all = await getExperiences();
+  const all = (await Promise.race([
+    getExperiences(),
+    new Promise<any[]>((r) => setTimeout(() => r([]), 1000)),
+  ]).catch(() => [])) ?? [];
   const relatedIds = exp.related || [];
   let related = all.filter((e) => relatedIds.includes(e.id) && e.id !== exp.id);
   if (related.length < 3) {
