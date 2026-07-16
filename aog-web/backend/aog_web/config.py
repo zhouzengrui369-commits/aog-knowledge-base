@@ -37,6 +37,10 @@ class Settings(BaseSettings):
     # ===== 存储路径 (相对 backend/) =====
     CHROMA_PATH: str = "./data/chroma"
     SQLITE_PATH: str = "./data/aog.db"
+    # FTS5 索引路径 (Wave 3 SCF 部署用, 默认本地, SCF 部署时改为 /tmp/aog_fts5.db)
+    FTS5_PATH: str = "./data/fts5_index.db"
+    # RAG backend: "chroma" (本地 dev) | "fts5" (SCF 部署)
+    RAG_BACKEND: str = "chroma"
 
     # ===== 知识库源 (只读) =====
     KNOWLEDGE_BASE_PATH: str = "/Users/njx/Project/AOG知识库/AOG知识库"
@@ -64,6 +68,19 @@ class Settings(BaseSettings):
         if not p.is_absolute():
             p = self.backend_root / p
         return p.resolve()
+
+    @property
+    def fts5_path(self) -> Path:
+        p = Path(self.FTS5_PATH)
+        if not p.is_absolute():
+            p = self.backend_root / p
+        return p.resolve()
+
+    @property
+    def rag_backend(self) -> str:
+        """RAG backend: 'chroma' (本地 dev) | 'fts5' (SCF 部署)"""
+        v = (self.RAG_BACKEND or "chroma").lower().strip()
+        return v if v in {"chroma", "fts5"} else "chroma"
 
     @property
     def sqlite_path(self) -> Path:

@@ -3,7 +3,9 @@
 启动流程:
 1. load settings
 2. init SQLite (建表)
-3. init Chroma (collection)
+3. init RAG backend:
+   - chroma (本地 dev): 拿 collection
+   - fts5 (SCF 部署): 从 COS 拉 fts5_index.db (lifespan 钩子)
 4. (可选) start sync service
 5. 监听 SIGTERM → graceful shutdown
 """
@@ -28,7 +30,9 @@ from aog_web.api import (
 )
 from aog_web.config import get_settings
 from aog_web.services.chroma_client import get_chroma_client
+from aog_web.services.fts5_client import get_fts5_client
 from aog_web.services.sqlite_client import get_sqlite_client
+from aog_web.services.storage_cos import download_data_from_cos, is_cos_configured
 from aog_web.services.sync import get_sync_service
 
 
@@ -50,23 +54,43 @@ async def lifespan(app: FastAPI):
     logger.info("=" * 60)
     logger.info("AOG Web Backend starting (version=%s)", __version__)
     logger.info("LLM mode: %s", "MOCK ⚠️" if settings.is_mock_llm else "LIVE (MiniMax M3)")
+    logger.info("RAG backend: %s", settings.rag_backend)
     logger.info("Chroma: %s", settings.chroma_path)
+    logger.info("FTS5:   %s", settings.fts5_path)
     logger.info("SQLite: %s", settings.sqlite_path)
     logger.info("Knowledge base: %s", settings.knowledge_base_path)
     logger.info("CORS: %s", settings.cors_origins)
     logger.info("=" * 60)
 
+    # 0. SCF 冷启动: 如果 fts5 路径在 /tmp 且不存在, 从 COS 下载
+    if settings.rag_backend == "fts5" and is_cos_configured() and not settings.fts5_path.exists():
+        logger.info("FTS5 not found at %s, downloading from COS ...", settings.fts5_path)
+        try:
+            download_data_from_cos(anchor=settings.fts5_path.parent, force=False)
+        except Exception as e:
+            logger.warning("FTS5 COS download failed (will continue, may be empty): %s", e)
+
     # 1. SQLite 建表
     sqlite = get_sqlite_client()
     await sqlite.init()
 
-    # 2. Chroma 初始化 (拿到 collection)
-    try:
-        chroma = get_chroma_client()
-        count = chroma.count()
-        logger.info("Chroma collection: %d docs", count)
-    except Exception as e:
-        logger.warning("Chroma init issue (will continue): %s", e)
+    # 2. RAG backend 初始化
+    if settings.rag_backend == "fts5":
+        # FTS5 客户端
+        try:
+            fts5 = get_fts5_client()
+            n = await fts5.count()
+            logger.info("FTS5 chunks_fts: %d docs", n)
+        except Exception as e:
+            logger.warning("FTS5 init issue (will continue): %s", e)
+    else:
+        # Chroma 客户端 (本地 dev 默认)
+        try:
+            chroma = get_chroma_client()
+            count = chroma.count()
+            logger.info("Chroma collection: %d docs", count)
+        except Exception as e:
+            logger.warning("Chroma init issue (will continue): %s", e)
 
     # 3. Sync service (T6 真实实现 - 启动后台 poll 任务)
     sync_svc = get_sync_service()
@@ -84,6 +108,13 @@ async def lifespan(app: FastAPI):
     logger.info("AOG Web Backend shutting down...")
     await sync_svc.stop()
     await sqlite.close()
+    # FTS5 客户端也需要关
+    try:
+        from aog_web.services.fts5_client import _client as _fts5_singleton
+        if _fts5_singleton is not None:
+            await _fts5_singleton.close()
+    except Exception:
+        pass
     logger.info("AOG Web Backend stopped.")
 
 
@@ -91,7 +122,7 @@ def create_app() -> FastAPI:
     settings = get_settings()
     app = FastAPI(
         title="AOG AI 知识库 API",
-        description="Wave 1 · T1 后端 (FastAPI + Chroma + SQLite + MiniMax M3)",
+        description=f"Wave 3 · T5 后端 (FastAPI + {settings.rag_backend.upper()} + SQLite + MiniMax M3)",
         version=__version__,
         lifespan=lifespan,
         docs_url="/docs",

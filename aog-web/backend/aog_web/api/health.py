@@ -21,4 +21,5 @@ async def health(request: Request) -> dict:
         "version": __version__,
         "uptime_s": int(time.time() - _START_TIME),
         "llm_mode": "mock" if settings.is_mock_llm else "live",
+        "rag_backend": settings.rag_backend,
     }

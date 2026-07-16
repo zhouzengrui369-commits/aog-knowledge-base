@@ -1,12 +1,12 @@
 """POST /api/chat - RAG + LLM - CONTRACT §2.7
 
 流程:
-1. 收到 q → Chroma 查 top-5
+1. 收到 q → RAG backend 查 top-5 (chroma 或 fts5, 由 settings.rag_backend 决定)
 2. 取 1-3 个最相关文档作为 context
 3. 构造 system prompt + user q
 4. 调 LLM (Mock 或 MiniMax M3 真实)
 5. 返回 {answer, references, model, latency_ms}
-★ NSM-2: references 强制 ≥ 1 (从 Chroma 检索结果填, 不足则用 SQLite 兜底)
+★ NSM-2: references 强制 ≥ 1 (从 RAG 检索结果填, 不足则用 SQLite 兜底)
 """
 from __future__ import annotations
 
@@ -18,6 +18,7 @@ from fastapi import APIRouter, HTTPException, Request
 
 from aog_web.models.chat import ChatRequest, ChatResponse, Reference
 from aog_web.services.chroma_client import get_chroma_client
+from aog_web.services.fts5_client import get_fts5_client
 from aog_web.services.llm import get_llm
 from aog_web.services.sqlite_client import get_sqlite_client
 
@@ -191,10 +192,27 @@ async def chat(request: Request, body: ChatRequest) -> ChatResponse:
     settings = request.app.state.settings
     llm = get_llm(settings=settings)
 
-    # 1. Chroma 检索 (top-5)
-    chroma = get_chroma_client()
-    chroma_hits = await chroma.query(body.q, n_results=5)
-    logger.info("chroma hits: %d for q=%r", len(chroma_hits), body.q[:60])
+    # 1. RAG 检索 (top-5) - 根据 settings.rag_backend 切换
+    rag_hits: List[Dict[str, Any]] = []
+    if settings.rag_backend == "fts5":
+        try:
+            fts5 = get_fts5_client()
+            rag_hits = await fts5.query(body.q, n_results=5)
+            logger.info("fts5 hits: %d for q=%r", len(rag_hits), body.q[:60])
+        except Exception as e:
+            logger.warning("fts5 query failed, fallback to chroma: %s", e)
+            try:
+                chroma = get_chroma_client()
+                rag_hits = await chroma.query(body.q, n_results=5)
+                logger.info("chroma fallback hits: %d", len(rag_hits))
+            except Exception as e2:
+                logger.error("chroma fallback also failed: %s", e2)
+    else:
+        chroma = get_chroma_client()
+        rag_hits = await chroma.query(body.q, n_results=5)
+        logger.info("chroma hits: %d for q=%r", len(rag_hits), body.q[:60])
+    # 用通用名 chroma_hits 保持下游不变
+    chroma_hits = rag_hits
 
     # 2. 取 1-3 个最相关文档作为 context
     top_refs = chroma_hits[:3]
