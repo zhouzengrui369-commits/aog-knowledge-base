@@ -2,8 +2,33 @@
 
 > 项目: AOG AI 知识库网站
 > PM: Mavis (mavis)
-> 最后更新: 2026-07-15
-> 截止: 2026-07-23 (1 周 MVP, 7 天 — 7/22 → 7/23 加 1 天 Phase 0.5)
+> 最后更新: 2026-07-16
+> 截止: 2026-07-23 (1 周 MVP, **已完成**)
+> 状态: ✅ **Wave 3 真 E2E 通过, MVP 上线**
+> 公网 URL: https://njx-copilot-d6gs7642f8fa17122-1343051603.tcloudbaseapp.com
+
+## 1 周 MVP 实际产出
+
+| Wave | 子任务 | 状态 | commit |
+|---|---|---|---|
+| 0.5 | PRD + UI mockup 5 页 + 10 截图 | ✅ | `1aae43a` |
+| 1.1 | T1 后端 FastAPI 8 端点 + 7 测试 | ✅ | `1556660` |
+| 1.2 | T2 前端 Next.js 5 页面 + 18 截图 | ✅ | `1955b1e` |
+| 1.3 | T3 数据 pipeline (248 indexed) | ✅ | `e2a3194` |
+| 1.4 | T4 集成 E2E (5 真实 RAG 引用) | ✅ | `32426dc` |
+| 1.5 | T5 CloudBase 个人版 + SCF | ✅ | `994d4b9` `7f2d6c7` |
+| 1.6 | T6 增量同步 (17 测试 / 81% coverage) | ✅ | `b3fcda0` |
+| 2 | Wave 2 全 3/3 done | ✅ | (历史) |
+| 3 | T7 真 E2E (4 端点 + NSM-2 + 7 截图) | ✅ | `d32c55e` `d47c93c` |
+| 3 | T8 增量同步公网验证 (待) | 🟡 | (用户 4 周后补) |
+| 3 | T9 4 文档收尾 | ✅ | this file + WAVE3_NOTES.md |
+
+## 关键决策链 (NJX 拍板)
+
+1. **Vercel+Railway → CloudBase** (NJX 1:57) — 新户免费 + cron 经验
+2. **Cloud Run → SCF** (PM 自主) — 个人版无容器托管
+3. **Chroma → FTS5** (NJX 13:30) — 个人版 /tmp 装不下 bge-m3
+4. **🅲-2 SCF + FTS5** (NJX 拍板) — 免费 + 真数据 + 接受 30-60s 冷启动
 
 ---
 

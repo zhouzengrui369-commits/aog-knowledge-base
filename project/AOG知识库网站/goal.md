@@ -3,8 +3,10 @@
 > 项目: AOG AI 知识库网站
 > Owner: NJX (OPC)
 > PM: Mavis (mavis)
-> 最后更新: 2026-07-15
-> 截止: 2026-07-22 (1 周 MVP)
+> 最后更新: 2026-07-16
+> 截止: 2026-07-23 (1 周 MVP, **已完成**)
+> 状态: ✅ **Wave 3 真 E2E 通过, MVP 上线**
+> 公网 URL: https://njx-copilot-d6gs7642f8fa17122-1343051603.tcloudbaseapp.com
 
 ---
 
