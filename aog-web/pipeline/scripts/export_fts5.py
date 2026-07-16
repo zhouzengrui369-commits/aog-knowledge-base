@@ -1,0 +1,450 @@
+"""Chroma → SQLite FTS5 ETL 脚本
+
+Wave 3 · SCF 部署前置 (替代 chroma, /tmp 友好)
+
+输入:
+  - data/chroma/chroma.sqlite3 (chroma persistent client)
+  - data/aog.db (元数据: cities / experiences / core_plans)
+
+输出:
+  - data/fts5_index.db (3 张 FTS5 虚拟表 + 元数据索引)
+  - data/chunks_meta.json (id → doc_path 映射, 前端引用)
+
+技术选择:
+  - 中文分词: trigram (FTS5 内置), 无 jieba
+  - 倒排索引: BM25 (FTS5 默认 rank)
+  - 同时建 metadata 索引 (source_id, source_type, region, status 等) 用于 filter
+
+使用:
+  cd aog-web/backend && source .venv/bin/activate
+  cd ../pipeline && python -m scripts.export_fts5 \\
+      --chroma ../backend/data/chroma \\
+      --sqlite ../backend/data/aog.db \\
+      --out ../backend/data/fts5_index.db
+"""
+from __future__ import annotations
+
+import argparse
+import json
+import logging
+import sqlite3
+import sys
+import time
+from pathlib import Path
+from typing import Dict, List, Optional, Tuple
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+    datefmt="%Y-%m-%dT%H:%M:%S",
+)
+logger = logging.getLogger("export_fts5")
+
+
+# ====== FTS5 schema ======
+# chunks_fts 用 unicode61 + tokenchars (CJK 单字 token, English/数字/dash 完整)
+# unicode61 把 CJK 当单字 token, "风挡" 命中; "风挡维修" 不命中 (4+ char 中文 phrase)
+# 应用层: 长中文 query 拆 "A AND B" OR 多个 token, 详见 aog_web/services/fts5_client.py
+# 决定不用 trigram: 55MB 太大, 下载慢. 改 unicode61 27MB
+CHUNKS_FTS_SCHEMA = """
+CREATE VIRTUAL TABLE IF NOT EXISTS chunks_fts USING fts5(
+    content,
+    title,
+    source_path,
+    source_id UNINDEXED,
+    source_type UNINDEXED,
+    region UNINDEXED,
+    status UNINDEXED,
+    doc_id UNINDEXED,
+    chunk_index UNINDEXED,
+    tokenize = "unicode61 remove_diacritics 2 tokenchars '-_.#/'"
+);
+"""
+
+# 经验全文索引
+EXPERIENCES_FTS_SCHEMA = """
+CREATE VIRTUAL TABLE IF NOT EXISTS experiences_fts USING fts5(
+    content,
+    id UNINDEXED,
+    title,
+    category UNINDEXED,
+    status UNINDEXED,
+    tags UNINDEXED,
+    tokenize = "unicode61 remove_diacritics 2 tokenchars '-_.#/'"
+);
+"""
+
+# 城市全文索引
+CITIES_FTS_SCHEMA = """
+CREATE VIRTUAL TABLE IF NOT EXISTS cities_fts USING fts5(
+    content,
+    code UNINDEXED,
+    name,
+    airport,
+    iata,
+    pinyin,
+    region UNINDEXED,
+    status UNINDEXED,
+    tags UNINDEXED,
+    tokenize = "unicode61 remove_diacritics 2 tokenchars '-_.#/'"
+);
+"""
+
+# 核心预案索引
+CORE_PLANS_TABLE_SCHEMA = """
+CREATE TABLE IF NOT EXISTS core_plans_meta (
+    id TEXT PRIMARY KEY,
+    title TEXT,
+    type TEXT,
+    source_path TEXT,
+    updated_at TEXT
+);
+"""
+
+# chunks 元数据 (id → metadata), 简单 KV 表, 用于快速 lookup
+CHUNKS_META_SCHEMA = """
+CREATE TABLE IF NOT EXISTS chunks_meta (
+    id TEXT PRIMARY KEY,
+    source_id TEXT,
+    source_type TEXT,
+    source_path TEXT,
+    title TEXT,
+    region TEXT,
+    status TEXT,
+    doc_id TEXT,
+    chunk_index INTEGER
+);
+CREATE INDEX IF NOT EXISTS idx_chunks_meta_source_id ON chunks_meta(source_id);
+CREATE INDEX IF NOT EXISTS idx_chunks_meta_source_type ON chunks_meta(source_type);
+CREATE INDEX IF NOT EXISTS idx_chunks_meta_region ON chunks_meta(region);
+"""
+
+
+def _read_chroma(chroma_path: Path) -> Tuple[List[str], List[str], List[Dict], List[Dict]]:
+    """读 chroma collection 全部 documents + metadatas + ids
+
+    Returns:
+        (ids, documents, metadatas, embeddings_placeholder)
+    """
+    import chromadb
+    from chromadb.config import Settings as ChromaSettings
+
+    if not chroma_path.exists():
+        raise FileNotFoundError(f"chroma path not found: {chroma_path}")
+    logger.info("loading chroma from %s ...", chroma_path)
+    client = chromadb.PersistentClient(
+        path=str(chroma_path),
+        settings=ChromaSettings(anonymized_telemetry=False, allow_reset=False),
+    )
+    col = client.get_collection("aog_knowledge")
+    count = col.count()
+    logger.info("chroma collection count: %d", count)
+    if count == 0:
+        return [], [], [], []
+
+    # 分批拉 (chroma get 有 limit, 分页避免 OOM)
+    BATCH = 1000
+    all_ids: List[str] = []
+    all_docs: List[str] = []
+    all_metas: List[Dict] = []
+    offset = 0
+    while offset < count:
+        n = min(BATCH, count - offset)
+        r = col.get(limit=n, offset=offset, include=["documents", "metadatas"])
+        all_ids.extend(r.get("ids") or [])
+        all_docs.extend(r.get("documents") or [])
+        all_metas.extend(r.get("metadatas") or [])
+        offset += n
+        if offset % 5000 == 0:
+            logger.info("  pulled %d / %d", offset, count)
+    return all_ids, all_docs, all_metas, []
+
+
+def _create_fts5_db(out_path: Path) -> sqlite3.Connection:
+    """建空的 FTS5 db, 返回连接"""
+    if out_path.exists():
+        logger.info("removing existing %s", out_path)
+        out_path.unlink()
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    con = sqlite3.connect(str(out_path))
+    for schema in (
+        CHUNKS_FTS_SCHEMA,
+        EXPERIENCES_FTS_SCHEMA,
+        CITIES_FTS_SCHEMA,
+        CORE_PLANS_TABLE_SCHEMA,
+        CHUNKS_META_SCHEMA,
+    ):
+        con.executescript(schema)
+    con.commit()
+    logger.info("fts5 schema created at %s", out_path)
+    return con
+
+
+def _insert_chunks(con: sqlite3.Connection, ids: List[str], docs: List[str], metas: List[Dict]) -> int:
+    """把 chroma 的 chunks 写入 chunks_fts + chunks_meta"""
+    if not ids:
+        return 0
+    n = len(ids)
+    logger.info("inserting %d chunks into chunks_fts ...", n)
+
+    # 准备 rows
+    fts_rows = []
+    meta_rows = []
+    for i, (cid, doc, meta) in enumerate(zip(ids, docs, metas)):
+        if not doc:
+            continue  # 跳过空文档
+        meta = meta or {}
+        title = meta.get("title") or ""
+        source_path = meta.get("source_path") or ""
+        source_id = meta.get("source_id") or ""
+        source_type = meta.get("source_type") or ""
+        region = meta.get("region") or ""
+        status = meta.get("status") or ""
+        chunk_index = meta.get("chunk_index", 0)
+        # doc_id: source_id 优先, 否则用 id
+        doc_id = source_id or cid.split(":")[0] if ":" in cid else cid
+
+        fts_rows.append((
+            doc, title, source_path, source_id, source_type, region, status, doc_id, chunk_index,
+        ))
+        meta_rows.append((
+            cid, source_id, source_type, source_path, title, region, status, doc_id, chunk_index,
+        ))
+
+    # 批量插入 (FTS5 单次大 batch OK, 但保险起见分批)
+    BATCH = 500
+    cur = con.cursor()
+    for i in range(0, len(fts_rows), BATCH):
+        chunk_fts = fts_rows[i : i + BATCH]
+        chunk_meta = meta_rows[i : i + BATCH]
+        cur.executemany(
+            "INSERT INTO chunks_fts(content, title, source_path, source_id, source_type, region, status, doc_id, chunk_index) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            chunk_fts,
+        )
+        cur.executemany(
+            "INSERT OR REPLACE INTO chunks_meta(id, source_id, source_type, source_path, title, region, status, doc_id, chunk_index) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            chunk_meta,
+        )
+        if (i // BATCH) % 20 == 0 and i > 0:
+            logger.info("  inserted %d / %d", i, len(fts_rows))
+    con.commit()
+    return len(fts_rows)
+
+
+def _insert_experiences_from_sqlite(con: sqlite3.Connection, sqlite_path: Path) -> int:
+    """从 aog.db 读 experiences 写 experiences_fts"""
+    if not sqlite_path.exists():
+        logger.warning("sqlite_path not found: %s, skip experiences_fts", sqlite_path)
+        return 0
+    logger.info("loading experiences from %s ...", sqlite_path)
+    src = sqlite3.connect(str(sqlite_path))
+    src.row_factory = sqlite3.Row
+    cur = src.execute("SELECT * FROM experiences")
+    rows: List[Tuple] = []
+    for r in cur.fetchall():
+        d = dict(r)
+        content_parts = [
+            d.get("title") or "",
+            d.get("summary") or "",
+            d.get("content_md") or "",
+            d.get("source_path") or "",
+        ]
+        content = "\n".join(p for p in content_parts if p)
+        rows.append((
+            content, d["id"], d.get("title") or "", d.get("category") or "",
+            d.get("status") or "", d.get("tags") or "[]",
+        ))
+    src.close()
+
+    if not rows:
+        return 0
+    con.executemany(
+        "INSERT INTO experiences_fts(content, id, title, category, status, tags) VALUES (?, ?, ?, ?, ?, ?)",
+        rows,
+    )
+    con.commit()
+    logger.info("inserted %d experiences into experiences_fts", len(rows))
+    return len(rows)
+
+
+def _insert_cities_from_sqlite(con: sqlite3.Connection, sqlite_path: Path) -> int:
+    """从 aog.db 读 cities 写 cities_fts"""
+    if not sqlite_path.exists():
+        logger.warning("sqlite_path not found: %s, skip cities_fts", sqlite_path)
+        return 0
+    logger.info("loading cities from %s ...", sqlite_path)
+    src = sqlite3.connect(str(sqlite_path))
+    src.row_factory = sqlite3.Row
+    cur = src.execute("SELECT * FROM cities")
+    rows: List[Tuple] = []
+    for r in cur.fetchall():
+        d = dict(r)
+        content_parts = [
+            d.get("name") or "",
+            d.get("airport") or "",
+            d.get("iata") or "",
+            d.get("pinyin") or "",
+            d.get("content_md") or "",
+        ]
+        content = "\n".join(p for p in content_parts if p)
+        rows.append((
+            content, d["code"], d.get("name") or "", d.get("airport") or "",
+            d.get("iata") or "", d.get("pinyin") or "",
+            d.get("region") or "", d.get("status") or "", d.get("tags") or "[]",
+        ))
+    src.close()
+
+    if not rows:
+        return 0
+    con.executemany(
+        "INSERT INTO cities_fts(content, code, name, airport, iata, pinyin, region, status, tags) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        rows,
+    )
+    con.commit()
+    logger.info("inserted %d cities into cities_fts", len(rows))
+    return len(rows)
+
+
+def _insert_core_plans_from_sqlite(con: sqlite3.Connection, sqlite_path: Path) -> int:
+    """core plans 不做 FTS5 全文 (它们通常直接 by id 拿), 只建 meta 表"""
+    if not sqlite_path.exists():
+        logger.warning("sqlite_path not found: %s, skip core_plans_meta", sqlite_path)
+        return 0
+    src = sqlite3.connect(str(sqlite_path))
+    src.row_factory = sqlite3.Row
+    cur = src.execute("SELECT id, title, type, source_path, updated_at FROM core_plans")
+    rows = [(r["id"], r["title"], r["type"], r["source_path"], r["updated_at"]) for r in cur.fetchall()]
+    src.close()
+
+    if not rows:
+        return 0
+    con.executemany(
+        "INSERT OR REPLACE INTO core_plans_meta(id, title, type, source_path, updated_at) VALUES (?, ?, ?, ?, ?)",
+        rows,
+    )
+    con.commit()
+    logger.info("inserted %d core_plans into core_plans_meta", len(rows))
+    return len(rows)
+
+
+def _export_chunks_meta_json(out_dir: Path, ids: List[str], metas: List[Dict]) -> int:
+    """导出 id → doc_path 映射到 chunks_meta.json (前端引用 / debug)"""
+    out = out_dir / "chunks_meta.json"
+    rows = []
+    for cid, meta in zip(ids, metas):
+        meta = meta or {}
+        rows.append({
+            "id": cid,
+            "source_id": meta.get("source_id", ""),
+            "source_type": meta.get("source_type", ""),
+            "source_path": meta.get("source_path", ""),
+            "title": meta.get("title", ""),
+            "region": meta.get("region", ""),
+            "status": meta.get("status", ""),
+            "chunk_index": meta.get("chunk_index", 0),
+        })
+    out.write_text(json.dumps(rows, ensure_ascii=False, indent=2), encoding="utf-8")
+    logger.info("wrote %s (%d entries, %.1fKB)", out, len(rows), out.stat().st_size / 1024)
+    return len(rows)
+
+
+def _verify(con: sqlite3.Connection) -> Dict[str, int]:
+    """验收: 4 张表 count"""
+    out = {}
+    for t in ("chunks_fts", "experiences_fts", "cities_fts", "core_plans_meta", "chunks_meta"):
+        cur = con.execute(f"SELECT count(*) FROM {t}")
+        out[t] = cur.fetchone()[0]
+    return out
+
+
+def _smoke_test(con: sqlite3.Connection) -> None:
+    """FTS5 smoke test: 跑几个 query"""
+    queries = [
+        ("chunks_fts: 'B787 风挡'", "chunks_fts", "B787 风挡"),
+        ("chunks_fts: 'AOG'", "chunks_fts", "AOG"),
+        ("cities_fts: '北京'", "cities_fts", "北京"),
+        ("cities_fts: 'PVG'", "cities_fts", "PVG"),
+        ("experiences_fts: 'B787'", "experiences_fts", "B787"),
+    ]
+    for label, tbl, q in queries:
+        # trigram FTS5 语法: query 至少 3 字符, OR 用 OR
+        try:
+            cur = con.execute(
+                f"SELECT count(*) FROM {tbl} WHERE {tbl} MATCH ?",
+                (q,),
+            )
+            n = cur.fetchone()[0]
+            print(f"  ✓ {label}: {n} hits")
+        except Exception as e:
+            print(f"  ✗ {label}: ERROR {e}")
+
+
+def main():
+    p = argparse.ArgumentParser(description="chroma → sqlite fts5 etl")
+    p.add_argument("--chroma", type=Path, default=Path("../backend/data/chroma"), help="chroma persistent path")
+    p.add_argument("--sqlite", type=Path, default=Path("../backend/data/aog.db"), help="aog.db (元数据)")
+    p.add_argument("--out", type=Path, default=Path("../backend/data/fts5_index.db"), help="FTS5 db out path")
+    p.add_argument("--no-smoke", action="store_true", help="skip smoke test")
+    args = p.parse_args()
+
+    started = time.time()
+    args.chroma = args.chroma.resolve()
+    args.sqlite = args.sqlite.resolve()
+    args.out = args.out.resolve()
+
+    if not args.chroma.exists():
+        logger.error("chroma path not found: %s", args.chroma)
+        sys.exit(1)
+
+    # 1. 读 chroma
+    ids, docs, metas, _ = _read_chroma(args.chroma)
+    logger.info("read %d chunks from chroma", len(ids))
+
+    # 2. 建 FTS5 db
+    con = _create_fts5_db(args.out)
+
+    # 3. 写 chunks
+    n_chunks = _insert_chunks(con, ids, docs, metas)
+
+    # 4. 写 experiences / cities / core_plans
+    n_exp = _insert_experiences_from_sqlite(con, args.sqlite)
+    n_cities = _insert_cities_from_sqlite(con, args.sqlite)
+    n_core = _insert_core_plans_from_sqlite(con, args.sqlite)
+
+    # 5. 导出 chunks_meta.json
+    _export_chunks_meta_json(args.out.parent, ids, metas)
+
+    # 6. 验收
+    counts = _verify(con)
+    logger.info("===== verify =====")
+    for k, v in counts.items():
+        logger.info("  %-20s %d", k, v)
+
+    if not args.no_smoke:
+        logger.info("===== smoke test =====")
+        _smoke_test(con)
+
+    # 7. optimize + vacuum
+    logger.info("optimizing FTS5 index ...")
+    con.execute("INSERT INTO chunks_fts(chunks_fts) VALUES('optimize')")
+    con.execute("INSERT INTO experiences_fts(experiences_fts) VALUES('optimize')")
+    con.execute("INSERT INTO cities_fts(cities_fts) VALUES('optimize')")
+    con.commit()
+    con.execute("VACUUM")
+    con.close()
+
+    elapsed = time.time() - started
+    out_size_mb = args.out.stat().st_size / 1024 / 1024
+    logger.info("===== done =====")
+    logger.info("  out:      %s (%.2f MB)", args.out, out_size_mb)
+    logger.info("  chunks:   %d (target ≈ 8686)", n_chunks)
+    logger.info("  exp:      %d", n_exp)
+    logger.info("  cities:   %d", n_cities)
+    logger.info("  core:     %d", n_core)
+    logger.info("  elapsed:  %.1fs", elapsed)
+
+
+if __name__ == "__main__":
+    main()
