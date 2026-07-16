@@ -107,6 +107,18 @@ def download_data_from_cos(anchor: Path | None = None, force: bool = False) -> b
             # index_stats.json / sync_state.db 是 optional, 不报错
             logger.info("[storage_cos] skip optional file %s: %s", key, e)
 
+    # 3) FTS5 index (Wave 3 SCF 部署用, 替代 chroma)
+    for key in ("fts5_index.db", "chunks_meta.json"):
+        target = data_dir / key
+        if target.exists() and not force:
+            continue
+        try:
+            target.parent.mkdir(parents=True, exist_ok=True)
+            logger.info("[storage_cos] download s3://%s/%s -> %s", bucket, key, target)
+            client.download_file(Bucket=bucket, Key=key, DestFilePath=str(target))
+        except Exception as e:
+            logger.warning("[storage_cos] skip FTS5 file %s: %s", key, e)
+
     logger.info("[storage_cos] COS download done (data_dir=%s)", data_dir)
     return True
 
