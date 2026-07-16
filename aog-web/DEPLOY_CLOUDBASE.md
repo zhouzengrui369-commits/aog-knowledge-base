@@ -41,7 +41,7 @@ CloudBase = 腾讯云的 BaaS 平台, 一个账号 = Run 容器 + COS 对象存�
                 │  镜像: aog-web-backend:latest        │
                 │  端口: 8000 (CloudBase Run 注入 $PORT)│
                 │  资源: 1 CPU / 2Gi RAM               │
-                │  入口: python -m aog_web.scripts.migrate_and_start│
+                │  入口: .venv/bin/python -m aog_web.scripts.migrate_and_start│
                 └────────────────────────────────────┘
                           │                       │
                           │ 读 ./data/chroma/      │ 读 ./data/aog.db
@@ -185,7 +185,8 @@ CloudBase Run 支持 2 种镜像来源:
    - 服务名: aog-web-backend
    - 镜像: 选择 "本地构建" → 上传 aog-web-backend.Dockerfile + aog-web/backend/ 目录
    - 端口: 8000
-   - 启动命令: python -m aog_web.scripts.migrate_and_start
+   - 启动命令: .venv/bin/python -m aog_web.scripts.migrate_and_start
+     (注意: 必须用 .venv/bin/python, 因为 deps 装在 WORKDIR/.venv 里, 系统 Python 没装 uvicorn)
    - 资源配置: 1 CPU / 2Gi RAM
 4. 环境变量 (按 .env.cloudbase.example 填, 真实值):
    MINIMAX_API_KEY=<NJX 填>
