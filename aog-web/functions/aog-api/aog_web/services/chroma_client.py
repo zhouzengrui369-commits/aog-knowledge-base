@@ -12,8 +12,16 @@ import logging
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-import chromadb
-from chromadb.config import Settings as ChromaSettings
+# ★ SCF 部署: chromadb 不在 vendor (无 Linux wheel), 改成 lazy import
+# 顶层只 import 必要类型, chromadb 在 __init__ 里 try/except
+try:
+    import chromadb  # type: ignore
+    from chromadb.config import Settings as ChromaSettings  # type: ignore
+    _CHROMADB_AVAILABLE = True
+except ImportError:
+    chromadb = None  # type: ignore
+    ChromaSettings = None  # type: ignore
+    _CHROMADB_AVAILABLE = False
 
 from aog_web.config import get_settings
 
@@ -28,6 +36,11 @@ class ChromaClient:
     def __init__(self, chroma_path: Path):
         self.chroma_path = chroma_path
         chroma_path.mkdir(parents=True, exist_ok=True)
+        if not _CHROMADB_AVAILABLE:
+            # SCF 部署走 FTS5, 不会调 chroma. 但 keep instance 不可用
+            self._client = None  # type: ignore
+            self._collection = None  # type: ignore
+            return
         self._client = chromadb.PersistentClient(
             path=str(chroma_path),
             settings=ChromaSettings(

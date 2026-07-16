@@ -42,6 +42,10 @@ def _apigw_v2_to_scope(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
     """
     method = event.get("requestContext", {}).get("http", {}).get("method", "GET")
     path = event.get("rawPath", "/")
+    # API Gateway 已 strip /api 前缀 (--path /api 配的), 补回 /api
+    # 因为 FastAPI 路由是 /api/health, /api/cities, /api/chat 等
+    if not path.startswith("/api") and path != "/api":
+        path = "/api" + path if path != "/" else "/api"
     raw_qs = event.get("rawQueryString", "")
     headers_raw = event.get("headers", {}) or {}
     body_str = event.get("body", "") or ""
@@ -113,6 +117,9 @@ def _apigw_v1_to_scope(event: Dict[str, Any], context: Any) -> Tuple[Dict[str, A
     """
     method = event.get("httpMethod", "GET")
     path = event.get("path", "/")
+    # API Gateway 已 strip /api 前缀, 补回
+    if not path.startswith("/api") and path != "/api":
+        path = "/api" + path if path != "/" else "/api"
     qs_params = event.get("queryStringParameters") or {}
     raw_qs = "&".join(f"{k}={v}" for k, v in qs_params.items())
     headers_raw = event.get("headers", {}) or {}

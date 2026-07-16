@@ -1,7 +1,22 @@
 #!/bin/bash
 # AOG API - SCF Web Function 启动脚本
 # SCF 平台调用此脚本启动 uvicorn 监听 9000 端口 (SCF HTTP 函数标准)
-# 依赖: requirements.txt 由 cloudbaserc.json installDependency=true 在平台自动 pip install
+# 依赖通过 vendor/ 目录 vendor 进来 (避开 installDependency 不稳定)
 
 set -e
-exec /var/lang/python311/bin/python3.11 -m uvicorn aog_web.main:app --host 0.0.0.0 --port 9000 --log-level info
+# 优先用 python3 (PATH 已配), 找不到再 fallback
+if command -v python3 >/dev/null 2>&1; then
+    PYTHON=python3
+elif [ -x /var/lang/python311/bin/python3.11 ]; then
+    PYTHON=/var/lang/python311/bin/python3.11
+elif [ -x /var/lang/python310/bin/python3.10 ]; then
+    PYTHON=/var/lang/python310/bin/python3.10
+elif [ -x /var/lang/python39/bin/python3.9 ]; then
+    PYTHON=/var/lang/python39/bin/python3.9
+else
+    echo "[scf_bootstrap] no python found" >&2
+    exit 1
+fi
+echo "[scf_bootstrap] using python: $PYTHON" >&2
+echo "[scf_bootstrap] PYTHONPATH=$PYTHONPATH" >&2
+exec $PYTHON -m uvicorn aog_web.main:app --host 0.0.0.0 --port 9000 --log-level info

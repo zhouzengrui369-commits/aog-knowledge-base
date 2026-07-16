@@ -17,10 +17,16 @@ from typing import Any, Dict, List
 from fastapi import APIRouter, HTTPException, Request
 
 from aog_web.models.chat import ChatRequest, ChatResponse, Reference
-from aog_web.services.chroma_client import get_chroma_client
+# ★ SCF 部署: chromadb 无 Linux wheel, 改成 lazy import
 from aog_web.services.fts5_client import get_fts5_client
 from aog_web.services.llm import get_llm
 from aog_web.services.sqlite_client import get_sqlite_client
+
+
+def _get_chroma_client_lazy():
+    """lazy import chroma_client (避免顶层 chromadb 加载失败)"""
+    from aog_web.services.chroma_client import get_chroma_client
+    return get_chroma_client()
 
 logger = logging.getLogger(__name__)
 
@@ -202,13 +208,13 @@ async def chat(request: Request, body: ChatRequest) -> ChatResponse:
         except Exception as e:
             logger.warning("fts5 query failed, fallback to chroma: %s", e)
             try:
-                chroma = get_chroma_client()
+                chroma = _get_chroma_client_lazy()
                 rag_hits = await chroma.query(body.q, n_results=5)
                 logger.info("chroma fallback hits: %d", len(rag_hits))
             except Exception as e2:
                 logger.error("chroma fallback also failed: %s", e2)
     else:
-        chroma = get_chroma_client()
+        chroma = _get_chroma_client_lazy()
         rag_hits = await chroma.query(body.q, n_results=5)
         logger.info("chroma hits: %d for q=%r", len(rag_hits), body.q[:60])
     # 用通用名 chroma_hits 保持下游不变

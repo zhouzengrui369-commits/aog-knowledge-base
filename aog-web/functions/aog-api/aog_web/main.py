@@ -63,12 +63,17 @@ async def lifespan(app: FastAPI):
     logger.info("=" * 60)
 
     # 0. SCF 冷启动: 如果 fts5 路径在 /tmp 且不存在, 从 COS 下载
-    if settings.rag_backend == "fts5" and is_cos_configured() and not settings.fts5_path.exists():
+    if settings.rag_backend == "fts5" and not settings.fts5_path.exists():
         logger.info("FTS5 not found at %s, downloading from COS ...", settings.fts5_path)
         try:
-            download_data_from_cos(anchor=settings.fts5_path.parent, force=False)
+            # 用 inline scf_cos (无 cos sdk 依赖, 不需要 six)
+            from scf_cos import download_fts5_data
+            if download_fts5_data(anchor_dir=settings.fts5_path.parent):
+                logger.info("FTS5 data downloaded to %s", settings.fts5_path.parent)
+            else:
+                logger.warning("scf_cos download_fts5_data returned False")
         except Exception as e:
-            logger.warning("FTS5 COS download failed (will continue, may be empty): %s", e)
+            logger.exception("FTS5 COS download failed: %s", e)
 
     # 1. SQLite 建表
     sqlite = get_sqlite_client()

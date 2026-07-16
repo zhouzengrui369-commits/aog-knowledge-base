@@ -81,8 +81,9 @@ def download_data_from_cos(anchor: Path | None = None, force: bool = False) -> b
     # 延迟 import: 避免本地 dev (无 cos sdk 时) 启动失败
     try:
         from qcloud_cos import CosConfig, CosS3Client  # type: ignore
-    except ImportError:
-        logger.error("[storage_cos] cos-python-sdk-v5 not installed; pip install cos-python-sdk-v5")
+    except ImportError as e:
+        import sys
+        logger.error("[storage_cos] cos-python-sdk-v5 not installed: %s; sys.path=%s", e, sys.path[:5])
         return False
 
     region = _cos_region()

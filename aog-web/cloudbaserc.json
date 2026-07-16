@@ -5,10 +5,11 @@
   "functions": [
     {
       "name": "aog-api",
+      "type": "HTTP",
       "timeout": 60,
       "memorySize": 512,
       "runtime": "Python3.11",
-      "installDependency": true,
+      "installDependency": false,
       "handler": "main.main_handler",
       "envVariables": {
         "RAG_BACKEND": "fts5",
