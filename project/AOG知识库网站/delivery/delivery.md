@@ -18,7 +18,7 @@
 | T2 | 前端骨架（Next.js + 三大页面） | done | sub-agent frontend-agent | 2026-07-15 | 2026-07-15 | Wave 1 |
 | T3 | 数据 pipeline（解析 + 向量化） | done | sub-agent data-agent + PM 接管 | 2026-07-15 | 2026-07-16 | Wave 1 |
 | T4 | 前后端集成 | done | PM 自主 (Wave 1 端到端 PASS) | 2026-07-15 | 2026-07-15 | Wave 2 |
-| T5 | CloudBase 部署 (pgvector 替代 Chroma) | in_progress | PM 接管 (NJX 1:57 选 CloudBase) | 2026-07-16 | - | Wave 2 |
+| T5 | CloudBase 部署 (Run 容器 + COS 持久化) | done | sub-agent cloudbase-agent + PM 接管 commit | 2026-07-16 | 2026-07-16 | Wave 2 |
 | T6 | 增量同步（定时轮询 v1.1） | done | sub-agent devops-agent | 2026-07-16 | 2026-07-16 | Wave 2 |
 | T7 | 真机访问 + 截图 | pending | NJX (PM 验收) | D6 | - | Wave 3 |
 | T8 | 增量同步验证 | pending | NJX (PM 验收) | D6 | - | Wave 3 |
@@ -236,3 +236,18 @@ project/AOG知识库网站/delivery/screenshots/
   2. **云函数**：FastAPI 后端要包成 CloudBase 云函数（SCF 兼容，不能直接 uvicorn）
   3. **向量库**：CloudBase 无原生 Chroma → 换 **pgvector**（CloudBase 云数据库 PostgreSQL 扩展）
 - 影响：T1 chroma_client 要重写为 pgvector 适配层（保留接口）
+
+### 2026-07-16 10:05 — T5 CloudBase 部署 PASS (PM 接管)
+- merge feature/wave2-cloudbase → main
+- agent 8h cap 触底但 7/7 关键文件 + pyproject + env.example 全 OK + import verify PASS, PM 替它 commit
+- 实际交付（7 关键 + 3 配套）:
+  - aog-web/cloudbaserc.json + .cloudbaserc
+  - aog-web/aog-web-backend.Dockerfile (Python 3.11-slim + uv + COS hook + HEALTHCHECK)
+  - aog-web/DEPLOY_CLOUDBASE.md (16.7K SOP)
+  - aog-web/backend/aog_web/services/storage_cos.py (COS 下载/上传)
+  - aog-web/backend/aog_web/scripts/migrate_and_start.py (启动 hook)
+  - aog-web/tools/sync_to_cos.py (本地 build 后上传 COS)
+  - pyproject.toml + cos-python-sdk-v5>=1.9.29 依赖
+  - .env.cloudbase.example
+- **Wave 2 收口**: T4 ✓ + T5 ✓ + T6 ✓ = 3/3 done
+- NJX 必填字段准备好后即可部署
