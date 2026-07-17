@@ -116,12 +116,15 @@ export async function getCorePlans(): Promise<CorePlan[]> {
   return data || [];
 }
 
-/** AI 对话 (CONTRACT §2.7) — 必须 references.length >= 1 (NSM-2) */
+/** AI 对话 (CONTRACT §2.7) — 必须 references.length >= 1 (NSM-2)
+ *  chat 单独 timeoutMs=30000 (LLM cold start warmed 偶发 4-10s, 30s 安全)。
+ *  其他 endpoint 仍用 safeFetch 4000 default (lib/api.ts safeFetch 签名不动)。
+ */
 export async function chat(req: ChatRequest): Promise<ChatResponse | null> {
   const data = await safeFetch<ChatResponse>(`/api/chat`, {
     method: "POST",
     body: JSON.stringify(req),
-    timeoutMs: 10000,
+    timeoutMs: 30000,
   });
   return data;
 }
