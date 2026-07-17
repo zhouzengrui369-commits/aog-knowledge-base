@@ -23,3 +23,21 @@ class Experience(BaseModel):
     related_pn: List[str] = Field(default_factory=list, description="相关件号")
     source_path: str
     updated_at: str = Field(..., description="ISO8601")
+
+
+class ExperienceSummary(BaseModel):
+    """经验列表轻量子集 - 不含 content_md
+
+    列表页 (/api/experiences) 用, 避免 SCF 6MB HTTP 上限
+    详情页 (/api/experience/{id}) 仍走 Experience (含 content_md)
+    """
+
+    id: str
+    title: str
+    category: Category
+    status: Status
+    tags: List[str] = Field(default_factory=list)
+    summary: str = Field(default="", max_length=200, description="≤ 200 字")
+    related_pn: List[str] = Field(default_factory=list, description="相关件号")
+    source_path: str = ""
+    updated_at: str = ""
