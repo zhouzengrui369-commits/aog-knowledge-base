@@ -23,7 +23,7 @@
         "MINIMAX_API_KEY": "${MINIMAX_API_KEY}",
         "MINIMAX_BASE_URL": "https://api.MiniMax.chat/v1",
         "MINIMAX_MODEL": "minimax-m3",
-        "CORS_ALLOW_ORIGINS": "https://njx-copilot-d6gs7642f8fa17122.ap-shanghai.app.tcloudbase.com,https://aog.njx.com,http://localhost:3000",
+        "CORS_ALLOW_ORIGINS": "https://njx-copilot-d6gs7642f8fa17122-1343051603.tcloudbaseapp.com,https://njx-copilot-d6gs7642f8fa17122.ap-shanghai.app.tcloudbase.com,https://aog.njx.com,http://localhost:3000",
         "LOG_LEVEL": "INFO",
         "SYNC_ENABLED": "false",
         "KNOWLEDGE_BASE_PATH": "/tmp",
