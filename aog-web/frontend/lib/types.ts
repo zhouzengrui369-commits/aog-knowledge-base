@@ -26,6 +26,10 @@ export interface City {
   content_md?: string;
   source_path?: string;
   updated_at?: string;
+  // 排序 & 地图字段（前端静态 fallback，SCF API 暂未返回）
+  view_count?: number;
+  lat?: number;
+  lon?: number;
   // 兼容 mockup 字段
   summary?: string;
   airport_obj?: { name: string; code: string; province: string };
