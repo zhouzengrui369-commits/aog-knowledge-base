@@ -24,7 +24,6 @@ from aog_web.services.sqlite_client import get_sqlite_client
 
 
 def _get_chroma_client_lazy():
-    """lazy import chroma_client (避免顶层 chromadb 加载失败)"""
     from aog_web.services.chroma_client import get_chroma_client
     return get_chroma_client()
 

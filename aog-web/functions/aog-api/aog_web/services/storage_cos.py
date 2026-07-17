@@ -109,6 +109,8 @@ def download_data_from_cos(anchor: Path | None = None, force: bool = False) -> b
             logger.info("[storage_cos] skip optional file %s: %s", key, e)
 
     # 3) FTS5 index (Wave 3 SCF 部署用, 替代 chroma)
+    #    aog.db 是元数据 (cities/experiences/core_plans), fts5_index.db 是全文检索
+    #    两份数据必须都下载, 否则 chat 端点 RAG 失败
     for key in ("fts5_index.db", "chunks_meta.json"):
         target = data_dir / key
         if target.exists() and not force:

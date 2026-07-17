@@ -1,2 +1,58 @@
+# Worktree
 worktrees/
-aog-web/.DS_Store
+
+# OS
+.DS_Store
+*.swp
+*.swo
+
+# Node
+node_modules/
+.next/
+out/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+*.egg-info/
+
+# CloudBase / 数据
+aog-web/backend/data/
+aog-web/frontend/.next/
+aog-web/pipeline/data/
+aog-web/pipeline/.venv/
+aog-web/backend/.venv/
+aog-web/functions/*/vendor/
+aog-web/functions/*/aog_web/
+.env
+.env.local
+.env.production
+.env.development
+
+# 大文件
+*.zip
+*.tar.gz
+*.tar
+*.pdf
+*.docx
+*.xlsx
+*.xmind
+*.dmg
+*.exe
+*.dylib
+*.so
+*.node
+*.whl
+
+# 临时 / 调试
+*.log
+*.tmp
+*.bak
+.idea/
+.vscode/
+
+# AOG 知识库原始数据 (>50MB 项目周例会等)
+AOG知识库/05_项目立项/项目周例会*
