@@ -3,44 +3,80 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { CityCard } from "@/components/city-card";
 import { AlphabetNav } from "@/components/alphabet-nav";
+import { WorldMapView } from "@/components/world-map";
 import { getCities } from "@/lib/api";
+import { enrichCities, topByViewCount } from "@/lib/city-stats";
 import { MapPin, FileText, BookOpen } from "lucide-react";
 import type { City } from "@/lib/types";
+
+type View = "alpha" | "map";
 
 export function HomeData() {
   const [cities, setCities] = useState<City[]>([]);
   const [loading, setLoading] = useState(true);
+  const [view, setView] = useState<View>("alpha");
 
   useEffect(() => {
     let cancelled = false;
     (async () => {
       const data = await getCities();
       if (cancelled) return;
-      setCities(data ?? []);
+      // 合并静态 view_count / lat / lon (SCF 暂未返回, 走 fallback)
+      setCities(enrichCities(data ?? []));
       setLoading(false);
     })();
     return () => { cancelled = true; };
   }, []);
 
-  const recommendedCodes = ["B-北京大兴", "S-上海浦东", "G-广州白云", "H-香港"];
-  const recommended = recommendedCodes
-    .map((code) => cities.find((c) => c.code === code))
-    .filter((c): c is City => Boolean(c));
+  // 推荐城市：按 view_count 降序取前 4
+  const recommended = topByViewCount(cities, 4);
 
   return (
     <>
       <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
         <div className="rounded-xl border border-ink-100 bg-white p-4 shadow-soft">
-          <div className="mb-2 flex items-center justify-between">
-            <h2 className="text-sm font-medium text-ink-700">按首字母浏览</h2>
-            <span className="text-xs text-ink-500">
-              共 {cities.length} 个城市预案 · 已索引 {cities.length}
-            </span>
+          {/* 标题 + view 切换 tab */}
+          <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+            <div>
+              <h2 className="text-sm font-medium text-ink-700">浏览城市</h2>
+              <p className="mt-0.5 text-xs text-ink-500">
+                共 {cities.length} 个城市预案 · {cities.filter((c) => c.lat != null).length} 个有坐标
+              </p>
+            </div>
+            <div className="flex gap-1 rounded-md border border-ink-100 bg-ink-50 p-0.5">
+              <button
+                type="button"
+                onClick={() => setView("alpha")}
+                className={
+                  "rounded px-3 py-1 text-xs font-medium transition " +
+                  (view === "alpha"
+                    ? "bg-white text-primary shadow-sm"
+                    : "text-ink-500 hover:text-ink-900")
+                }
+              >
+                按首字母
+              </button>
+              <button
+                type="button"
+                onClick={() => setView("map")}
+                className={
+                  "rounded px-3 py-1 text-xs font-medium transition " +
+                  (view === "map"
+                    ? "bg-white text-primary shadow-sm"
+                    : "text-ink-500 hover:text-ink-900")
+                }
+              >
+                世界地图
+              </button>
+            </div>
           </div>
+
           {loading ? (
             <div className="text-ink-500 text-sm py-2">加载中…</div>
-          ) : (
+          ) : view === "alpha" ? (
             <AlphabetNav cities={cities} />
+          ) : (
+            <WorldMapView cities={cities} />
           )}
         </div>
       </div>
@@ -49,7 +85,7 @@ export function HomeData() {
         <div className="mb-4 flex items-end justify-between">
           <div>
             <h2 className="text-xl font-semibold text-ink-900">推荐城市</h2>
-            <p className="mt-1 text-sm text-ink-500">现行有效 · 高频查询航站</p>
+            <p className="mt-1 text-sm text-ink-500">按 view_count 排序 · 现行有效 · 高频查询航站</p>
           </div>
           <Link
             href="/experiences"
