@@ -2,9 +2,9 @@
 
 import * as React from "react";
 import Link from "next/link";
-import { Search, Sparkles } from "lucide-react";
+import { useRouter } from "next/navigation";
+import { Search, MapPin, FileText, BookOpen, Sparkles } from "lucide-react";
 import { SearchBar } from "@/components/search-bar";
-import { cn } from "@/lib/utils";
 
 const QUICK_AI = [
   "B787 风挡 AOG 怎么处理？",
@@ -21,71 +21,49 @@ const HOT_TAGS = [
 
 interface Props {
   onAskAI?: (q: string) => void;
-  className?: string;
 }
 
-/**
- * Hero — 首页头部（Linear / Vercel 风格）
- *  - 左对齐（非居中），max-w-3xl
- *  - 强 typography：48–60px 标题
- *  - 搜索框 + 热门 / 问 AI chips inline
- *  - subtle gradient bg（已在 globals.css .hero-gradient 定义）
- */
-export function Hero({ onAskAI, className }: Props) {
+/** Hero — 首页头部（搜索 + 热门 + AI 快捷提问） */
+export function Hero({ onAskAI }: Props) {
+  const router = useRouter();
   return (
-    <section className={cn("hero-gradient border-b border-ink-100", className)}>
-      <div className="mx-auto max-w-7xl px-4 pb-14 pt-16 sm:px-6 sm:pt-20 lg:px-8 lg:pt-24">
-        <div className="max-w-3xl">
-          {/* Eyebrow */}
-          <div className="mb-5 inline-flex items-center gap-2 text-xs font-medium text-ink-500">
-            <span className="inline-block h-px w-6 bg-ink-300" />
-            <span className="uppercase tracking-wider">AOG 应急保障知识库</span>
+    <section className="hero-gradient">
+      <div className="mx-auto max-w-7xl px-4 pb-10 pt-12 sm:px-6 sm:pt-16 lg:px-8 lg:pt-20">
+        <div className="mx-auto max-w-3xl text-center">
+          <div className="mb-4 inline-flex items-center gap-2 rounded-full border border-primary-100 bg-primary-50 px-3 py-1 text-xs font-medium text-primary-700">
+            <span className="h-1.5 w-1.5 rounded-full bg-success" />
+            数据已更新 · 220 城市预案 + 18 实战经验 + 14 核心预案
           </div>
-
-          {/* Headline */}
-          <h1 className="text-[40px] font-semibold leading-[1.1] tracking-tight text-ink-900 sm:text-[52px] lg:text-[60px]">
-            让每一次 AOG 都有
-            <br />
-            <span className="text-primary">确定性的答案</span>
-            <span className="text-ink-900">。</span>
+          <h1 className="text-3xl font-bold tracking-tight text-ink-900 sm:text-4xl lg:text-5xl">
+            AOG 应急保障<span className="text-primary">知识库</span>
           </h1>
-
-          <p className="mt-5 max-w-xl text-base leading-relaxed text-ink-500 sm:text-lg">
-            220 个城市预案 · 18 份实战经验 · 8686 条知识片段。
-            <br className="hidden sm:block" />
-            搜索、按首字母浏览、或直接问 AI。
+          <p className="mt-3 text-base text-ink-500 sm:text-lg">
+            航材 AOG 智能伙伴 · 一站查询城市预案、保障经验、AI 对话
           </p>
 
-          {/* Search */}
-          <div className="mt-8 max-w-2xl">
-            <SearchBar variant="hero" />
+          <SearchBar variant="hero" className="mx-auto mt-8 max-w-2xl" />
+
+          <div className="mt-4 flex flex-wrap items-center justify-center gap-2 text-xs text-ink-500">
+            <span>热门：</span>
+            {HOT_TAGS.map((t) => (
+              <Link
+                key={t.href}
+                href={t.href}
+                className="rounded-full border border-ink-100 bg-white px-2.5 py-1 hover:border-primary hover:text-primary"
+              >
+                {t.label}
+              </Link>
+            ))}
           </div>
 
-          {/* Hot tags + AI prompts — inline, one line on desktop */}
-          <div className="mt-5 flex flex-wrap items-center gap-x-1.5 gap-y-2 text-sm">
-            <span className="text-ink-500">热门</span>
-            {HOT_TAGS.map((t, i) => (
-              <React.Fragment key={t.href}>
-                {i > 0 && <span className="text-ink-300">·</span>}
-                <Link
-                  href={t.href}
-                  className="text-ink-700 transition hover:text-primary"
-                >
-                  {t.label}
-                </Link>
-              </React.Fragment>
-            ))}
-            <span className="ml-3 inline-block h-4 w-px bg-ink-100" />
-            <span className="inline-flex items-center gap-1 text-ink-500">
-              <Sparkles className="h-3.5 w-3.5" />
-              问 AI
-            </span>
+          <div className="mt-3 flex flex-wrap items-center justify-center gap-1.5 text-[11px] text-ink-500">
+            <span>问 AI：</span>
             {QUICK_AI.map((q) => (
               <button
                 key={q}
                 type="button"
                 onClick={() => onAskAI?.(q)}
-                className="rounded-full border border-ink-100 bg-white px-2.5 py-1 text-xs text-ink-700 transition hover:border-primary hover:text-primary"
+                className="rounded-full bg-primary-50 px-2.5 py-1 text-primary-700 hover:bg-primary hover:text-white"
               >
                 {q}
               </button>

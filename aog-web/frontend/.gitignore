@@ -36,7 +36,3 @@ playwright-report/
 playwright/.cache/
 lh.json
 lh-mobile.json
-
-# pnpm-workspace + npm lockfile not needed (pnpm is the canonical package manager)
-pnpm-workspace.yaml
-package-lock.json

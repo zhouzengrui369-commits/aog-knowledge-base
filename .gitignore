@@ -56,14 +56,3 @@ aog-web/functions/*/aog_web/
 
 # AOG 知识库原始数据 (>50MB 项目周例会等)
 AOG知识库/05_项目立项/项目周例会*
-
-# Test screenshot scripts & delivery reports (not source)
-**/screenshot_redesign*.py
-**/screenshot_*.py
-**/DELIVERY-*.md
-**/CDN_CACHE_*_EVIDENCE.md
-**/LLM_WIKI_DESIGN.md
-**/MVP_PLAYWRIGHT_EVIDENCE.md
-
-# Untracked delivery subfolder
-/project/
