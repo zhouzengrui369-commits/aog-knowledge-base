@@ -181,3 +181,99 @@ body {
   color: #111827;
   font-weight: 600;
 }
+
+/* ============================================================
+ *  V16 — react-leaflet 嵌入主图 样式
+ *  - cluster bubble (supercluster 聚合点)
+ *  - city label tooltip (城市 label, 跟 V14 SVG label 视觉一致)
+ *  - 选中态 pulse ring (CSS animation, 替代 V14 SVG <animate>)
+ * ============================================================ */
+
+/* V14 SVG label 视觉对齐 — 白底 + 蓝字 + 1px 边 */
+.leaflet-tooltip.city-label-tooltip {
+  background: rgba(255, 255, 255, 0.92);
+  border: 1px solid #e5e7eb;
+  border-radius: 4px;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
+  padding: 0;
+  font-size: 0;
+  /* 跟 V14 text 字号 14px / 12px / 10px 一致 (Tooltip 内部 span 字号自带) */
+}
+.leaflet-tooltip.city-label-tooltip::before {
+  display: none; /* 去掉 leaflet 默认的小三角 (label 在 dot 右侧, 不需要朝 dot 方向) */
+}
+.leaflet-tooltip.city-label-tooltip .hub-label {
+  color: #1e40af;
+  font-size: 14px;
+  font-weight: 600;
+  letter-spacing: 0.2px;
+}
+.leaflet-tooltip.city-label-tooltip .city-label {
+  color: #6b7280;
+  font-size: 12px;
+  font-weight: 500;
+}
+.leaflet-tooltip.city-label-tooltip .selected-label {
+  color: #dc2626;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+/* cluster bubble — 蓝填充 + 白数字 + 描边 + 阴影 */
+.cluster-bubble-wrapper {
+  background: transparent;
+  border: none;
+}
+.cluster-bubble {
+  background: #2563eb;
+  color: #ffffff;
+  border: 2px solid #ffffff;
+  border-radius: 9999px;
+  font-family:
+    -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei",
+    sans-serif;
+  font-size: 12px;
+  font-weight: 800;
+  text-align: center;
+  box-shadow: 0 0 0 1px rgba(37, 99, 235, 0.4);
+  filter: drop-shadow(0 0 3px rgba(37, 99, 235, 0.5));
+  user-select: none;
+  pointer-events: auto;
+  cursor: pointer;
+}
+
+/* 选中态 pulse ring — CSS animation 替代 V14 SVG <animate>
+   transform-box: fill-box 强制 SVG 元素 transform 相对自身 bounding box
+   (不写的话 transform-origin: center 会被解释为 SVG 根 viewport) */
+.selected-pulse-ring {
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: selected-pulse 1.8s ease-out infinite;
+}
+@keyframes selected-pulse {
+  0% {
+    opacity: 0.5;
+    transform: scale(0.7);
+  }
+  100% {
+    opacity: 0;
+    transform: scale(1.5);
+  }
+}
+
+/* 字母 hover pulse — V6 行为 */
+.letter-pulse-ring {
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: letter-pulse 1.2s ease-out infinite;
+}
+@keyframes letter-pulse {
+  0% {
+    opacity: 0.7;
+    transform: scale(0.6);
+  }
+  100% {
+    opacity: 0;
+    transform: scale(1.3);
+  }
+}

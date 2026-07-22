@@ -1,0 +1,867 @@
+"use client";
+
+import * as React from "react";
+import {
+  MapContainer,
+  TileLayer,
+  CircleMarker,
+  Tooltip,
+  ZoomControl,
+  useMap,
+  useMapEvents,
+  Marker,
+} from "react-leaflet";
+import L from "leaflet";
+import "leaflet/dist/leaflet.css";
+import Link from "next/link";
+import { MapPin, RotateCcw, ZoomIn, ZoomOut } from "lucide-react";
+import type { City } from "@/lib/types";
+import { citiesWithCoords } from "@/lib/city-stats";
+import { cn, firstLetter } from "@/lib/utils";
+import Supercluster from "supercluster";
+
+/* ============================================================
+ *  V16 — react-leaflet 嵌入主图
+ *  保留 V8-V14 视觉特性 (NJX 拍过的):
+ *  - hub label (top 6 永远 + 其他 zoom>=5) — V9
+ *  - 普通城市 T3 (zoom>=3) — V11
+ *  - label 在 dot 右侧 (Tooltip direction="right" offset=[8,0]) — V7
+ *  - hub label 中文名（无 IATA）— V10
+ *  - 字号 constant 实际像素（leaflet Tooltip 直接 CSS 字号, 不需要 N/zoom 公式）
+ *  - 选中态 pulse ring (CircleMarker 加大半径) — V7
+ *  - 选中 chip bottom-left (V5)
+ *  - click → /city/{code} uppercase (V14)
+ *  - 智能 404 兼容 (V12.2 client useEffect, 不需 file path)
+ *  - 中文 file path (V13, 不需 router.push)
+ *
+ *  V16 新增 (react-leaflet):
+ *  - MapContainer + TileLayer (OSM: 真实 tile, 不是轮廓线)
+ *  - CircleMarker (radius constant 像素, 不受 zoom 影响)
+ *  - Tooltip permanent (label 永远显示, 跟 V8 N/zoom constant 像素效果一致)
+ *  - smooth flyTo (leaflet 原生, 替代 V8 自写 rAF)
+ *  - zoom 控件、attribution
+ *
+ *  React 19 strict mode 防御: mounted 状态 gate (避免 "Map container is already initialized")
+ * ============================================================ */
+
+const HUB_TOP_N = 15; // 国家级 hub 数量
+const HUB_LABEL_TOP_N = 6; // V9: 区域级 (T2) 只显示 top 6 hub label
+const ZOOM_MIN = 1;
+const ZOOM_MAX = 8;
+const ZOOM_SELECT = 6;
+const ZOOM_DEFAULT = 4;
+const TIER2_LATLON_RANGE = 20;
+const TIER_NEARBY_RADIUS_DEG: Record<1 | 2 | 3, number> = {
+  1: 2.5,
+  2: 2.5,
+  3: 0.5,
+};
+
+function getTier(zoom: number): 1 | 2 | 3 {
+  if (zoom < 3) return 1;
+  if (zoom < 5) return 2;
+  return 3;
+}
+
+function computeHubs(cities: City[]): {
+  hubSet: Set<string>;
+  labelSet: Set<string>;
+} {
+  const sorted = [...cities]
+    .filter((c) => (c.view_count || 0) > 0)
+    .sort((a, b) => (b.view_count || 0) - (a.view_count || 0));
+  const topN = sorted.slice(0, HUB_TOP_N);
+  const labelTopN = sorted.slice(0, HUB_LABEL_TOP_N);
+  return {
+    hubSet: new Set(topN.map((c) => c.code)),
+    labelSet: new Set(labelTopN.map((c) => c.code)),
+  };
+}
+
+interface Props {
+  cities: City[];
+  className?: string;
+  /** 父级 hover 的字母 — 地图上该字母城市 pulse */
+  hoveredLetter?: string | null;
+  /** 父级选中的城市 — 自动 pan/zoom + 高亮 + 显示附近 */
+  selectedCity?: City | null;
+  /** 通知父级城市被选中 */
+  onSelectCity?: (city: City | null) => void;
+}
+
+/* ============================================================
+ *  MapController — 跑在 MapContainer 内部, 暴露 map ref + 处理事件
+ * ============================================================ */
+function MapController({
+  onZoomEnd,
+  onCenterEnd,
+  onMapReady,
+  selectedCity,
+  lastSelectedCodeRef,
+  hovered,
+  setHovered,
+  setMouseAnchor,
+}: {
+  onZoomEnd: (zoom: number) => void;
+  onCenterEnd: (center: [number, number]) => void;
+  onMapReady: (map: L.Map) => void;
+  selectedCity: City | null;
+  lastSelectedCodeRef: React.MutableRefObject<string | null>;
+  hovered: string | null;
+  setHovered: (code: string | null) => void;
+  setMouseAnchor: (a: { x: number; y: number } | null) => void;
+}) {
+  const map = useMap();
+
+  React.useEffect(() => {
+    onMapReady(map);
+    return () => {
+      // do not call map.remove() — React Leaflet handles cleanup
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [map]);
+
+  useMapEvents({
+    zoomend: () => {
+      onZoomEnd(map.getZoom());
+      const c = map.getCenter();
+      onCenterEnd([c.lat, c.lng]);
+    },
+    moveend: () => {
+      const c = map.getCenter();
+      onCenterEnd([c.lat, c.lng]);
+    },
+    mousemove: (e) => {
+      if (e.containerPoint) {
+        setMouseAnchor({ x: e.containerPoint.x, y: e.containerPoint.y });
+      }
+    },
+    mouseout: () => {
+      setHovered(null);
+      setMouseAnchor(null);
+    },
+  });
+
+  // 选中城市: flyTo (代替 V14 自写 rAF)
+  React.useEffect(() => {
+    if (!selectedCity) {
+      lastSelectedCodeRef.current = null;
+      return;
+    }
+    if (
+      selectedCity.lat == null ||
+      selectedCity.lon == null ||
+      lastSelectedCodeRef.current === selectedCity.code
+    ) {
+      return;
+    }
+    lastSelectedCodeRef.current = selectedCity.code;
+    map.flyTo([selectedCity.lat, selectedCity.lon], ZOOM_SELECT, {
+      duration: 0.6,
+    });
+  }, [selectedCity?.code, selectedCity?.lat, selectedCity?.lon, map]);
+
+  // 暴露给 Playwright / dev (跟 V14 一致)
+  React.useEffect(() => {
+    (window as any).__aogMapView = {
+      setView: (z: number, lon: number, lat: number, duration?: number) => {
+        map.flyTo([lat, lon], z, { duration: (duration ?? 300) / 1000 });
+      },
+      getView: () => ({
+        zoom: map.getZoom(),
+        center: (() => {
+          const c = map.getCenter();
+          return [c.lng, c.lat];
+        })(),
+      }),
+    };
+    return () => {
+      delete (window as any).__aogMapView;
+    };
+  }, [map]);
+
+  return null;
+}
+
+/* ============================================================
+ *  CityDot — 单城市 marker (CircleMarker + optional permanent Tooltip)
+ * ============================================================ */
+function CityDot({
+  city,
+  isHub,
+  isLabel,
+  isSelected,
+  isHovered,
+  isLetterPulse,
+  isNearby,
+  showLabel,
+  onSelect,
+  setHovered,
+}: {
+  city: City;
+  isHub: boolean;
+  isLabel: boolean;
+  isSelected: boolean;
+  isHovered: boolean;
+  isLetterPulse: boolean;
+  isNearby: boolean;
+  showLabel: boolean;
+  onSelect?: (city: City | null) => void;
+  setHovered: (code: string | null) => void;
+}) {
+  // V8: dot 半径 constant 像素 (CircleMarker 半径就是像素, leaflet 不会随 zoom 改)
+  const r = isHub ? 5 : 3;
+  // 选中态外圈 (pulse ring 用一个外层 transparent circle)
+  const fill = isSelected
+    ? "#dc2626"
+    : isHub
+    ? "#2563eb"
+    : isHovered
+    ? "#1e40af"
+    : "#9ca3af";
+  const fillOpacity = isSelected
+    ? 1
+    : isHovered
+    ? 1
+    : isNearby
+    ? 0.7
+    : isHub
+    ? 0.95
+    : 0.65;
+
+  return (
+    <>
+      {/* V7: 选中态 pulse ring — 外层 transparent circle 加大半径 + CSS animation */}
+      {isSelected && (
+        <CircleMarker
+          center={[city.lat!, city.lon!]}
+          radius={r + 7}
+          pathOptions={{
+            color: "#dc2626",
+            weight: 1.5,
+            fillColor: "#dc2626",
+            fillOpacity: 0.15,
+            className: "selected-pulse-ring",
+          }}
+          interactive={false}
+        />
+      )}
+      {/* letter pulse (V6 行为) */}
+      {isLetterPulse && (
+        <CircleMarker
+          center={[city.lat!, city.lon!]}
+          radius={r + 4}
+          pathOptions={{
+            color: "#1e40af",
+            weight: 1,
+            fillOpacity: 0,
+            className: "letter-pulse-ring",
+          }}
+          interactive={false}
+        />
+      )}
+      <CircleMarker
+        center={[city.lat!, city.lon!]}
+        radius={r}
+        pathOptions={{
+          color: isHub || isSelected ? "#ffffff" : "none",
+          weight: isHub || isSelected ? 2 : 0,
+          fillColor: fill,
+          fillOpacity: fillOpacity,
+        }}
+        eventHandlers={{
+          click: () => {
+            onSelect?.(isSelected ? null : city);
+            // V14: 同步触发 chip 内 Link 跳转 (但用 onSelectCity 控选中态, 不直接 navigate)
+            // 用户再点 chip 才真跳
+          },
+          mouseover: () => setHovered(city.code),
+          mouseout: () => setHovered(null),
+        }}
+      >
+        {showLabel && (
+          <Tooltip
+            permanent
+            direction="right"
+            offset={[8, 0]}
+            opacity={1}
+            className="city-label-tooltip"
+          >
+            <span
+              className={cn(
+                "inline-block whitespace-nowrap rounded px-1.5 py-0.5 text-[12px] font-semibold",
+                isHub ? "hub-label" : "city-label",
+                isSelected && "selected-label"
+              )}
+              style={{
+                fontFamily:
+                  "-apple-system, BlinkMacSystemFont, 'PingFang SC', 'Microsoft YaHei', sans-serif",
+              }}
+            >
+              {city.name}
+            </span>
+          </Tooltip>
+        )}
+      </CircleMarker>
+    </>
+  );
+}
+
+/* ============================================================
+ *  ClusterBubble — 聚合点 (T1 zoom ≤ 4 用 supercluster 聚合 hubs)
+ *  用 L.divIcon 渲染带数字的气泡
+ * ============================================================ */
+function clusterIconFactory(count: number, r: number): L.DivIcon {
+  const label = count >= 1000 ? `${(count / 1000).toFixed(1)}k` : count;
+  return L.divIcon({
+    className: "cluster-bubble-wrapper",
+    html: `<div class="cluster-bubble" style="width:${r * 2}px;height:${r * 2}px;line-height:${r * 2}px;">${label}</div>`,
+    iconSize: [r * 2, r * 2],
+    iconAnchor: [r, r],
+  });
+}
+
+function ClusterMarker({
+  count,
+  clusterId,
+  lat,
+  lon,
+  cluster,
+  zoom,
+  mapRef,
+}: {
+  count: number;
+  clusterId: number;
+  lat: number;
+  lon: number;
+  cluster: Supercluster;
+  zoom: number;
+  mapRef: React.MutableRefObject<L.Map | null>;
+}) {
+  const r = Math.min(14, 5 + Math.sqrt(count) * 1.5);
+  return (
+    <Marker
+      position={[lat, lon]}
+      icon={clusterIconFactory(count, r)}
+      eventHandlers={{
+        click: () => {
+          const expansionZoom =
+            cluster.getClusterExpansionZoom(clusterId) ??
+            Math.min(ZOOM_MAX, zoom + 1);
+          mapRef.current?.flyTo([lat, lon], Math.max(zoom + 0.5, expansionZoom), {
+            duration: 0.4,
+          });
+        },
+      }}
+    />
+  );
+}
+
+/* ============================================================
+ *  主组件
+ * ============================================================ */
+export function WorldMapLeaflet({
+  cities,
+  className,
+  hoveredLetter,
+  selectedCity,
+  onSelectCity,
+}: Props) {
+  // React 19 strict mode 防御 — 第一次 render discard, 不渲染 MapContainer
+  const [mounted, setMounted] = React.useState(false);
+  React.useEffect(() => {
+    setMounted(true);
+  }, []);
+
+  const withCoords = React.useMemo(() => citiesWithCoords(cities), [cities]);
+  const [zoom, setZoom] = React.useState<number>(ZOOM_DEFAULT);
+  const [center, setCenter] = React.useState<[number, number]>([35, 105]);
+  const [hovered, setHovered] = React.useState<string | null>(null);
+  const [mouseAnchor, setMouseAnchor] = React.useState<{
+    x: number;
+    y: number;
+  } | null>(null);
+  const mapRef = React.useRef<L.Map | null>(null);
+  const lastSelectedCodeRef = React.useRef<string | null>(null);
+
+  const tier: 1 | 2 | 3 = getTier(zoom);
+
+  const { hubSet, labelSet } = React.useMemo(
+    () => computeHubs(withCoords),
+    [withCoords]
+  );
+  const hubs = React.useMemo(
+    () => withCoords.filter((c) => hubSet.has(c.code)),
+    [withCoords, hubSet]
+  );
+
+  // supercluster — T1 聚合 hubs
+  const cluster = React.useMemo(() => {
+    if (hubs.length === 0) return null;
+    const idx = new Supercluster<
+      { code: string; name: string; iata: string },
+      any
+    >({ radius: 80, maxZoom: 4, minPoints: 2 });
+    idx.load(
+      hubs
+        .filter((c) => c.lat != null && c.lon != null)
+        .map((c) => ({
+          type: "Feature" as const,
+          properties: { code: c.code, name: c.name, iata: c.iata || "" },
+          geometry: {
+            type: "Point" as const,
+            coordinates: [c.lon as number, c.lat as number],
+          },
+        }))
+    );
+    return idx;
+  }, [hubs]);
+
+  const clusterFeatures = React.useMemo(() => {
+    if (!cluster || zoom > 4) return null;
+    return cluster.getClusters([-180, -85, 180, 85], Math.floor(zoom));
+  }, [cluster, zoom]);
+
+  // 可见城市集 by tier (V14 逻辑保留)
+  const visibleCities = React.useMemo(() => {
+    let base: City[];
+    if (tier === 1) {
+      base = hubs;
+    } else if (tier === 2) {
+      const [lat, lon] = center;
+      const inRange = withCoords.filter((c) => {
+        if (c.lat == null || c.lon == null) return false;
+        return (
+          Math.abs(c.lat - lat) <= TIER2_LATLON_RANGE &&
+          Math.abs(c.lon - lon) <= TIER2_LATLON_RANGE
+        );
+      });
+      const hubCodes = new Set(hubs.map((c) => c.code));
+      const nonHubInRange = inRange.filter(
+        (c) => !hubCodes.has(c.code) && (c.view_count || 0) > 0
+      );
+      base = Array.from(
+        new Map([...hubs, ...nonHubInRange].map((c) => [c.code, c])).values()
+      );
+      base.sort((a, b) => {
+        const aH = hubCodes.has(a.code) ? 1 : 0;
+        const bH = hubCodes.has(b.code) ? 1 : 0;
+        if (aH !== bH) return bH - aH;
+        return (b.view_count || 0) - (a.view_count || 0);
+      });
+    } else {
+      base = withCoords;
+    }
+    if (selectedCity && !base.find((c) => c.code === selectedCity.code)) {
+      return [selectedCity, ...base];
+    }
+    return base;
+  }, [withCoords, tier, center, selectedCity, hubs]);
+
+  // 选中城市的附近城市
+  const nearbyCodes = React.useMemo(() => {
+    if (
+      !selectedCity ||
+      selectedCity.lat == null ||
+      selectedCity.lon == null
+    ) {
+      return new Set<string>();
+    }
+    const radius = TIER_NEARBY_RADIUS_DEG[tier];
+    const slat = selectedCity.lat;
+    const slon = selectedCity.lon;
+    return new Set(
+      withCoords
+        .filter(
+          (c) => c.code !== selectedCity.code && c.lat != null && c.lon != null
+        )
+        .map((c) => {
+          const dlat = (c.lat as number) - slat;
+          const dlon = (c.lon as number) - slon;
+          return { code: c.code, d: dlat * dlat + dlon * dlon };
+        })
+        .filter((x) => Math.sqrt(x.d) <= radius)
+        .sort((a, b) => a.d - b.d)
+        .slice(0, 8)
+        .map((x) => x.code)
+    );
+  }, [
+    selectedCity?.code,
+    selectedCity?.lat,
+    selectedCity?.lon,
+    withCoords,
+    tier,
+  ]);
+
+  // 距离 km
+  const nearbyDistances = React.useMemo(() => {
+    if (
+      !selectedCity ||
+      selectedCity.lat == null ||
+      selectedCity.lon == null
+    ) {
+      return new Map<string, number>();
+    }
+    const m = new Map<string, number>();
+    nearbyCodes.forEach((code) => {
+      const c = withCoords.find((x) => x.code === code);
+      if (!c || c.lat == null || c.lon == null) return;
+      const dlat = (c.lat - selectedCity.lat!) * 111;
+      const dlon =
+        (c.lon - selectedCity.lon!) *
+        111 *
+        Math.cos((selectedCity.lat! * Math.PI) / 180);
+      m.set(code, Math.round(Math.sqrt(dlat * dlat + dlon * dlon)));
+    });
+    return m;
+  }, [selectedCity, nearbyCodes, withCoords]);
+
+  if (withCoords.length === 0) {
+    return (
+      <div className={cn("py-4 text-sm text-ink-500", className)}>
+        暂无坐标数据
+      </div>
+    );
+  }
+
+  const tierBadgeColor = {
+    1: "bg-blue-100 text-blue-700",
+    2: "bg-amber-100 text-amber-700",
+    3: "bg-red-100 text-red-700",
+  }[tier];
+  const tierLabel = {
+    1: "国家级 · 15 大枢纽 + 真实 OSM tile",
+    2: "区域级 · 中心 ±20° 范围",
+    3: "城市级 · 全部 218 站点",
+  }[tier];
+  const tierBadge = {
+    1: "T1",
+    2: "T2",
+    3: "T3",
+  }[tier];
+
+  return (
+    <div
+      className={cn(
+        "relative h-full overflow-hidden rounded-lg border border-ink-100 bg-white",
+        className
+      )}
+      data-testid="world-map-root"
+    >
+      {/* 顶部状态条 */}
+      <div className="flex items-center justify-between border-b border-ink-100 bg-ink-50/40 px-3 py-1.5 text-[11px] text-ink-500">
+        <div className="flex items-center gap-3">
+          <span className="inline-flex items-center gap-1">
+            <MapPin className="h-3 w-3" />
+            <span>
+              <span className="font-medium text-ink-900">
+                {withCoords.length}
+              </span>{" "}
+              个城市 ·{" "}
+              <span className="font-medium text-primary">{hubSet.size}</span>{" "}
+              枢纽
+            </span>
+          </span>
+          <span className="hidden items-center gap-1.5 sm:inline-flex">
+            <span
+              className={cn(
+                "rounded px-1.5 py-0.5 text-[10px] font-bold",
+                tierBadgeColor
+              )}
+            >
+              {tierBadge}
+            </span>
+            <span>{tierLabel}</span>
+          </span>
+        </div>
+        <span className="tabular-nums">
+          zoom {zoom.toFixed(1)}x · {visibleCities.length} 站
+        </span>
+      </div>
+
+      {/* Map area — 高度固定 480px (V14 用 aspect-[2/1], V16 改固定高度让 leaflet 正确布局) */}
+      <div
+        className="relative"
+        style={{ height: "480px", width: "100%" }}
+      >
+        {!mounted ? (
+          <div className="flex h-full w-full items-center justify-center bg-ink-50 text-ink-500">
+            地图加载中…
+          </div>
+        ) : (
+          <MapContainer
+            center={[35, 105]}
+            zoom={ZOOM_DEFAULT}
+            minZoom={ZOOM_MIN}
+            maxZoom={ZOOM_MAX}
+            scrollWheelZoom={true}
+            style={{ height: "100%", width: "100%" }}
+            zoomControl={false}
+            worldCopyJump={true}
+          >
+            <TileLayer
+              attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+              url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+            />
+            <ZoomControl position="bottomright" />
+            <MapController
+              onZoomEnd={setZoom}
+              onCenterEnd={(c) => setCenter(c)}
+              onMapReady={(m) => {
+                mapRef.current = m;
+              }}
+              selectedCity={selectedCity ?? null}
+              lastSelectedCodeRef={lastSelectedCodeRef}
+              hovered={hovered}
+              setHovered={setHovered}
+              setMouseAnchor={setMouseAnchor}
+            />
+
+            {/* T1 cluster 模式 (zoom ≤ 4): supercluster 聚合 hubs */}
+            {clusterFeatures?.map((feat) => {
+              const [lon, lat] = feat.geometry.coordinates;
+              const props: any = feat.properties;
+              if (props.cluster) {
+                return (
+                  <ClusterMarker
+                    key={`cluster-${props.cluster_id}`}
+                    count={props.point_count as number}
+                    clusterId={props.cluster_id as number}
+                    lat={lat}
+                    lon={lon}
+                    cluster={cluster!}
+                    zoom={zoom}
+                    mapRef={mapRef}
+                  />
+                );
+              } else {
+                // single hub (cluster 不形成, 偏远地区单 hub)
+                const city = hubs.find((h) => h.code === props.code);
+                if (!city) return null;
+                const isHub = true;
+                const inLabelSet = labelSet.has(props.code);
+                const showLabel =
+                  inLabelSet ||
+                  zoom >= 5 ||
+                  selectedCity?.code === props.code ||
+                  hovered === props.code ||
+                  (hoveredLetter != null &&
+                    firstLetter(props.code) === hoveredLetter);
+                return (
+                  <CityDot
+                    key={`hub-${props.code}`}
+                    city={city}
+                    isHub={isHub}
+                    isLabel={inLabelSet}
+                    isSelected={selectedCity?.code === props.code}
+                    isHovered={hovered === props.code}
+                    isLetterPulse={
+                      hoveredLetter != null &&
+                      firstLetter(props.code) === hoveredLetter &&
+                      selectedCity?.code !== props.code
+                    }
+                    isNearby={nearbyCodes.has(props.code)}
+                    showLabel={showLabel}
+                    onSelect={onSelectCity}
+                    setHovered={setHovered}
+                  />
+                );
+              }
+            })}
+
+            {/* 非 cluster 模式: 普通 CircleMarker */}
+            {visibleCities
+              .filter((c) => {
+                if (clusterFeatures && hubSet.has(c.code)) return false;
+                return true;
+              })
+              .map((c) => {
+                const isHub = hubSet.has(c.code);
+                const r = isHub ? 5 : 3;
+                if (r <= 0) return null; // T1 已过滤
+                const isHover = hovered === c.code;
+                const isSelected = selectedCity?.code === c.code;
+                const isNearby = nearbyCodes.has(c.code);
+                const isLetterPulse =
+                  hoveredLetter != null &&
+                  firstLetter(c.code) === hoveredLetter &&
+                  !isSelected;
+                const inLabelSet = labelSet.has(c.code);
+                const showLabel =
+                  inLabelSet ||
+                  (isHub && zoom >= 5) ||
+                  isSelected ||
+                  isHover ||
+                  isLetterPulse;
+                return (
+                  <CityDot
+                    key={c.code}
+                    city={c}
+                    isHub={isHub}
+                    isLabel={inLabelSet}
+                    isSelected={isSelected}
+                    isHovered={isHover}
+                    isLetterPulse={isLetterPulse}
+                    isNearby={isNearby}
+                    showLabel={showLabel}
+                    onSelect={onSelectCity}
+                    setHovered={setHovered}
+                  />
+                );
+              })}
+          </MapContainer>
+        )}
+
+        {/* 右侧控制条 (跟 V14 视觉一致) */}
+        <div className="absolute right-3 top-1/2 z-[400] flex -translate-y-1/2 flex-col items-center gap-1.5">
+          <button
+            type="button"
+            onClick={() => {
+              const next = Math.min(ZOOM_MAX, zoom + 1);
+              mapRef.current?.flyTo(center, next, { duration: 0.3 });
+            }}
+            className="grid h-7 w-7 place-items-center rounded-md border border-ink-100 bg-white text-ink-500 shadow-soft transition hover:bg-ink-50 hover:text-ink-900"
+            aria-label="放大"
+            title={`放大 (${zoom.toFixed(1)}x)`}
+          >
+            <ZoomIn className="h-3.5 w-3.5" />
+          </button>
+
+          <button
+            type="button"
+            onClick={() => {
+              const next = Math.max(ZOOM_MIN, zoom - 1);
+              mapRef.current?.flyTo(center, next, { duration: 0.3 });
+            }}
+            className="grid h-7 w-7 place-items-center rounded-md border border-ink-100 bg-white text-ink-500 shadow-soft transition hover:bg-ink-50 hover:text-ink-900"
+            aria-label="缩小"
+            title={`缩小 (${zoom.toFixed(1)}x)`}
+          >
+            <ZoomOut className="h-3.5 w-3.5" />
+          </button>
+
+          <div className="my-0.5 h-px w-5 bg-ink-100" />
+
+          <button
+            type="button"
+            onClick={() => {
+              mapRef.current?.flyTo([35, 105], ZOOM_DEFAULT, { duration: 0.4 });
+              onSelectCity?.(null);
+            }}
+            className="grid h-7 w-7 place-items-center rounded-md border border-ink-100 bg-white text-ink-500 shadow-soft transition hover:bg-ink-50 hover:text-ink-900"
+            aria-label="重置"
+            title="重置视图"
+          >
+            <RotateCcw className="h-3 w-3" />
+          </button>
+        </div>
+
+        {/* 选中城市 chip — bottom-left (V5 行为保留) */}
+        {selectedCity && (
+          <div
+            className="absolute bottom-3 left-3 z-[400] inline-flex max-w-[60%] flex-col gap-1 rounded-lg border border-red-200 bg-white/95 px-3 py-2 text-xs shadow-soft backdrop-blur"
+            data-testid="selected-chip"
+          >
+            <Link
+              href={`/city/${encodeURIComponent(selectedCity.code)}`}
+              className="inline-flex items-center gap-2 transition hover:opacity-80"
+            >
+              <span className="inline-block h-2.5 w-2.5 rounded-full bg-red-500 shadow-[0_0_0_3px_rgba(220,38,38,0.2)]" />
+              <span className="font-semibold text-ink-900">
+                {selectedCity.name}
+              </span>
+              {selectedCity.iata && selectedCity.iata !== "—" && (
+                <span className="rounded bg-red-50 px-1.5 py-0.5 text-[10px] font-bold tabular-nums text-red-700">
+                  {selectedCity.iata}
+                </span>
+              )}
+              {(selectedCity.view_count ?? 0) > 0 && (
+                <span className="rounded bg-ink-50 px-1.5 py-0.5 text-[10px] font-medium tabular-nums text-ink-500">
+                  {(selectedCity.view_count ?? 0).toLocaleString()} 浏览
+                </span>
+              )}
+              <span className="ml-1 text-primary">→</span>
+            </Link>
+            <div className="flex items-center gap-2 text-[10px] text-ink-500">
+              <span>
+                周边 {nearbyCodes.size} 站 · 半径 {TIER_NEARBY_RADIUS_DEG[tier]}°
+              </span>
+              {nearbyCodes.size > 0 && (
+                <span className="text-ink-400">
+                  · 最近{" "}
+                  {(() => {
+                    const arr = Array.from(nearbyDistances.values()).sort(
+                      (a, b) => a - b
+                    );
+                    return arr.length > 0 ? `${arr[0]} km` : "—";
+                  })()}
+                </span>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* hover 浮动 tooltip (V5 行为保留) */}
+        {hovered &&
+          hovered !== selectedCity?.code &&
+          mouseAnchor &&
+          (() => {
+            const city = withCoords.find((c) => c.code === hovered);
+            if (!city) return null;
+            const isHub = hubSet.has(hovered);
+            const distance = nearbyDistances.get(hovered);
+            return (
+              <div
+                className={cn(
+                  "pointer-events-none absolute z-[401] -translate-x-1/2",
+                  "rounded-md border bg-white/95 px-2.5 py-1.5 text-[11px] shadow-soft backdrop-blur",
+                  isHub ? "border-primary/40" : "border-ink-200"
+                )}
+                style={{
+                  left: mouseAnchor.x,
+                  top: Math.max(8, mouseAnchor.y - 28),
+                }}
+                data-testid="hover-tooltip"
+              >
+                <div className="flex items-center gap-1.5">
+                  {isHub && (
+                    <span className="rounded bg-primary/10 px-1 text-[9px] font-bold text-primary">
+                      HUB
+                    </span>
+                  )}
+                  <span className="font-semibold text-ink-900">
+                    {city.name}
+                  </span>
+                  {city.iata && city.iata !== "—" && (
+                    <span className="rounded bg-ink-50 px-1 text-[9px] font-bold tabular-nums text-ink-700">
+                      {city.iata}
+                    </span>
+                  )}
+                  {(city.view_count ?? 0) > 0 && (
+                    <span className="text-[9px] text-ink-500 tabular-nums">
+                      {(city.view_count ?? 0).toLocaleString()}
+                    </span>
+                  )}
+                </div>
+                {distance != null && (
+                  <div className="mt-0.5 text-[9px] text-ink-500">
+                    距 {distance} km
+                  </div>
+                )}
+              </div>
+            );
+          })()}
+
+        {/* Footer caption */}
+        <div className="pointer-events-none absolute left-3 top-3 z-[400] hidden flex-col gap-0.5 text-[10px] sm:flex">
+          <span className="rounded bg-black/60 px-1.5 py-0.5 text-white">
+            滚轮缩放 · 拖动平移
+          </span>
+          <span className="rounded bg-black/60 px-1.5 py-0.5 text-white">
+            点城市查看周边 · 红圈 = 选中
+          </span>
+        </div>
+      </div>
+    </div>
+  );
+}

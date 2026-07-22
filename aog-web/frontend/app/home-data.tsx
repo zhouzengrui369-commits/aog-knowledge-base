@@ -3,7 +3,7 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { FeaturedCities } from "@/components/featured-cities";
 import { AlphabetNav } from "@/components/alphabet-nav";
-import { WorldMapView } from "@/components/world-map";
+import { WorldMapLeaflet } from "@/components/world-map-leaflet";
 import { getCities, getAirlines } from "@/lib/api";
 import { enrichCities, topByViewCount } from "@/lib/city-stats";
 import { FileText, BookOpen, ArrowUpRight, MapPin, Plane } from "lucide-react";
@@ -108,7 +108,7 @@ export function HomeData() {
 
               {/* 地图主区域 */}
               <div className="lg:h-[520px]">
-                <WorldMapView
+                <WorldMapLeaflet
                   cities={cities}
                   hoveredLetter={hoveredLetter}
                   selectedCity={selectedCity}
