@@ -116,13 +116,50 @@ export function CityDetailClient({ code }: { code: string }) {
     cls: "",
     text: city.status,
   };
-  const normalized = normalizeCityStatus(city.status);
-  const ap = city.airport_obj;
-  const partsCount =
-    city.parts?.length ?? city.parts_mockup?.length ?? 0;
-  const contactsCount =
-    city.contacts?.length ?? city.contacts_mockup?.length ?? 0;
-  const firstContact = city.contacts?.[0] ?? city.contacts_mockup?.[0];
+  // V14: const 计算 try/catch wrap — 防 Frankfurt 等异常 data 触发 client-side exception
+  //   - city.contacts[0].phone 是 string[] (SCF API), 不是 string
+  //   - 任何字段访问异常 (e.g. city.parts?.length on undefined) 都会被 catch
+  //   - 不会让整个 CityDetailClient 崩溃, 报错到 console + 兜底显示错误信息
+  let normalized: string;
+  let ap: any;
+  let partsCount: number;
+  let contactsCount: number;
+  let firstContact: any;
+  let viewCountText: string;
+  let fleetCount: number;
+  try {
+    normalized = normalizeCityStatus(city.status);
+    ap = city.airport_obj;
+    partsCount =
+      city.parts?.length ?? city.parts_mockup?.length ?? 0;
+    contactsCount =
+      city.contacts?.length ?? city.contacts_mockup?.length ?? 0;
+    firstContact = city.contacts?.[0] ?? city.contacts_mockup?.[0];
+    // Stat 预计算 — view_count 可能是 null / undefined, toLocaleString 要安全
+    viewCountText = (city.view_count ?? 0).toLocaleString();
+    fleetCount = city.fleet?.length ?? 0;
+  } catch (e) {
+    console.error("[CityDetailClient] render compute error:", e);
+    return (
+      <>
+        <NavBar />
+        <div className="mx-auto max-w-7xl px-4 pt-8 sm:px-6 lg:px-8">
+          <div className="rounded-lg border border-warning-200 bg-warning-50 p-6 text-sm text-warning-700">
+            <div className="mb-2 font-semibold">数据解析异常</div>
+            <div className="text-xs text-warning-600">
+              {String(e instanceof Error ? e.message : e)}
+            </div>
+            <Link
+              href="/"
+              className="mt-3 inline-block text-sm text-primary hover:underline"
+            >
+              返回首页
+            </Link>
+          </div>
+        </div>
+      </>
+    );
+  }
 
   return (
     <>
@@ -204,8 +241,8 @@ export function CityDetailClient({ code }: { code: string }) {
 
           {/* Quick stats row */}
           <div className="mt-6 grid grid-cols-2 gap-px overflow-hidden rounded-lg border border-ink-100 bg-ink-100 sm:grid-cols-4">
-            <Stat label="访问次数" value={(city.view_count || 0).toLocaleString()} />
-            <Stat label="执飞机型" value={city.fleet?.length ?? 0} suffix="种" />
+            <Stat label="访问次数" value={viewCountText} />
+            <Stat label="执飞机型" value={fleetCount} suffix="种" />
             <Stat label="备件项" value={partsCount} suffix="项" />
             <Stat label="联系人" value={contactsCount} suffix="位" />
           </div>
@@ -248,7 +285,7 @@ export function CityDetailClient({ code }: { code: string }) {
               {firstContact ? (
                 <div className="space-y-2">
                   <div className="text-sm font-medium text-ink-900">
-                    {"org" in firstContact ? firstContact.org : "AOG 中心"}
+                    {("org" in firstContact && firstContact.org) || "AOG 中心"}
                   </div>
                   {"contact" in firstContact && firstContact.contact && (
                     <div className="text-xs text-ink-500">
@@ -257,11 +294,13 @@ export function CityDetailClient({ code }: { code: string }) {
                   )}
                   {"phone" in firstContact && firstContact.phone && (
                     <a
-                      href={`tel:${firstContact.phone}`}
+                      href={`tel:${Array.isArray(firstContact.phone) ? firstContact.phone[0] : firstContact.phone}`}
                       className="flex items-center gap-1.5 text-sm text-primary hover:underline"
                     >
                       <Phone className="h-3 w-3" />
-                      {firstContact.phone}
+                      {Array.isArray(firstContact.phone)
+                        ? firstContact.phone.join(" / ")
+                        : firstContact.phone}
                     </a>
                   )}
                   {"email" in firstContact && firstContact.email && (

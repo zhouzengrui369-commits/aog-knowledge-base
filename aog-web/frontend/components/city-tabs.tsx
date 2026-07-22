@@ -59,7 +59,7 @@ export function CityTabs({ city }: Props) {
 }
 
 function PlanPane({ city }: { city: City }) {
-  const ap = city.airport_obj;
+  const ap = city?.airport_obj;
   return (
     <div className="prose-city max-w-none">
       <h2>一、机场信息</h2>
@@ -67,7 +67,7 @@ function PlanPane({ city }: { city: City }) {
         <tbody>
           <tr>
             <th className="bg-ink-50 w-32">机场名称</th>
-            <td>{ap?.name || city.airport || "—"}</td>
+            <td>{ap?.name || city?.airport || "—"}</td>
           </tr>
           <tr>
             <th className="bg-ink-50">省份/地区</th>
@@ -75,17 +75,17 @@ function PlanPane({ city }: { city: City }) {
           </tr>
           <tr>
             <th className="bg-ink-50">三字代码</th>
-            <td className="font-mono">{ap?.code || city.iata || "—"}</td>
+            <td className="font-mono">{ap?.code || city?.iata || "—"}</td>
           </tr>
           <tr>
             <th className="bg-ink-50">地区</th>
-            <td>{city.region}</td>
+            <td>{city?.region || "—"}</td>
           </tr>
         </tbody>
       </table>
 
       <h2>二、吉祥执飞机型</h2>
-      {city.fleet && city.fleet.length > 0 ? (
+      {city?.fleet && city.fleet.length > 0 ? (
         <table>
           <thead>
             <tr>
@@ -96,10 +96,10 @@ function PlanPane({ city }: { city: City }) {
           </thead>
           <tbody>
             {city.fleet.map((f) => (
-              <tr key={f.model}>
-                <td className="font-medium">{f.model}</td>
-                <td>{f.short_stay ? "√" : "×"}</td>
-                <td>{f.after ? "√" : "×"}</td>
+              <tr key={f?.model}>
+                <td className="font-medium">{f?.model || "—"}</td>
+                <td>{f?.short_stay ? "√" : "×"}</td>
+                <td>{f?.after ? "√" : "×"}</td>
               </tr>
             ))}
           </tbody>
@@ -118,7 +118,20 @@ function PlanPane({ city }: { city: City }) {
 }
 
 function ContactsPane({ city }: { city: City }) {
-  const contacts = city.contacts_mockup || [];
+  // V14: 兼容 SCF 真实 API (city.contacts: Array<{org, phone:string[], role, email}>) + mockup
+  const contacts =
+    (city?.contacts && city.contacts.length > 0
+      ? city.contacts.map((c: any) => ({
+          org: c?.org,
+          scope: c?.role,
+          method: c?.role,
+          contact: undefined,
+          phone: Array.isArray(c?.phone) ? c.phone.join(" / ") : c?.phone,
+          email: c?.email,
+        }))
+      : null) ||
+    city?.contacts_mockup ||
+    [];
   if (contacts.length === 0) {
     return (
       <div className="rounded-lg border border-dashed border-ink-100 bg-ink-50 p-8 text-center text-sm text-ink-500">
@@ -188,7 +201,18 @@ function ContactsPane({ city }: { city: City }) {
 }
 
 function PartsPane({ city }: { city: City }) {
-  const parts = city.parts_mockup || [];
+  // V14: 兼容 SCF 真实 API (city.parts) + mockup
+  const parts =
+    (city?.parts && city.parts.length > 0
+      ? city.parts.map((p: any) => ({
+          name: p?.name,
+          pn: p?.pn,
+          stock: (p?.stock ?? 0) > 0,
+          note: `${p?.unit || ""} ${p?.name || ""}`.trim(),
+        }))
+      : null) ||
+    city?.parts_mockup ||
+    [];
   if (parts.length === 0) {
     return (
       <div className="rounded-lg border border-dashed border-ink-100 bg-ink-50 p-8 text-center text-sm text-ink-500">
@@ -240,7 +264,14 @@ function PartsPane({ city }: { city: City }) {
 }
 
 function LogisticsPane({ city }: { city: City }) {
-  const logs = city.logistics_mockup || [];
+  // V14: 兼容 SCF 真实 API (city.logistics: {rail, air, road}) + mockup
+  let logs = city?.logistics_mockup || [];
+  if (logs.length === 0 && city?.logistics) {
+    const lg = city.logistics;
+    if (lg.rail) logs.push({ type: "铁路/海运", note: lg.rail });
+    if (lg.air) logs.push({ type: "航空", note: lg.air });
+    if (lg.road) logs.push({ type: "陆运", note: lg.road });
+  }
   if (logs.length === 0) {
     return (
       <div className="rounded-lg border border-dashed border-ink-100 bg-ink-50 p-8 text-center text-sm text-ink-500">
@@ -273,7 +304,18 @@ function LogisticsPane({ city }: { city: City }) {
 }
 
 function WarehousePane({ city }: { city: City }) {
-  const w = city.warehouse_mockup;
+  // V14: 兼容 SCF 真实 API (city.warehouse: {location, main[]}) + mockup
+  let w: { name?: string; address?: string; phone?: string; owners?: string } | undefined =
+    city?.warehouse_mockup;
+  if (!w && city?.warehouse) {
+    const wh = city.warehouse;
+    w = {
+      name: wh?.main?.[0] || wh?.location || "—",
+      address: wh?.location,
+      phone: undefined,
+      owners: wh?.main?.slice(1).join(" / "),
+    };
+  }
   if (!w?.name) {
     return (
       <div className="rounded-lg border border-dashed border-ink-100 bg-ink-50 p-8 text-center text-sm text-ink-500">

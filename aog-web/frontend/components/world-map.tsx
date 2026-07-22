@@ -810,7 +810,7 @@ export function WorldMapView({
                     onMouseLeave={() => setHovered(null)}
                   >
                     <a
-                      href={`/city/${encodeURIComponent(c.code).toLowerCase()}`}
+                      href={`/city/${encodeURIComponent(c.code)}`}
                       onClick={(e: any) => {
                         // V5: 用 onSelectCity 控制选中态, preventDefault 阻止 navigate
                         // (navigate 改由 chip 内的 Link 触发 — 用户先看 chip, 决定是否跳)
@@ -819,7 +819,7 @@ export function WorldMapView({
                         onSelectCity?.(isSelected ? null : c);
                       }}
                       style={{ cursor: "pointer", textDecoration: "none" }}
-                      data-testid={`city-${encodeURIComponent(c.code).toLowerCase()}`}
+                      data-testid={`city-${encodeURIComponent(c.code)}`}
                     >
                       <g style={{ cursor: "pointer" }}>
                         {/* V7: 选中态强化 — pulse ring 缩小到适配 1.5px hub dot */}
@@ -1078,7 +1078,7 @@ export function WorldMapView({
                         onMouseLeave={() => setHovered(null)}
                       >
                         <a
-                          href={`/city/${encodeURIComponent(props.code).toLowerCase()}`}
+                          href={`/city/${encodeURIComponent(props.code)}`}
                           onClick={(e: any) => {
                             e.preventDefault();
                             e.stopPropagation?.();
@@ -1216,7 +1216,7 @@ export function WorldMapView({
             data-testid="selected-chip"
           >
             <Link
-              href={`/city/${encodeURIComponent(selectedCity.code).toLowerCase()}`}
+              href={`/city/${encodeURIComponent(selectedCity.code)}`}
               className="inline-flex items-center gap-2 transition hover:opacity-80"
             >
               <span className="inline-block h-2.5 w-2.5 rounded-full bg-red-500 shadow-[0_0_0_3px_rgba(220,38,38,0.2)]" />

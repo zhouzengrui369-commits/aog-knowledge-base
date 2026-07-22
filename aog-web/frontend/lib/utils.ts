@@ -12,12 +12,16 @@ export function firstLetter(s: string): string {
   return s.charAt(0).toUpperCase();
 }
 
-/** 格式化 ISO 日期为 YYYY-MM-DD */
-export function fmtDate(iso?: string): string {
+/** 格式化 ISO 日期为 YYYY-MM-DD — V14 try/catch 防止异常 input 触发 render exception */
+export function fmtDate(iso?: string | null): string {
   if (!iso) return "—";
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return iso;
-  return d.toISOString().slice(0, 10);
+  try {
+    const d = new Date(iso);
+    if (Number.isNaN(d.getTime())) return "—";
+    return d.toISOString().slice(0, 10);
+  } catch {
+    return "—";
+  }
 }
 
 /** 城市 status -> 中文 + 颜色 */
