@@ -47,6 +47,7 @@ async def client() -> AsyncGenerator[AsyncClient, None]:
     """提供 AsyncClient - 触发 FastAPI lifespan, 用真实 ASGI in-process"""
     # 重置所有单例 (避免上一个 test 残留)
     from aog_web.config import reset_settings_cache
+    from aog_web.services.airlines_client import reset_airlines_client
     from aog_web.services.chroma_client import reset_chroma_client
     from aog_web.services.sqlite_client import reset_sqlite_client
     from aog_web.services.sync import reset_sync_service
@@ -55,6 +56,7 @@ async def client() -> AsyncGenerator[AsyncClient, None]:
     reset_chroma_client()
     reset_sqlite_client()
     reset_sync_service()
+    reset_airlines_client()
 
     # 重新加载 .env 读取 (确保走 test env vars)
     # 关键: 必须在 import app 之前 reset

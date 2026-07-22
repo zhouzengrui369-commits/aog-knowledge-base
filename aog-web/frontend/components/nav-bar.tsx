@@ -3,7 +3,7 @@ import { Plane } from "lucide-react";
 import { SearchBar } from "@/components/search-bar";
 
 /** 顶部导航 — 全局共享 */
-export function NavBar({ active }: { active?: "home" | "experiences" }) {
+export function NavBar({ active }: { active?: "home" | "experiences" | "airlines" }) {
   return (
     <header className="sticky top-0 z-30 border-b border-ink-100 bg-white/80 backdrop-blur">
       <div className="mx-auto flex h-16 max-w-7xl items-center justify-between px-4 sm:px-6 lg:px-8">
@@ -27,6 +27,17 @@ export function NavBar({ active }: { active?: "home" | "experiences" }) {
             }
           >
             首页
+          </Link>
+          <Link
+            href="/airlines"
+            className={
+              "rounded-md px-3 py-1.5 text-sm font-medium " +
+              (active === "airlines"
+                ? "bg-primary-50 text-primary"
+                : "text-ink-700 hover:bg-ink-50")
+            }
+          >
+            航司互援
           </Link>
           <Link
             href="/experiences"

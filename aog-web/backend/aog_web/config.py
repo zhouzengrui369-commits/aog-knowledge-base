@@ -41,6 +41,8 @@ class Settings(BaseSettings):
     FTS5_PATH: str = "./data/fts5_index.db"
     # RAG backend: "chroma" (本地 dev) | "fts5" (SCF 部署)
     RAG_BACKEND: str = "chroma"
+    # 航司静态数据 (Sprint C) — 测试时可临时覆盖路径
+    AIRLINES_DATA_PATH: str = ""
 
     # ===== 知识库源 (只读) =====
     KNOWLEDGE_BASE_PATH: str = "/Users/njx/Project/AOG知识库/AOG知识库"
@@ -100,6 +102,28 @@ class Settings(BaseSettings):
     @property
     def data_dir(self) -> Path:
         return self.backend_root / "data"
+
+    @property
+    def airlines_data_path(self) -> Path:
+        """航司静态数据 JSON 路径. 优先用 AIRLINES_DATA_PATH, 否则默认
+        aog-web/functions/aog-api/data/airlines.json (项目内固定位置)
+        """
+        if self.AIRLINES_DATA_PATH.strip():
+            p = Path(self.AIRLINES_DATA_PATH)
+            if not p.is_absolute():
+                p = self.backend_root / p
+            return p.resolve()
+        # 默认: aog-web/backend/aog_web/config.py → aog-web/backend/aog_web/ → aog-web/backend/ → aog-web/
+        from pathlib import Path as _P
+        here = _P(__file__).resolve().parent.parent.parent  # aog-web/
+        candidates = [
+            here / "functions" / "aog-api" / "data" / "airlines.json",
+            here / "backend" / "data" / "airlines.json",
+        ]
+        for c in candidates:
+            if c.exists():
+                return c.resolve()
+        return candidates[0].resolve()  # 兜底:返回 SCF 路径 (即使不存在, client 也能容错)
 
     @property
     def knowledge_base_path(self) -> Path:
