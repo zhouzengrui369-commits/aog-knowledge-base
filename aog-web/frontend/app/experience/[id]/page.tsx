@@ -15,6 +15,7 @@ import {
   cn,
 } from "@/lib/utils";
 import { Download, Bot, ChevronLeft, Sparkles } from "lucide-react";
+import type { City } from "@/lib/types";
 
 interface PageProps {
   params: Promise<{ id: string }>;
@@ -32,13 +33,10 @@ export async function generateStaticParams() {
 }
 
 export async function generateMetadata({ params }: PageProps): Promise<Metadata> {
+  // Build-time fix: skip API call, use static metadata to avoid 60s page timeout
+  // when SCF backend is slow. The actual title is set client-side by ExperienceDetailClient.
   const { id } = await params;
-  const exp = await getExperience(decodeURIComponent(id));
-  if (!exp) return { title: "经验未找到" };
-  return {
-    title: `${exp.title} · AOG 知识库`,
-    description: exp.summary,
-  };
+  return { title: `经验详情 · AOG 知识库` };
 }
 
 export default async function ExperiencePage({ params }: PageProps) {
@@ -91,7 +89,7 @@ export default async function ExperiencePage({ params }: PageProps) {
         </nav>
         <div className="mt-3 flex flex-wrap items-center gap-1.5 text-[11px] text-ink-500">
           <span>相关航站：</span>
-          <RelatedCityChips />
+          <span className="text-ink-400">（build 时跳过）</span>
         </div>
       </div>
 
@@ -194,7 +192,11 @@ export default async function ExperiencePage({ params }: PageProps) {
 }
 
 async function RelatedCityChips() {
-  const cities = await getCities();
+  // 1s timeout race — build 时 SCF cold start 30-60s 会卡 60s page timeout
+  const cities = (await Promise.race([
+    getCities(),
+    new Promise<City[]>((r) => setTimeout(() => r([]), 1000)),
+  ]).catch(() => [])) as City[];
   const featured = cities.filter((c) =>
     ["B-北京大兴", "S-上海浦东", "G-广州白云"].includes(c.code)
   );

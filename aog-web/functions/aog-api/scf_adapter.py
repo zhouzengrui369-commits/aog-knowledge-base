@@ -88,7 +88,7 @@ def _apigw_v2_to_scope(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
         "method": method.upper(),
         "scheme": "https",
         "path": path,
-        "raw_path": path.encode("latin-1"),
+        "raw_path": path.encode("utf-8"),  # v8: 兼容中文 city code (X-西安 等)
         "query_string": query_string,
         "headers": headers,
         "server": (server_name, 443),
@@ -165,7 +165,7 @@ def _apigw_v1_to_scope(event: Dict[str, Any], context: Any) -> Tuple[Dict[str, A
         "method": method.upper(),
         "scheme": "https",
         "path": path,
-        "raw_path": path.encode("latin-1"),
+        "raw_path": path.encode("utf-8"),  # v8: 兼容中文 city code (X-西安 等)
         "query_string": query_string,
         "headers": headers,
         "server": (server_name, 443),
