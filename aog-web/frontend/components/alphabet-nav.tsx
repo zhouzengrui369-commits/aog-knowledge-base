@@ -9,7 +9,7 @@ import type { City, Airline } from "@/lib/types";
 const ALPHA = "ABCDEFGHIJKLMNOPQRSTUVWXYZ".split("");
 
 interface Props {
-  /** 城市列表 (Tab="城市") — 不传则隐藏该 tab */
+  /** 航站列表 (Tab="航站") — 不传则隐藏该 tab */
   cities?: City[];
   /** 航司列表 (Tab="航司") — 不传则隐藏该 tab */
   airlines?: Airline[];
@@ -31,7 +31,7 @@ type SidebarTab = "city" | "airline";
 
 /**
  * 字母导航（Vercel / Linear 风格）
- *  - horizontal: 26 字母横向单行 + in-page 展开城市/航司列表
+ *  - horizontal: 26 字母横向单行 + in-page 展开航站/航司列表
  *  - sidebar:    4 列紧凑 grid + 下方滚动展开（适配 unified 视图侧栏）
  *  - hover 字母: 通过 onLetterHover 通知父级（用于地图同步 pulse）
  *  - Sprint C: 加 "航司" tab — 切到航司列表 (按 IATA 字母排序)
@@ -39,7 +39,7 @@ type SidebarTab = "city" | "airline";
  * Tab 策略:
  *  - 只传 cities: 隐藏 tab, 走原来逻辑 (backward compat)
  *  - 只传 airlines: 隐藏 tab, 直接显示航司
- *  - 两者都传: 顶部显示 城市 / 航司 切换
+ *  - 两者都传: 顶部显示 航站 / 航司 切换
  */
 export function AlphabetNav({
   cities,
@@ -134,7 +134,7 @@ export function AlphabetNav({
         )}
       >
         <Building2 className="h-3.5 w-3.5" />
-        城市
+        航站
         {hasCities && (
           <span className="ml-0.5 text-[10px] tabular-nums text-ink-400">
             {(cities || []).length}
@@ -173,7 +173,7 @@ export function AlphabetNav({
         {/* header */}
         <div className="mb-3 flex items-baseline justify-between">
           <span className="text-xs font-medium uppercase tracking-wider text-ink-500">
-            按首字母 · {activeTab === "city" ? "城市" : "航司"}
+            按首字母 · {activeTab === "city" ? "航站" : "航司"}
           </span>
           <span className="text-[11px] tabular-nums text-ink-400">
             {totalWith}/26
@@ -209,7 +209,7 @@ export function AlphabetNav({
                       : "bg-ink-50 text-ink-900 hover:bg-primary-50 hover:text-primary"
                     : "cursor-not-allowed bg-ink-50/40 text-ink-300"
                 )}
-                title={has ? `${letter} · ${list.length} 个${activeTab === "city" ? "城市" : "航司"}` : `${letter} 无数据`}
+                title={has ? `${letter} · ${list.length} 个${activeTab === "city" ? "航站" : "航司"}` : `${letter} 无数据`}
               >
                 {letter}
                 {has && (
@@ -242,7 +242,7 @@ export function AlphabetNav({
                   {expanded}
                 </span>
                 <span className="text-[11px] text-ink-500">
-                  {byAlpha[expanded].length} 个{activeTab === "city" ? "城市" : "航司"}
+                  {byAlpha[expanded].length} 个{activeTab === "city" ? "航站" : "航司"}
                 </span>
               </div>
               <button
@@ -299,7 +299,7 @@ export function AlphabetNav({
         {/* footer meta (sidebar 模式下置底) */}
         <div className="mt-2 text-[10px] text-ink-400">
           {activeTab === "city"
-            ? `共 ${(cities || []).length} 城市 · hover 同步高亮地图`
+            ? `共 ${(cities || []).length} 航站 · hover 同步高亮地图`
             : `共 ${(airlines || []).length} 航司`}
         </div>
       </div>
@@ -337,7 +337,7 @@ export function AlphabetNav({
                     : "text-ink-900 hover:bg-ink-50 hover:text-primary"
                   : "cursor-not-allowed text-ink-200"
               )}
-              title={has ? `${letter} · ${list.length} 个${activeTab === "city" ? "城市" : "航司"}` : `${letter} 无数据`}
+              title={has ? `${letter} · ${list.length} 个${activeTab === "city" ? "航站" : "航司"}` : `${letter} 无数据`}
             >
               {letter}
             </button>
@@ -349,7 +349,7 @@ export function AlphabetNav({
         <span>
           {totalWith} / 26 字母有数据 ·{" "}
           {activeTab === "city"
-            ? `共 ${(cities || []).length} 城市`
+            ? `共 ${(cities || []).length} 航站`
             : `共 ${(airlines || []).length} 航司`}
         </span>
         {activeLetter && (
@@ -371,7 +371,7 @@ export function AlphabetNav({
                 {expanded}
               </span>
               <span className="text-sm text-ink-500">
-                {byAlpha[expanded].length} 个{activeTab === "city" ? "城市" : "航司"}
+                {byAlpha[expanded].length} 个{activeTab === "city" ? "航站" : "航司"}
               </span>
             </div>
             <button
