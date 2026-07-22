@@ -110,6 +110,7 @@ export function HomeData() {
               <div className="lg:h-[520px]">
                 <WorldMapLeaflet
                   cities={cities}
+                  airlines={airlines}
                   hoveredLetter={hoveredLetter}
                   selectedCity={selectedCity}
                   onSelectCity={setSelectedCity}

@@ -219,6 +219,18 @@ body {
   font-weight: 600;
 }
 
+/* V17: 航司 hub tooltip — 紫色调, 跟 city-label 区分 */
+.leaflet-tooltip.airline-hub-tooltip {
+  background: rgba(250, 245, 255, 0.95);
+  border: 1px solid #ddd6fe;
+  border-radius: 4px;
+  box-shadow: 0 1px 2px rgba(124, 58, 237, 0.1);
+  padding: 4px 6px;
+}
+.leaflet-tooltip.airline-hub-tooltip::before {
+  display: none; /* 不需要朝 dot 方向的小三角, 跟 city-label 一致 */
+}
+
 /* cluster bubble — 蓝填充 + 白数字 + 描边 + 阴影 */
 .cluster-bubble-wrapper {
   background: transparent;

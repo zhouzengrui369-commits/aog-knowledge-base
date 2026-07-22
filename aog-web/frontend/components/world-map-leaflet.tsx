@@ -18,6 +18,7 @@ import { MapPin, RotateCcw, ZoomIn, ZoomOut } from "lucide-react";
 import type { City } from "@/lib/types";
 import { citiesWithCoords } from "@/lib/city-stats";
 import { cn, firstLetter } from "@/lib/utils";
+import type { Airline } from "@/lib/types";
 import Supercluster from "supercluster";
 
 /* ============================================================
@@ -40,6 +41,12 @@ import Supercluster from "supercluster";
  *  - Tooltip permanent (label 永远显示, 跟 V8 N/zoom constant 像素效果一致)
  *  - smooth flyTo (leaflet 原生, 替代 V8 自写 rAF)
  *  - zoom 控件、attribution
+ *
+ *  V17 新增:
+ *  - airlines prop: 航司数据 (Sprint C, 公网 backend 25 家 / dev fallback MOCK)
+ *  - airlineHubsByCity: Map<city_code, Airline[]>  (聚合各 city 的航司 hub)
+ *  - city CircleMarker 外层加紫色环 (#7c3aed, radius + 6) 标识有航司 hub
+ *  - tooltip 显示航司 IATA + 简称/中文名 (国航 CA / 东航 MU / 南航 CZ 等)
  *
  *  React 19 strict mode 防御: mounted 状态 gate (避免 "Map container is already initialized")
  * ============================================================ */
@@ -80,6 +87,8 @@ function computeHubs(cities: City[]): {
 
 interface Props {
   cities: City[];
+  /** V17: 航司列表 (Sprint C) — city 上叠加航司 hub 紫色环 + tooltip */
+  airlines?: Airline[];
   className?: string;
   /** 父级 hover 的字母 — 地图上该字母城市 pulse */
   hoveredLetter?: string | null;
@@ -308,6 +317,79 @@ function CityDot({
 }
 
 /* ============================================================
+ *  V17 — AirlineHubDot
+ *  城市外层紫色环 + 永久 tooltip 显示航司 IATA + 简称/中文名
+ *  - 位置: city 中心
+ *  - 半径: r + 6 (hub city 5+6=11, non-hub 3+6=9, 永远 11 保证可见)
+ *  - 颜色: #7c3aed (violet-600)
+ *  - interactive: false (装饰层, 不挡 city marker click)
+ *  - Tooltip: permanent + right offset, 显示所有 hub 该 city 的航司
+ * ============================================================ */
+function AirlineHubDot({
+  city,
+  airlines,
+  onSelect,
+}: {
+  city: City;
+  airlines: Airline[];
+  onSelect?: (city: City | null) => void;
+}) {
+  if (city.lat == null || city.lon == null) return null;
+  const isHub = (city.view_count || 0) > 0;
+  const r = isHub ? 5 : 3;
+  return (
+    <CircleMarker
+      center={[city.lat, city.lon]}
+      radius={r + 6}
+      pathOptions={{
+        color: "#7c3aed",
+        weight: 2,
+        fillColor: "#7c3aed",
+        fillOpacity: 0.08,
+      }}
+      interactive={false}
+    >
+      <Tooltip
+        permanent
+        direction="right"
+        offset={[14, 0]}
+        opacity={1}
+        className="airline-hub-tooltip"
+      >
+        <div
+          className="flex flex-col gap-0.5"
+          style={{
+            fontFamily:
+              "-apple-system, BlinkMacSystemFont, 'PingFang SC', 'Microsoft YaHei', sans-serif",
+          }}
+        >
+          {airlines.map((a) => (
+            <div
+              key={a.iata}
+              className="flex items-center gap-1.5 whitespace-nowrap"
+            >
+              <span
+                style={{
+                  color: "#7c3aed",
+                  fontWeight: 700,
+                  fontSize: "11px",
+                  letterSpacing: "0.02em",
+                }}
+              >
+                {a.iata}
+              </span>
+              <span style={{ fontSize: "11px", color: "#1f2937" }}>
+                {a.name_short || a.name_cn}
+              </span>
+            </div>
+          ))}
+        </div>
+      </Tooltip>
+    </CircleMarker>
+  );
+}
+
+/* ============================================================
  *  ClusterBubble — 聚合点 (T1 zoom ≤ 4 用 supercluster 聚合 hubs)
  *  用 L.divIcon 渲染带数字的气泡
  * ============================================================ */
@@ -362,6 +444,7 @@ function ClusterMarker({
  * ============================================================ */
 export function WorldMapLeaflet({
   cities,
+  airlines,
   className,
   hoveredLetter,
   selectedCity,
@@ -394,6 +477,24 @@ export function WorldMapLeaflet({
     () => withCoords.filter((c) => hubSet.has(c.code)),
     [withCoords, hubSet]
   );
+
+  // V17: 航司 hub 聚合 by city_code — Map<city_code, Airline[]>
+  // 公网 backend 返 25 航司, dev fallback MOCK 3 航司 (CA/MU/CZ)
+  // city_code 缺失 (e.g. MU PVG) → 不入 map (前端只显示有 city_code 的 hub)
+  const airlineHubsByCity = React.useMemo(() => {
+    const map = new Map<string, Airline[]>();
+    if (!airlines || airlines.length === 0) return map;
+    for (const a of airlines) {
+      if (!a.hubs) continue;
+      for (const hub of a.hubs) {
+        if (!hub.city_code) continue;
+        const list = map.get(hub.city_code) || [];
+        list.push(a);
+        map.set(hub.city_code, list);
+      }
+    }
+    return map;
+  }, [airlines]);
 
   // supercluster — T1 聚合 hubs
   const cluster = React.useMemo(() => {
@@ -560,6 +661,19 @@ export function WorldMapLeaflet({
               个城市 ·{" "}
               <span className="font-medium text-primary">{hubSet.size}</span>{" "}
               枢纽
+              {airlineHubsByCity.size > 0 && (
+                <>
+                  {" · "}
+                  <span
+                    className="font-bold"
+                    style={{ color: "#7c3aed" }}
+                    data-testid="airline-hub-count"
+                  >
+                    {airlineHubsByCity.size}
+                  </span>{" "}
+                  <span style={{ color: "#7c3aed" }}>航司 hub</span>
+                </>
+              )}
             </span>
           </span>
           <span className="hidden items-center gap-1.5 sm:inline-flex">
@@ -709,6 +823,24 @@ export function WorldMapLeaflet({
                   />
                 );
               })}
+
+            {/* V17: 航司 hub 紫色外环 layer (叠加在 city 圆点之上, 装饰层 interactive=false)
+                仅渲染 airlineHubsByCity 里的 city, 其他 city 不加环. */}
+            {airlineHubsByCity.size > 0 &&
+              Array.from(airlineHubsByCity.entries()).map(
+                ([cityCode, airlinesHere]) => {
+                  const city = withCoords.find((c) => c.code === cityCode);
+                  if (!city) return null;
+                  return (
+                    <AirlineHubDot
+                      key={`airline-hub-${cityCode}`}
+                      city={city}
+                      airlines={airlinesHere}
+                      onSelect={onSelectCity}
+                    />
+                  );
+                }
+              )}
           </MapContainer>
         )}
 
