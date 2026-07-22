@@ -57,7 +57,8 @@ export async function getCities(params?: {
   if (params?.letter) qs.set("letter", params.letter);
   const q = qs.toString() ? `?${qs}` : "";
   const data = await safeFetch<City[]>(`/api/cities${q}`);
-  if (data) return data;
+  // dev backend 返空数组时也 fallback 到 MOCK (避免 dev 看到 0 城市)
+  if (data && data.length > 0) return data;
   // 降级 mock
   let list = [...MOCK_CITIES];
   if (params?.region) list = list.filter((c) => c.region === params.region);
@@ -89,7 +90,8 @@ export async function getExperiences(params?: {
   if (params?.q) qs.set("q", params.q);
   const q = qs.toString() ? `?${qs}` : "";
   const data = await safeFetch<Experience[]>(`/api/experiences${q}`);
-  if (data) return data;
+  // dev backend 返空数组时 fallback MOCK
+  if (data && data.length > 0) return data;
   let list = [...MOCK_EXPERIENCES];
   if (params?.category) list = list.filter((e) => e.category === params.category || e.topic === params.category);
   if (params?.status) list = list.filter((e) => e.status === params.status);
@@ -155,7 +157,8 @@ export async function getAirlines(params?: {
   if (params?.hub) qs.set("hub", params.hub);
   const q = qs.toString() ? `?${qs}` : "";
   const data = await safeFetch<Airline[]>(`/api/airlines${q}`);
-  if (data) return data;
+  // dev backend 返空数组时 fallback MOCK
+  if (data && data.length > 0) return data;
   // 降级 mock
   let list = [...MOCK_AIRLINES];
   if (params?.letter) {
@@ -183,7 +186,8 @@ export async function searchAirlines(q: string, limit = 20): Promise<Airline[]> 
   const data = await safeFetch<Airline[]>(
     `/api/airlines/search?q=${encodeURIComponent(q)}&limit=${limit}`
   );
-  if (data) return data;
+  // dev backend 返空数组时 fallback MOCK
+  if (data && data.length > 0) return data;
   // 降级 mock
   const k = q.trim().toLowerCase();
   return MOCK_AIRLINES.filter((a) => {
