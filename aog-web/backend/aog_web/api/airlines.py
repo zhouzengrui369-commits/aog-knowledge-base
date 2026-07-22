@@ -102,7 +102,7 @@ async def search_airlines(
 @router.get("/{iata}")
 async def get_airline(request: Request, iata: str) -> Dict[str, Any]:
     """按 IATA 2-letter code 查航司详情"""
-    if not iata or len(iata) != 2 or not iata.isalpha():
+    if not iata or len(iata) != 2 or not iata.isalnum():
         raise HTTPException(
             status_code=400,
             detail={"error": "invalid iata", "iata": iata},
