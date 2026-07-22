@@ -94,15 +94,38 @@ export function HomeData() {
               加载中…
             </div>
           ) : (
-            <div className="grid grid-cols-1 gap-4 lg:grid-cols-[260px,1fr] lg:gap-5">
-              {/* 字母侧栏 — 固定在地图左侧, 高度跟随地图 */}
+            <div className="grid grid-cols-1 gap-4 lg:grid-cols-[220px,220px,1fr] lg:gap-4">
+              {/* 左侧：按航站字母 sidebar */}
               <div className="rounded-lg border border-ink-100 bg-ink-50/30 p-3 lg:h-[520px]">
+                <div className="mb-2 flex items-baseline justify-between">
+                  <span className="text-xs font-semibold uppercase tracking-wider text-ink-700">
+                    按航站
+                  </span>
+                  <span className="text-[10px] tabular-nums text-ink-400">
+                    {cities.length} 个
+                  </span>
+                </div>
                 <AlphabetNav
                   cities={cities}
-                  airlines={airlines}
                   mode="sidebar"
                   hoveredLetter={hoveredLetter}
                   onLetterHover={setHoveredLetter}
+                />
+              </div>
+
+              {/* 中间：按航司字母 sidebar */}
+              <div className="rounded-lg border border-ink-100 bg-ink-50/30 p-3 lg:h-[520px]">
+                <div className="mb-2 flex items-baseline justify-between">
+                  <span className="text-xs font-semibold uppercase tracking-wider text-ink-700">
+                    按航司
+                  </span>
+                  <span className="text-[10px] tabular-nums text-ink-400">
+                    {airlines.length} 个
+                  </span>
+                </div>
+                <AlphabetNav
+                  airlines={airlines}
+                  mode="sidebar"
                 />
               </div>
 
