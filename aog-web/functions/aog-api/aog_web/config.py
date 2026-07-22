@@ -58,6 +58,14 @@ class Settings(BaseSettings):
     LOG_LEVEL: str = "INFO"
     CORS_ALLOW_ORIGINS: str = "http://localhost:3000,http://127.0.0.1:3000"
 
+    # ===== Sprint A · Auth (本地优先, MVP 简化方案) =====
+    # AOG 知识库访问密码 (Sprint A 拍板方案 🅱️)
+    # 生产前必须改; 缺失时 fallback 到默认 "13456789" (仅 dev)
+    AOG_VIEW_PASSWORD: str = ""
+    # JWT 签发 secret (HS256)
+    # 生产前必须改; 缺失时 fallback 到默认 dev secret (仅 dev)
+    JWT_SECRET: str = ""
+
     @property
     def backend_root(self) -> Path:
         return _backend_root()

@@ -19,6 +19,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from aog_web import __version__
 from aog_web.api import (
+    auth,
     chat,
     cities,
     core_plans,
@@ -146,6 +147,7 @@ def create_app() -> FastAPI:
 
     # 路由
     app.include_router(health.router)
+    app.include_router(auth.router)
     app.include_router(cities.router)
     app.include_router(experiences.router)
     app.include_router(core_plans.router)
