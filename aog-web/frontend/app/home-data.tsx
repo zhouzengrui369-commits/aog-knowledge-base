@@ -3,11 +3,17 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { FeaturedCities } from "@/components/featured-cities";
 import { AlphabetNav } from "@/components/alphabet-nav";
-import { WorldMapLeaflet } from "@/components/world-map-leaflet";
+import dynamic from "next/dynamic";
 import { getCities, getAirlines } from "@/lib/api";
 import { enrichCities, topByViewCount } from "@/lib/city-stats";
 import { FileText, BookOpen, ArrowUpRight, MapPin, Plane } from "lucide-react";
 import type { City, Airline } from "@/lib/types";
+
+// V18: 解决 SSR window 报错 — leaflet 内部用 window, 客户端动态 import
+const WorldMapLeaflet = dynamic(
+  () => import("@/components/world-map-leaflet").then(m => m.WorldMapLeaflet),
+  { ssr: false, loading: () => <div className="grid h-full place-items-center text-sm text-ink-500">地图加载中…</div> }
+);
 
 const QUICK_LINKS = [
   {
@@ -106,7 +112,7 @@ export function HomeData() {
                 />
               </div>
 
-              {/* 地图主区域 */}
+              {/* 地图主区域 - V18: dynamic import 解决 SSR window 报错 */}
               <div className="lg:h-[520px]">
                 <WorldMapLeaflet
                   cities={cities}

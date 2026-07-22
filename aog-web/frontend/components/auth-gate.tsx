@@ -53,6 +53,12 @@ export function clearToken(): void {
 }
 
 export default function AuthGate({ children }: { children: React.ReactNode }) {
+  // V18: 本地验证快捷通道 — NEXT_PUBLIC_DISABLE_AUTH=1 直接渲染 children
+  // 公网 deploy 时必须 unset 此变量 (确保密码 gate 生效)
+  if (process.env.NEXT_PUBLIC_DISABLE_AUTH === "1") {
+    return <>{children}</>;
+  }
+
   const [token, setTokenState] = React.useState<string | null>(null);
   // status: "checking" (mount 时 verify) | "unauth" | "authed"
   const [status, setStatus] = React.useState<"checking" | "unauth" | "authed">(
