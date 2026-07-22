@@ -4,10 +4,10 @@ import Link from "next/link";
 import { FeaturedCities } from "@/components/featured-cities";
 import { AlphabetNav } from "@/components/alphabet-nav";
 import { WorldMapView } from "@/components/world-map";
-import { getCities } from "@/lib/api";
+import { getCities, getAirlines } from "@/lib/api";
 import { enrichCities, topByViewCount } from "@/lib/city-stats";
-import { FileText, BookOpen, ArrowUpRight, MapPin } from "lucide-react";
-import type { City } from "@/lib/types";
+import { FileText, BookOpen, ArrowUpRight, MapPin, Plane } from "lucide-react";
+import type { City, Airline } from "@/lib/types";
 
 const QUICK_LINKS = [
   {
@@ -28,6 +28,12 @@ const QUICK_LINKS = [
     title: "航材保障规范",
     desc: "标准操作流程、合规要求、应急手册",
   },
+  {
+    href: "/airlines",
+    icon: Plane,
+    title: "航司互援资源",
+    desc: "25 家中国主要航司 · 基地 / 机队 / 联盟 / AOG 联系方式",
+  },
 ];
 
 /**
@@ -38,6 +44,7 @@ const QUICK_LINKS = [
  */
 export function HomeData() {
   const [cities, setCities] = useState<City[]>([]);
+  const [airlines, setAirlines] = useState<Airline[]>([]);
   const [loading, setLoading] = useState(true);
   const [hoveredLetter, setHoveredLetter] = useState<string | null>(null);
   const [selectedCity, setSelectedCity] = useState<City | null>(null);
@@ -45,9 +52,13 @@ export function HomeData() {
   useEffect(() => {
     let cancelled = false;
     (async () => {
-      const data = await getCities();
+      const [citiesData, airlinesData] = await Promise.all([
+        getCities(),
+        getAirlines(),
+      ]);
       if (cancelled) return;
-      setCities(enrichCities(data ?? []));
+      setCities(enrichCities(citiesData ?? []));
+      setAirlines(airlinesData ?? []);
       setLoading(false);
     })();
     return () => {
@@ -88,6 +99,7 @@ export function HomeData() {
               <div className="rounded-lg border border-ink-100 bg-ink-50/30 p-3 lg:h-[520px]">
                 <AlphabetNav
                   cities={cities}
+                  airlines={airlines}
                   mode="sidebar"
                   hoveredLetter={hoveredLetter}
                   onLetterHover={setHoveredLetter}

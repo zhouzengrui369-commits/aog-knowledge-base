@@ -108,4 +108,49 @@ export interface SyncStatus {
   last_error?: string;
 }
 
+// ===== Sprint C: 航司 (Airlines) =====
+
+export type Alliance =
+  | "星空联盟"
+  | "天合联盟"
+  | "寰宇一家"
+  | "无"
+  | string;
+
+export interface AirlineHub {
+  city_code: string | null;
+  iata: string;
+  type: "hub" | "focus";
+  note?: string;
+  /** 后端 enrich 字段 — city 在 codes.json 存在时填, 否则 null */
+  city?: {
+    code: string;
+    name: string;
+    iata: string;
+    status: string;
+  } | null;
+}
+
+export interface AirlineContact {
+  phone?: string;
+  email?: string;
+}
+
+export interface Airline {
+  iata: string;
+  icao: string;
+  name_cn: string;
+  name_short?: string;
+  name_en: string;
+  hubs: AirlineHub[];
+  fleet_size: number;
+  alliance: Alliance;
+  headquarters?: string;
+  website?: string;
+  aog_contact?: AirlineContact;
+  data_source?: string;
+  verified?: boolean;
+  verified_at?: string;
+}
+
 /** normalize 函数已迁移到 lib/utils.ts（避免循环依赖） */

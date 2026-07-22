@@ -19,6 +19,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from aog_web import __version__
 from aog_web.api import (
+    airlines,
     chat,
     cities,
     core_plans,
@@ -29,6 +30,7 @@ from aog_web.api import (
     sync,
 )
 from aog_web.config import get_settings
+from aog_web.services.airlines_client import get_airlines_client
 from aog_web.services.chroma_client import get_chroma_client
 from aog_web.services.fts5_client import get_fts5_client
 from aog_web.services.sqlite_client import get_sqlite_client
@@ -79,6 +81,10 @@ async def lifespan(app: FastAPI):
     sqlite = get_sqlite_client()
     await sqlite.init()
 
+    # 1.5 加载航司静态数据 (Sprint C)
+    airlines_client = get_airlines_client()
+    logger.info("Airlines loaded: %d", airlines_client.count())
+
     # 2. RAG backend 初始化
     if settings.rag_backend == "fts5":
         # FTS5 客户端
@@ -105,6 +111,7 @@ async def lifespan(app: FastAPI):
     app.state.settings = settings
     app.state.sqlite = sqlite
     app.state.sync = sync_svc
+    app.state.airlines = airlines_client
 
     logger.info("AOG Web Backend ready.")
     yield
@@ -147,6 +154,7 @@ def create_app() -> FastAPI:
     # 路由
     app.include_router(health.router)
     app.include_router(cities.router)
+    app.include_router(airlines.router)
     app.include_router(experiences.router)
     app.include_router(core_plans.router)
     app.include_router(chat.router)

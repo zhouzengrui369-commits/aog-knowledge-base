@@ -9,9 +9,11 @@ import type {
   ChatResponse,
   CorePlan,
   SyncStatus,
+  Airline,
 } from "@/lib/types";
 import { MOCK_CITIES } from "@/lib/mock/cities";
 import { MOCK_EXPERIENCES } from "@/lib/mock/experiences";
+import { MOCK_AIRLINES } from "@/lib/mock/airlines";
 
 const BASE = process.env.NEXT_PUBLIC_API_BASE || "http://localhost:8000";
 
@@ -137,4 +139,55 @@ export async function getSyncStatus(): Promise<SyncStatus | null> {
 /** 健康检查 (CONTRACT §2.1) */
 export async function health(): Promise<{ status: string; version?: string } | null> {
   return safeFetch(`/api/health`);
+}
+
+// ===== Sprint C: 航司 (Airlines) =====
+
+/** 航司列表 — 支持 letter/alliance/hub 过滤 */
+export async function getAirlines(params?: {
+  letter?: string;
+  alliance?: string;
+  hub?: string;
+}): Promise<Airline[]> {
+  const qs = new URLSearchParams();
+  if (params?.letter) qs.set("letter", params.letter);
+  if (params?.alliance) qs.set("alliance", params.alliance);
+  if (params?.hub) qs.set("hub", params.hub);
+  const q = qs.toString() ? `?${qs}` : "";
+  const data = await safeFetch<Airline[]>(`/api/airlines${q}`);
+  if (data) return data;
+  // 降级 mock
+  let list = [...MOCK_AIRLINES];
+  if (params?.letter) {
+    const l = params.letter.toUpperCase();
+    list = list.filter(
+      (a) => a.iata.toUpperCase().startsWith(l) || a.name_cn.startsWith(l)
+    );
+  }
+  if (params?.alliance) list = list.filter((a) => a.alliance === params.alliance);
+  return list;
+}
+
+/** 航司详情 — IATA 2-letter code (大写) */
+export async function getAirline(iata: string): Promise<Airline | null> {
+  if (!iata) return null;
+  const code = iata.toUpperCase();
+  const data = await safeFetch<Airline>(`/api/airlines/${encodeURIComponent(code)}`);
+  if (data) return data;
+  return MOCK_AIRLINES.find((a) => a.iata === code) || null;
+}
+
+/** 航司模糊搜索 — IATA / ICAO / 中文名 / 英文名 / 常用简称 */
+export async function searchAirlines(q: string, limit = 20): Promise<Airline[]> {
+  if (!q || !q.trim()) return [];
+  const data = await safeFetch<Airline[]>(
+    `/api/airlines/search?q=${encodeURIComponent(q)}&limit=${limit}`
+  );
+  if (data) return data;
+  // 降级 mock
+  const k = q.trim().toLowerCase();
+  return MOCK_AIRLINES.filter((a) => {
+    const haystack = `${a.iata} ${a.icao} ${a.name_cn} ${a.name_en} ${a.name_short || ""}`.toLowerCase();
+    return haystack.includes(k);
+  }).slice(0, limit);
 }
