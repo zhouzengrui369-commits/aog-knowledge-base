@@ -81,7 +81,7 @@ const HUB_LABEL_TOP_N = 6; // V9: 区域级 (T2) 只显示 top 6 hub label
 const ZOOM_MIN = 1;
 const ZOOM_MAX = 8;
 const ZOOM_SELECT = 6;
-const ZOOM_DEFAULT = 4;
+const ZOOM_DEFAULT = 5; // V26: 4→5, 默认就 tier 3 全显示 218 AOG 城市 (治本 默认只显示 22 站)
 const TIER2_LATLON_RANGE = 20;
 const TIER_NEARBY_RADIUS_DEG: Record<1 | 2 | 3, number> = {
   1: 2.5,
@@ -258,7 +258,8 @@ function CityDot({
   setHovered: (code: string | null) => void;
 }) {
   // V8: dot 半径 constant 像素 (CircleMarker 半径就是像素, leaflet 不会随 zoom 改)
-  const r = isHub ? 5 : 3;
+  // V26: 3→4 普通, 5→6 hub (加大 33%, 治本 灰色融 OSM 看不见)
+  const r = isHub ? 6 : 4;
   // 选中态外圈 (pulse ring 用一个外层 transparent circle)
   const fill = isSelected
     ? "#dc2626"
@@ -268,7 +269,8 @@ function CityDot({
     ? "#2563eb"
     : isHovered
     ? "#1e40af"
-    : "#4b5563"; // V25: 普通城市 #9ca3af → #4b5563 (深一档), 在 OSM 灰路上能看清
+    : "#2563eb"; // V26: 普通城市 #4b5563 → #2563eb (跟 hub 同色, 治本 V18-V25 灰色融 OSM)
+    // 218 AOG 预案城市全部用 hub 蓝, 跟 6,072 没预案灰点 (#9ca3af) 强对比, 一眼能数
   const fillOpacity = isDimmed
     ? 0.25
     : isSelected
@@ -279,7 +281,7 @@ function CityDot({
     ? 0.85
     : isHub
     ? 1
-    : 0.95; // V25: 0.65 → 0.95, NJX 反馈"地图上 218 站点都看不到"
+    : 1; // V26: 0.95 → 1, 完全不透明 (治本 V25 灰底融地图)
 
   return (
     <>
@@ -333,7 +335,7 @@ function CityDot({
         pathOptions={{
           // V25: 所有城市都加白边 (NJX 反馈非 hub 城市跟 OSM tile 融一体看不到)
           color: isHub || isSelected ? "#ffffff" : "#ffffff",
-          weight: isHub || isSelected ? 2 : 1.5,
+          weight: isHub || isSelected ? 2 : 2, // V26: 1.5 → 2 (白边粗 33%, 治本 灰底融地图)
           opacity: isDimmed ? 0.3 : 1,
           fillColor: fill,
           fillOpacity: fillOpacity,
