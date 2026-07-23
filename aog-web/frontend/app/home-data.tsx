@@ -57,6 +57,8 @@ export function HomeData() {
   const [selectedCity, setSelectedCity] = useState<City | null>(null);
   // V24: 航司 tab 选中状态 — 列表点航司行 → 地图高亮 base + 顶部 chip
   const [selectedAirline, setSelectedAirline] = useState<Airline | null>(null);
+  // V25: 当前 sidebar tab (受控, 传给 WorldMapLeaflet 决定航司 layer 是否渲染)
+  const [activeTab, setActiveTab] = useState<"city" | "airline">("city");
 
   useEffect(() => {
     let cancelled = false;
@@ -116,6 +118,8 @@ export function HomeData() {
                   onLetterHover={setHoveredLetter}
                   selectedAirline={selectedAirline}
                   onSelectAirline={setSelectedAirline}
+                  activeTab={activeTab}
+                  onTabChange={setActiveTab}
                 />
               </div>
 
@@ -130,6 +134,7 @@ export function HomeData() {
                   onSelectCity={setSelectedCity}
                   selectedAirline={selectedAirline}
                   onSelectAirline={setSelectedAirline}
+                  activeTab={activeTab}
                 />
               </div>
             </div>

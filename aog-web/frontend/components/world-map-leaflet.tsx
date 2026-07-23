@@ -127,6 +127,8 @@ interface Props {
   selectedAirline?: Airline | null;
   /** 通知父级航司被选中 (X 关闭 / 再点 toggle) */
   onSelectAirline?: (airline: Airline | null) => void;
+  /** V25: 当前 sidebar tab — "city" 隐藏 AirlineHubBadge, "airline" 显示 */
+  activeTab?: "city" | "airline";
 }
 
 /* ============================================================
@@ -266,7 +268,7 @@ function CityDot({
     ? "#2563eb"
     : isHovered
     ? "#1e40af"
-    : "#9ca3af";
+    : "#4b5563"; // V25: 普通城市 #9ca3af → #4b5563 (深一档), 在 OSM 灰路上能看清
   const fillOpacity = isDimmed
     ? 0.25
     : isSelected
@@ -274,10 +276,10 @@ function CityDot({
     : isHovered
     ? 1
     : isNearby
-    ? 0.7
+    ? 0.85
     : isHub
-    ? 0.95
-    : 0.65;
+    ? 1
+    : 0.95; // V25: 0.65 → 0.95, NJX 反馈"地图上 218 站点都看不到"
 
   return (
     <>
@@ -329,8 +331,10 @@ function CityDot({
         center={[city.lat!, city.lon!]}
         radius={r}
         pathOptions={{
-          color: isHub || isSelected ? "#ffffff" : "none",
-          weight: isHub || isSelected ? 2 : 0,
+          // V25: 所有城市都加白边 (NJX 反馈非 hub 城市跟 OSM tile 融一体看不到)
+          color: isHub || isSelected ? "#ffffff" : "#ffffff",
+          weight: isHub || isSelected ? 2 : 1.5,
+          opacity: isDimmed ? 0.3 : 1,
           fillColor: fill,
           fillOpacity: fillOpacity,
         }}
@@ -660,6 +664,7 @@ export function WorldMapLeaflet({
   onSelectCity,
   selectedAirline,
   onSelectAirline,
+  activeTab = "city",
 }: Props) {
   // React 19 strict mode 防御 — 第一次 render discard, 不渲染 MapContainer
   const [mounted, setMounted] = React.useState(false);
@@ -834,6 +839,9 @@ export function WorldMapLeaflet({
       .sort((a, b) => b[1] - a[1])
       .slice(0, 6);
   }, [globalAirports]);
+
+  // V25 (NJX 反馈): 全球机场 panel 默认折叠, 避免遮挡视线
+  const [globalPanelExpanded, setGlobalPanelExpanded] = React.useState(false);
 
   // V21: AOG 预案城市 by country map (面板显示每国 AOG 站点数)
   const aogCodesByCountry = React.useMemo(() => {
@@ -1244,8 +1252,11 @@ export function WorldMapLeaflet({
             {/* V17→V22: 航司 hub 数字徽章 layer
                 V17: 紫环 + permanent tooltip (堆叠)
                 V22 (NJX 拍 B): 紫环保留 + 中心数字徽章 (click → flyTo + 右侧 panel)
-                V24: 选中航司后, 非 base 城市 dim */}
-            {airlineHubsByCity.size > 0 &&
+                V24: 选中航司后, 非 base 城市 dim
+                V25 (NJX 反馈): 航站 tab 完全隐藏航司 layer — NJX 在航站 tab 不应看到航司
+                    只在 activeTab === "airline" 时渲染 */}
+            {activeTab === "airline" &&
+              airlineHubsByCity.size > 0 &&
               Array.from(airlineHubsByCity.entries()).map(
                 ([cityCode, airlinesHere]) => {
                   const city = withCoords.find((c) => c.code === cityCode);
@@ -1486,59 +1497,94 @@ export function WorldMapLeaflet({
             - 12 → 6 行, 紧凑 (w-48 = 192px)
             - 单列而非 2 列, 名字不被截
             - 每行: 国名 | AOG (红) / 总数 (灰) */}
+        {/* V25 (NJX 反馈): 全球机场 panel 默认折叠 — 左下遮挡视线
+            - 默认显示 compact chip (国家数 + 总数 + 图标)
+            - 点 chip 展开 top 6 国家列表
+            - X 关闭 → 隐藏整个 panel (直到下次刷新) */}
         {globalAirports.length > 0 && (
           <div
             className={cn(
-              "absolute z-[400] w-48 rounded-lg border border-ink-200 bg-white/95 px-3 py-2 text-[11px] shadow-soft backdrop-blur",
+              "absolute z-[400] rounded-lg border border-ink-200 bg-white/95 shadow-soft backdrop-blur",
               selectedCity ? "bottom-[68px] left-3" : "bottom-3 left-3"
             )}
             data-testid="global-airports-panel"
           >
-            <div className="mb-1.5 flex items-baseline justify-between gap-2">
-              <span className="font-semibold text-ink-900">全球机场</span>
-              <span className="tabular-nums text-ink-500">
-                <span className="font-bold text-ink-700">
-                  {globalAirports.length.toLocaleString()}
-                </span>{" "}
-                站
-              </span>
-            </div>
-            <div className="flex flex-col">
-              {topCountries.map(([country, count], i) => {
-                const aogInCountry = aogCodesByCountry.get(country) || 0;
-                return (
-                  <div
-                    key={country}
-                    className="flex items-center justify-between gap-2 py-0.5 text-ink-600"
-                  >
-                    <span className="truncate">
-                      {i + 1}. {country}
+            {globalPanelExpanded ? (
+              <div className="w-48 px-3 py-2 text-[11px]">
+                <div className="mb-1.5 flex items-baseline justify-between gap-2">
+                  <span className="font-semibold text-ink-900">全球机场</span>
+                  <div className="flex items-center gap-2">
+                    <span className="tabular-nums text-ink-500">
+                      <span className="font-bold text-ink-700">
+                        {globalAirports.length.toLocaleString()}
+                      </span>{" "}
+                      站
                     </span>
-                    <span className="shrink-0 tabular-nums text-ink-500">
-                      {aogInCountry > 0 && (
-                        <span style={{ color: "#dc2626", fontWeight: 700 }}>
-                          {aogInCountry}
-                        </span>
-                      )}
-                      {aogInCountry > 0 && <span className="mx-0.5">/</span>}
-                      <span className="font-medium text-ink-700">
-                        {count.toLocaleString()}
-                      </span>
-                    </span>
+                    <button
+                      type="button"
+                      onClick={() => setGlobalPanelExpanded(false)}
+                      className="text-ink-400 hover:text-ink-700"
+                      aria-label="折叠"
+                      title="折叠"
+                    >
+                      ▾
+                    </button>
                   </div>
-                );
-              })}
-            </div>
-            <div className="mt-1.5 flex items-center justify-between gap-2 border-t border-ink-100 pt-1.5 text-[10px] text-ink-400">
-              <span className="inline-flex items-center gap-1">
+                </div>
+                <div className="flex flex-col">
+                  {topCountries.map(([country, count], i) => {
+                    const aogInCountry = aogCodesByCountry.get(country) || 0;
+                    return (
+                      <div
+                        key={country}
+                        className="flex items-center justify-between gap-2 py-0.5 text-ink-600"
+                      >
+                        <span className="truncate">
+                          {i + 1}. {country}
+                        </span>
+                        <span className="shrink-0 tabular-nums text-ink-500">
+                          {aogInCountry > 0 && (
+                            <span style={{ color: "#dc2626", fontWeight: 700 }}>
+                              {aogInCountry}
+                            </span>
+                          )}
+                          {aogInCountry > 0 && <span className="mx-0.5">/</span>}
+                          <span className="font-medium text-ink-700">
+                            {count.toLocaleString()}
+                          </span>
+                        </span>
+                      </div>
+                    );
+                  })}
+                </div>
+                <div className="mt-1.5 flex items-center justify-between gap-2 border-t border-ink-100 pt-1.5 text-[10px] text-ink-400">
+                  <span className="inline-flex items-center gap-1">
+                    <span className="inline-block h-1.5 w-1.5 rounded-full bg-[#9ca3af]" />
+                    灰 = 暂无预案
+                  </span>
+                  <span className="inline-flex items-center gap-1">
+                    <span style={{ color: "#dc2626", fontWeight: 700 }}>红</span>
+                    = AOG
+                  </span>
+                </div>
+              </div>
+            ) : (
+              <button
+                type="button"
+                onClick={() => setGlobalPanelExpanded(true)}
+                className="flex items-center gap-1.5 px-2.5 py-1 text-[11px] text-ink-500 transition hover:text-ink-900"
+                aria-label="展开全球机场面板"
+                title="展开全球机场面板 (top 6 国家)"
+              >
                 <span className="inline-block h-1.5 w-1.5 rounded-full bg-[#9ca3af]" />
-                灰 = 暂无预案
-              </span>
-              <span className="inline-flex items-center gap-1">
-                <span style={{ color: "#dc2626", fontWeight: 700 }}>红</span>
-                = AOG
-              </span>
-            </div>
+                <span className="font-medium text-ink-700">全球</span>
+                <span className="tabular-nums text-ink-700">
+                  {globalAirports.length.toLocaleString()}
+                </span>
+                <span>站</span>
+                <span className="text-ink-300">▸</span>
+              </button>
+            )}
           </div>
         )}
 
