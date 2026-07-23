@@ -31,10 +31,12 @@ type SidebarTab = "city" | "airline";
 
 /**
  * 字母导航（Vercel / Linear 风格）
- *  - horizontal: 26 字母横向单行 + in-page 展开航站/航司列表
- *  - sidebar:    4 列紧凑 grid + 下方滚动展开（适配 unified 视图侧栏）
+ *  - horizontal: 字母横向单行 + in-page 展开航站/航司列表 (V21: 只显示有数据字母)
+ *  - sidebar:    flex-wrap 紧凑布局 (V21: 只显示有数据字母, 不用 grid-cols-4)
  *  - hover 字母: 通过 onLetterHover 通知父级（用于地图同步 pulse）
  *  - Sprint C: 加 "航司" tab — 切到航司列表 (按 IATA 字母排序)
+ *  - V21 (NJX 拍 C): 只渲染 has=true 的字母 (26 → ~10 实际 21/12 视 tab),
+ *    用 flex-wrap 自然换行代替 grid-cols-4 死板布局
  *
  * Tab 策略:
  *  - 只传 cities: 隐藏 tab, 走原来逻辑 (backward compat)
@@ -180,53 +182,58 @@ export function AlphabetNav({
           </span>
         </div>
 
-        {/* 字母 grid: 4 列 x 7 行 */}
-        <div className="grid grid-cols-4 gap-1.5">
-          {ALPHA.map((letter) => {
-            const list = byAlpha[letter] || [];
-            const has = list.length > 0;
-            const isOpen = expanded === letter;
-            const isHover = isExternalHover(letter);
-            return (
-              <button
-                key={letter}
-                type="button"
-                data-alpha-btn
-                disabled={!has}
-                onClick={() => has && setExpanded(isOpen ? null : letter)}
-                onMouseEnter={() => has && onLetterHover?.(letter)}
-                onMouseLeave={() => onLetterHover?.(null)}
-                onFocus={() => has && onLetterHover?.(letter)}
-                onBlur={() => onLetterHover?.(null)}
-                aria-expanded={isOpen}
-                className={cn(
-                  "group relative flex h-9 items-center justify-center rounded-md text-sm font-semibold tabular-nums transition",
-                  has
-                    ? isOpen
-                      ? "bg-primary text-white shadow-sm"
-                      : isHover
-                      ? "bg-primary-50 text-primary ring-1 ring-primary/30"
-                      : "bg-ink-50 text-ink-900 hover:bg-primary-50 hover:text-primary"
-                    : "cursor-not-allowed bg-ink-50/40 text-ink-300"
-                )}
-                title={has ? `${letter} · ${list.length} 个${activeTab === "city" ? "航站" : "航司"}` : `${letter} 无数据`}
-              >
-                {letter}
-                {has && (
-                  <span
-                    className={cn(
-                      "absolute -right-0.5 -top-0.5 grid h-3.5 min-w-[14px] place-items-center rounded-full px-0.5 text-[9px] font-medium tabular-nums",
-                      isOpen || isHover
-                        ? "bg-primary text-white"
-                        : "bg-ink-200 text-ink-600"
-                    )}
-                  >
-                    {list.length}
-                  </span>
-                )}
-              </button>
-            );
-          })}
+        {/* V21: 字母 flex-wrap (NJX 反馈页面太拥挤)
+            - 只渲染 has=true 的字母 (skip 空白 5/16 字母)
+            - flex-wrap 自然换行, 不再 grid-cols-4 死板
+            - gap-1 紧凑 */}
+        <div className="flex flex-wrap gap-1">
+          {ALPHA.filter((letter) => (byAlpha[letter] || []).length > 0).map(
+            (letter) => {
+              const list = byAlpha[letter] || [];
+              const has = list.length > 0;
+              const isOpen = expanded === letter;
+              const isHover = isExternalHover(letter);
+              return (
+                <button
+                  key={letter}
+                  type="button"
+                  data-alpha-btn
+                  disabled={!has}
+                  onClick={() => has && setExpanded(isOpen ? null : letter)}
+                  onMouseEnter={() => has && onLetterHover?.(letter)}
+                  onMouseLeave={() => onLetterHover?.(null)}
+                  onFocus={() => has && onLetterHover?.(letter)}
+                  onBlur={() => onLetterHover?.(null)}
+                  aria-expanded={isOpen}
+                  className={cn(
+                    "group relative flex h-8 min-w-[28px] items-center justify-center rounded-md px-1.5 text-[13px] font-semibold tabular-nums transition",
+                    has
+                      ? isOpen
+                        ? "bg-primary text-white shadow-sm"
+                        : isHover
+                        ? "bg-primary-50 text-primary ring-1 ring-primary/30"
+                        : "bg-ink-50 text-ink-900 hover:bg-primary-50 hover:text-primary"
+                      : "cursor-not-allowed bg-ink-50/40 text-ink-300"
+                  )}
+                  title={has ? `${letter} · ${list.length} 个${activeTab === "city" ? "航站" : "航司"}` : `${letter} 无数据`}
+                >
+                  {letter}
+                  {has && (
+                    <span
+                      className={cn(
+                        "absolute -right-0.5 -top-0.5 grid h-3 min-w-[12px] place-items-center rounded-full px-0.5 text-[9px] font-medium tabular-nums",
+                        isOpen || isHover
+                          ? "bg-primary text-white"
+                          : "bg-ink-200 text-ink-600"
+                      )}
+                    >
+                      {list.length}
+                    </span>
+                  )}
+                </button>
+              );
+            }
+          )}
         </div>
 
         {/* 展开 panel — sidebar 模式 max-h 滚动, 不撑破地图列 */}
@@ -306,43 +313,45 @@ export function AlphabetNav({
     );
   }
 
-  // ---------- Horizontal 模式 (v1 行为) ----------
+  // ---------- Horizontal 模式 (v1 行为) — V21: 也只显示有数据字母 ----------
   return (
     <div className={cn("space-y-4", className)}>
       {tabsBar}
 
       <div className="flex flex-wrap items-center gap-x-1 gap-y-2">
-        {ALPHA.map((letter) => {
-          const list = byAlpha[letter] || [];
-          const has = list.length > 0;
-          const isOpen = expanded === letter;
-          const isHover = isExternalHover(letter);
-          return (
-            <button
-              key={letter}
-              type="button"
-              data-alpha-btn
-              disabled={!has}
-              onClick={() => has && setExpanded(isOpen ? null : letter)}
-              onMouseEnter={() => has && onLetterHover?.(letter)}
-              onMouseLeave={() => onLetterHover?.(null)}
-              aria-expanded={isOpen}
-              className={cn(
-                "alpha-btn group inline-flex h-7 min-w-[28px] items-center justify-center rounded px-1.5 text-[13px] font-medium tabular-nums transition",
-                has
-                  ? isOpen
-                    ? "bg-primary text-white"
-                    : isHover
-                    ? "bg-primary-50 text-primary"
-                    : "text-ink-900 hover:bg-ink-50 hover:text-primary"
-                  : "cursor-not-allowed text-ink-200"
-              )}
-              title={has ? `${letter} · ${list.length} 个${activeTab === "city" ? "航站" : "航司"}` : `${letter} 无数据`}
-            >
-              {letter}
-            </button>
-          );
-        })}
+        {ALPHA.filter((letter) => (byAlpha[letter] || []).length > 0).map(
+          (letter) => {
+            const list = byAlpha[letter] || [];
+            const has = list.length > 0;
+            const isOpen = expanded === letter;
+            const isHover = isExternalHover(letter);
+            return (
+              <button
+                key={letter}
+                type="button"
+                data-alpha-btn
+                disabled={!has}
+                onClick={() => has && setExpanded(isOpen ? null : letter)}
+                onMouseEnter={() => has && onLetterHover?.(letter)}
+                onMouseLeave={() => onLetterHover?.(null)}
+                aria-expanded={isOpen}
+                className={cn(
+                  "alpha-btn group inline-flex h-7 min-w-[28px] items-center justify-center rounded px-1.5 text-[13px] font-medium tabular-nums transition",
+                  has
+                    ? isOpen
+                      ? "bg-primary text-white"
+                      : isHover
+                      ? "bg-primary-50 text-primary"
+                      : "text-ink-900 hover:bg-ink-50 hover:text-primary"
+                    : "cursor-not-allowed text-ink-200"
+                )}
+                title={has ? `${letter} · ${list.length} 个${activeTab === "city" ? "航站" : "航司"}` : `${letter} 无数据`}
+              >
+                {letter}
+              </button>
+            );
+          }
+        )}
       </div>
 
       <div className="flex items-center gap-3 text-xs text-ink-500">

@@ -58,6 +58,12 @@ import Supercluster from "supercluster";
  *  - zoom >= 4: 散开所有灰点 (视口内 ~600-1000 节点, 可接受)
  *  - 缩略图: 地图 bottom-left 浮窗, 显示 top 12 国家机场数 (V20 面板)
  *
+ *  V21 新增 (NJX 拍 C — 页面太拥挤简化):
+ *  - AirlineHubDot tooltip: 限 top 5 航司 + "还有 N 家" 折叠 (北京 9 航司堆叠)
+ *  - 缩略图面板: 12 → top 6 国家, 2 列 → 单列, max-w-280px → w-48 (紧凑)
+ *  - aogCodesByCountry map: 一次扫描, 面板里直接 O(1) 查 AOG 数字
+ *  - 数据/底层逻辑 (218 城市 + 6072 全球机场 + AOG 紫环 + 灰点) 全部保留
+ *
  *  React 19 strict mode 防御: mounted 状态 gate (避免 "Map container is already initialized")
  * ============================================================ */
 
@@ -336,7 +342,10 @@ function CityDot({
  *  - 颜色: #7c3aed (violet-600)
  *  - interactive: false (装饰层, 不挡 city marker click)
  *  - Tooltip: permanent + right offset, 显示所有 hub 该 city 的航司
+ *  - V21 (NJX 拍 C): tooltip 限 top 5 航司 + '还有 N 家' 折叠 (北京 9 航司堆在一起重叠)
  * ============================================================ */
+const AIRLINE_HUB_TOOLTIP_TOP_N = 5; // V21: 单 city 最多显示 N 家航司
+
 function AirlineHubDot({
   city,
   airlines,
@@ -349,6 +358,9 @@ function AirlineHubDot({
   if (city.lat == null || city.lon == null) return null;
   const isHub = (city.view_count || 0) > 0;
   const r = isHub ? 5 : 3;
+  // V21: 限 top 5 航司, 其余折叠
+  const visible = airlines.slice(0, AIRLINE_HUB_TOOLTIP_TOP_N);
+  const moreCount = Math.max(0, airlines.length - visible.length);
   return (
     <CircleMarker
       center={[city.lat, city.lon]}
@@ -375,7 +387,7 @@ function AirlineHubDot({
               "-apple-system, BlinkMacSystemFont, 'PingFang SC', 'Microsoft YaHei', sans-serif",
           }}
         >
-          {airlines.map((a) => (
+          {visible.map((a) => (
             <div
               key={a.iata}
               className="flex items-center gap-1.5 whitespace-nowrap"
@@ -395,6 +407,17 @@ function AirlineHubDot({
               </span>
             </div>
           ))}
+          {moreCount > 0 && (
+            <div
+              style={{
+                color: "#9ca3af",
+                fontSize: "10px",
+                marginTop: "1px",
+              }}
+            >
+              还有 {moreCount} 家…
+            </div>
+          )}
         </div>
       </Tooltip>
     </CircleMarker>
@@ -566,6 +589,7 @@ export function WorldMapLeaflet({
   }, [globalCluster, zoom]);
 
   // V20: top 国家机场数 (面板显示用)
+  // V21 (NJX 拍 C): top 12 → top 6 (单列更紧凑, 不再 2 列 x 6 行拥挤)
   const topCountries = React.useMemo(() => {
     const counts = new Map<string, number>();
     for (const a of globalAirports) {
@@ -573,8 +597,23 @@ export function WorldMapLeaflet({
     }
     return Array.from(counts.entries())
       .sort((a, b) => b[1] - a[1])
-      .slice(0, 12);
+      .slice(0, 6);
   }, [globalAirports]);
+
+  // V21: AOG 预案城市 by country map (面板显示每国 AOG 站点数)
+  const aogCodesByCountry = React.useMemo(() => {
+    const m = new Map<string, number>();
+    for (const c of cities) {
+      if (!c.iata) continue;
+      const iata = c.iata.toUpperCase();
+      const airport = globalAirports.find(
+        (a) => a.iata.toUpperCase() === iata
+      );
+      if (!airport) continue;
+      m.set(airport.country, (m.get(airport.country) || 0) + 1);
+    }
+    return m;
+  }, [cities, globalAirports]);
 
   // supercluster — T1 聚合 hubs
   const cluster = React.useMemo(() => {
@@ -1137,20 +1176,21 @@ export function WorldMapLeaflet({
           </span>
         </div>
 
-        {/* V20: 区域数字面板 (bottom-left, 选中 chip 上方)
-            显示 top 12 国家机场数, 区分 AOG 预案城市 vs OpenFlights 总机场 */}
+        {/* V21: 区域数字面板 (bottom-left, 选中 chip 上方)
+            NJX 拍 C: top 6 国家 (单列 6 行) + AOG 数字标红 区分
+            - 12 → 6 行, 紧凑 (w-48 = 192px)
+            - 单列而非 2 列, 名字不被截
+            - 每行: 国名 | AOG (红) / 总数 (灰) */}
         {globalAirports.length > 0 && (
           <div
             className={cn(
-              "absolute z-[400] max-w-[280px] rounded-lg border border-ink-200 bg-white/95 px-3 py-2 text-[11px] shadow-soft backdrop-blur",
+              "absolute z-[400] w-48 rounded-lg border border-ink-200 bg-white/95 px-3 py-2 text-[11px] shadow-soft backdrop-blur",
               selectedCity ? "bottom-[68px] left-3" : "bottom-3 left-3"
             )}
             data-testid="global-airports-panel"
           >
-            <div className="mb-1.5 flex items-center justify-between gap-3">
-              <span className="font-semibold text-ink-900">
-                全球机场 · 按国家
-              </span>
+            <div className="mb-1.5 flex items-baseline justify-between gap-2">
+              <span className="font-semibold text-ink-900">全球机场</span>
               <span className="tabular-nums text-ink-500">
                 <span className="font-bold text-ink-700">
                   {globalAirports.length.toLocaleString()}
@@ -1158,28 +1198,24 @@ export function WorldMapLeaflet({
                 站
               </span>
             </div>
-            <div className="grid grid-cols-2 gap-x-3 gap-y-0.5">
-              {topCountries.map(([country, count]) => {
-                const aogInCountry = cities.filter(
-                  (c) => c.iata && globalAirports.find(
-                    (a) => a.iata.toUpperCase() === c.iata.toUpperCase() && a.country === country
-                  )
-                ).length;
+            <div className="flex flex-col">
+              {topCountries.map(([country, count], i) => {
+                const aogInCountry = aogCodesByCountry.get(country) || 0;
                 return (
                   <div
                     key={country}
-                    className="flex items-center justify-between gap-2 text-ink-600"
+                    className="flex items-center justify-between gap-2 py-0.5 text-ink-600"
                   >
-                    <span className="truncate">{country}</span>
-                    <span className="flex items-center gap-1 tabular-nums">
+                    <span className="truncate">
+                      {i + 1}. {country}
+                    </span>
+                    <span className="shrink-0 tabular-nums text-ink-500">
                       {aogInCountry > 0 && (
-                        <span
-                          className="rounded bg-red-50 px-1 text-[9px] font-bold text-red-700"
-                          title={`AOG 预案 ${aogInCountry} 站`}
-                        >
+                        <span style={{ color: "#dc2626", fontWeight: 700 }}>
                           {aogInCountry}
                         </span>
                       )}
+                      {aogInCountry > 0 && <span className="mx-0.5">/</span>}
                       <span className="font-medium text-ink-700">
                         {count.toLocaleString()}
                       </span>
@@ -1188,14 +1224,14 @@ export function WorldMapLeaflet({
                 );
               })}
             </div>
-            <div className="mt-1.5 flex items-center gap-2 border-t border-ink-100 pt-1.5 text-[10px] text-ink-500">
+            <div className="mt-1.5 flex items-center justify-between gap-2 border-t border-ink-100 pt-1.5 text-[10px] text-ink-400">
               <span className="inline-flex items-center gap-1">
                 <span className="inline-block h-1.5 w-1.5 rounded-full bg-[#9ca3af]" />
-                灰点 = 暂无 AOG 预案
+                灰 = 暂无预案
               </span>
               <span className="inline-flex items-center gap-1">
-                <span className="inline-block h-1.5 w-1.5 rounded-full bg-red-500" />
-                红/蓝 = AOG
+                <span style={{ color: "#dc2626", fontWeight: 700 }}>红</span>
+                = AOG
               </span>
             </div>
           </div>
