@@ -353,6 +353,10 @@ function CityDot({
  *  - 选中态: ring-2 ring-amber-400 + scale 1.1
  *  - click: 调用 onHubClick → map.flyTo + setAirlinePanel
  *  - interactive: true (徽章可点; 紫环背景仍 false 不挡 city)
+ *  V23 (NJX 修正): N=1 不再显示数字 "1", 改显示 IATA + 中文短名 inline marker
+ *  - 逻辑: count === 1 → inline (紫方 IATA + 短名, 替代 V22 数字 "1")
+ *  - 逻辑: count >= 2 → 保留 V22 数字徽章 (多航司 = 重叠, 数字合理)
+ *  - 逻辑: count === 0 → 不渲染 (防御)
  * ============================================================ */
 
 function AirlineHubBadge({
@@ -371,6 +375,10 @@ function AirlineHubBadge({
   const r = isHub ? 5 : 3;
   const count = airlines.length;
   if (count === 0) return null; // 没航司不渲染 (防御)
+
+  const only = airlines[0]; // count === 1 时用
+  const handleClick = () => onHubClick?.(city, airlines);
+
   return (
     <>
       {/* 紫环装饰 — 背景, 不可点 */}
@@ -385,24 +393,43 @@ function AirlineHubBadge({
         }}
         interactive={false}
       />
-      {/* 数字徽章 — 中心 divIcon Marker, 可点 */}
-      <Marker
-        position={[city.lat, city.lon]}
-        icon={L.divIcon({
-          className: "airline-hub-badge-wrapper",
-          html: `<div class="airline-hub-badge ${
-            active ? "airline-hub-badge-active" : ""
-          }">${count}</div>`,
-          iconSize: [28, 28],
-          iconAnchor: [14, 14],
-        })}
-        eventHandlers={{
-          click: () => onHubClick?.(city, airlines),
-        }}
-        keyboard={true}
-        title={`${city.name} · ${count} 家航司 hub`}
-        zIndexOffset={500}
-      />
+      {count === 1 ? (
+        // V23: N=1 显示实际内容 (紫方 IATA + 中文短名), 替代 V22 数字 "1"
+        <Marker
+          position={[city.lat, city.lon]}
+          icon={L.divIcon({
+            className: "airline-hub-inline-wrapper",
+            html: `<div class="airline-hub-inline ${
+              active ? "airline-hub-inline-active" : ""
+            }"><span class="airline-hub-inline-iata">${only.iata}</span><span class="airline-hub-inline-name">${
+              only.name_short || only.name_cn
+            }</span></div>`,
+            iconSize: [160, 26],
+            iconAnchor: [-4, 13], // 紫方偏移到 city dot 右侧 (避免盖住 dot)
+          })}
+          eventHandlers={{ click: handleClick }}
+          keyboard={true}
+          title={`${only.iata} ${only.name_cn} · ${city.name}`}
+          zIndexOffset={500}
+        />
+      ) : (
+        // V22: N>=2 数字徽章 (重叠场景)
+        <Marker
+          position={[city.lat, city.lon]}
+          icon={L.divIcon({
+            className: "airline-hub-badge-wrapper",
+            html: `<div class="airline-hub-badge ${
+              active ? "airline-hub-badge-active" : ""
+            }">${count}</div>`,
+            iconSize: [28, 28],
+            iconAnchor: [14, 14],
+          })}
+          eventHandlers={{ click: handleClick }}
+          keyboard={true}
+          title={`${city.name} · ${count} 家航司 hub`}
+          zIndexOffset={500}
+        />
+      )}
     </>
   );
 }

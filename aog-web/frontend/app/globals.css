@@ -265,6 +265,57 @@ body {
   z-index: 1000;
 }
 
+/* V23: N=1 inline marker — 紫方 IATA + 中文短名, 替代 V22 数字 "1"
+   实际内容显示, 避免 1 个航司的城市还显示徽章 (NJX 反馈冗余) */
+.airline-hub-inline-wrapper {
+  background: transparent !important;
+  border: none !important;
+}
+.airline-hub-inline {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 22px;
+  padding: 0 8px 0 4px;
+  border-radius: 4px;
+  background: #7c3aed;
+  color: #ffffff;
+  box-shadow: 0 1px 2px rgba(124, 58, 237, 0.35);
+  cursor: pointer;
+  font-family:
+    -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei",
+    sans-serif;
+  white-space: nowrap;
+  user-select: none;
+  transition: transform 0.15s ease, box-shadow 0.15s ease;
+}
+.airline-hub-inline:hover {
+  transform: scale(1.05);
+  box-shadow: 0 2px 4px rgba(124, 58, 237, 0.5);
+}
+.airline-hub-inline-active {
+  outline: 2px solid #f59e0b;
+  outline-offset: 1px;
+  transform: scale(1.05);
+  z-index: 1000;
+}
+.airline-hub-inline-iata {
+  display: inline-block;
+  background: rgba(255, 255, 255, 0.22);
+  padding: 1px 5px;
+  border-radius: 3px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  line-height: 1;
+}
+.airline-hub-inline-name {
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 1;
+  letter-spacing: 0.01em;
+}
+
 /* cluster bubble — 蓝填充 + 白数字 + 描边 + 阴影 */
 .cluster-bubble-wrapper {
   background: transparent;
