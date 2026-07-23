@@ -14,7 +14,7 @@ import {
 import L from "leaflet";
 import "leaflet/dist/leaflet.css";
 import Link from "next/link";
-import { MapPin, RotateCcw, ZoomIn, ZoomOut } from "lucide-react";
+import { MapPin, RotateCcw, ZoomIn, ZoomOut, X } from "lucide-react";
 import type { City } from "@/lib/types";
 import { citiesWithCoords } from "@/lib/city-stats";
 import { cn, firstLetter } from "@/lib/utils";
@@ -63,6 +63,15 @@ import Supercluster from "supercluster";
  *  - 缩略图面板: 12 → top 6 国家, 2 列 → 单列, max-w-280px → w-48 (紧凑)
  *  - aogCodesByCountry map: 一次扫描, 面板里直接 O(1) 查 AOG 数字
  *  - 数据/底层逻辑 (218 城市 + 6072 全球机场 + AOG 紫环 + 灰点) 全部保留
+ *
+ *  V22 新增 (NJX 拍 B — 数字徽章 + flyTo 放大 + 右侧 panel):
+ *  - 推翻 V21 "tooltip 限 5" 方案 (NJX 反馈堆叠还是堆叠)
+ *  - AirlineHubDot → AirlineHubBadge: 紫环装饰保留 + 中心数字徽章 divIcon
+ *  - 数字 = N 家航司 (大圆 28x28 + 白字 14px)
+ *  - 选中态: ring-2 amber + scale 1.1
+ *  - click badge → map.flyTo(city, zoom 5) + 右侧滑出 AirlineHubPanel
+ *  - AirlineHubPanel: 320px 宽, 顶部 close (X) + ESC 关闭, 列 N 航司 (IATA + 中文名 + 联盟 badge + 基地)
+ *  - 零堆叠, 零永久 tooltip, 北京 9 航司显示为 "9"
  *
  *  React 19 strict mode 防御: mounted 状态 gate (避免 "Map container is already initialized")
  * ============================================================ */
@@ -335,92 +344,196 @@ function CityDot({
 }
 
 /* ============================================================
- *  V17 — AirlineHubDot
- *  城市外层紫色环 + 永久 tooltip 显示航司 IATA + 简称/中文名
- *  - 位置: city 中心
- *  - 半径: r + 6 (hub city 5+6=11, non-hub 3+6=9, 永远 11 保证可见)
- *  - 颜色: #7c3aed (violet-600)
- *  - interactive: false (装饰层, 不挡 city marker click)
- *  - Tooltip: permanent + right offset, 显示所有 hub 该 city 的航司
- *  - V21 (NJX 拍 C): tooltip 限 top 5 航司 + '还有 N 家' 折叠 (北京 9 航司堆在一起重叠)
+ *  V17→V22 — AirlineHubBadge
+ *  V17: 紫环 + permanent tooltip 显示航司 (堆叠严重)
+ *  V21: 紫环 + tooltip 限 5 (NJX 反馈堆叠还是堆叠, 治标)
+ *  V22 (NJX 拍 B): 紫环 + 中心数字徽章 (大圆 + 白字 N) + click → flyTo + 右侧 panel
+ *  - 紫环: 装饰层, 永远显示 (hub city 半径 11, 普通 9)
+ *  - 数字徽章: 紫底白字, 28x28 圆, z-index 提到 city dot 之上
+ *  - 选中态: ring-2 ring-amber-400 + scale 1.1
+ *  - click: 调用 onHubClick → map.flyTo + setAirlinePanel
+ *  - interactive: true (徽章可点; 紫环背景仍 false 不挡 city)
  * ============================================================ */
-const AIRLINE_HUB_TOOLTIP_TOP_N = 5; // V21: 单 city 最多显示 N 家航司
 
-function AirlineHubDot({
+function AirlineHubBadge({
   city,
   airlines,
-  onSelect,
+  active,
+  onHubClick,
 }: {
   city: City;
   airlines: Airline[];
-  onSelect?: (city: City | null) => void;
+  active: boolean;
+  onHubClick?: (city: City, airlines: Airline[]) => void;
 }) {
   if (city.lat == null || city.lon == null) return null;
   const isHub = (city.view_count || 0) > 0;
   const r = isHub ? 5 : 3;
-  // V21: 限 top 5 航司, 其余折叠
-  const visible = airlines.slice(0, AIRLINE_HUB_TOOLTIP_TOP_N);
-  const moreCount = Math.max(0, airlines.length - visible.length);
+  const count = airlines.length;
+  if (count === 0) return null; // 没航司不渲染 (防御)
   return (
-    <CircleMarker
-      center={[city.lat, city.lon]}
-      radius={r + 6}
-      pathOptions={{
-        color: "#7c3aed",
-        weight: 2,
-        fillColor: "#7c3aed",
-        fillOpacity: 0.08,
+    <>
+      {/* 紫环装饰 — 背景, 不可点 */}
+      <CircleMarker
+        center={[city.lat, city.lon]}
+        radius={r + 6}
+        pathOptions={{
+          color: "#7c3aed",
+          weight: 2,
+          fillColor: "#7c3aed",
+          fillOpacity: 0.08,
+        }}
+        interactive={false}
+      />
+      {/* 数字徽章 — 中心 divIcon Marker, 可点 */}
+      <Marker
+        position={[city.lat, city.lon]}
+        icon={L.divIcon({
+          className: "airline-hub-badge-wrapper",
+          html: `<div class="airline-hub-badge ${
+            active ? "airline-hub-badge-active" : ""
+          }">${count}</div>`,
+          iconSize: [28, 28],
+          iconAnchor: [14, 14],
+        })}
+        eventHandlers={{
+          click: () => onHubClick?.(city, airlines),
+        }}
+        keyboard={true}
+        title={`${city.name} · ${count} 家航司 hub`}
+        zIndexOffset={500}
+      />
+    </>
+  );
+}
+
+/* ============================================================
+ *  V22 — AirlineHubPanel (右侧浮层, 列出选中城市的所有航司)
+ *  - 320px 宽, absolute right-3 top-3 (跟地图右上角浮)
+ *  - 顶部 close (X) + ESC 关闭
+ *  - 列 N 航司: IATA 大紫字 + 中文名 + 联盟 badge + 基地 (iata 列表)
+ *  - 每条航司 整行 hover 高亮, 点击 → 跳 /airlines/<iata>
+ *  - 头部: 城市名 + "N 家航司 hub" + view_count
+ * ============================================================ */
+
+function AirlineHubPanel({
+  city,
+  airlines,
+  onClose,
+}: {
+  city: City;
+  airlines: Airline[];
+  onClose: () => void;
+}) {
+  // ESC 关闭
+  React.useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose]);
+
+  return (
+    <div
+      className="absolute right-3 top-3 z-[600] flex max-h-[440px] w-[320px] flex-col overflow-hidden rounded-lg border border-ink-200 bg-white shadow-soft"
+      data-testid="airline-hub-panel"
+      style={{
+        fontFamily:
+          "-apple-system, BlinkMacSystemFont, 'PingFang SC', 'Microsoft YaHei', sans-serif",
       }}
-      interactive={false}
     >
-      <Tooltip
-        permanent
-        direction="right"
-        offset={[14, 0]}
-        opacity={1}
-        className="airline-hub-tooltip"
-      >
-        <div
-          className="flex flex-col gap-0.5"
-          style={{
-            fontFamily:
-              "-apple-system, BlinkMacSystemFont, 'PingFang SC', 'Microsoft YaHei', sans-serif",
-          }}
+      {/* 头部 */}
+      <div className="flex items-start justify-between gap-2 border-b border-ink-100 bg-gradient-to-br from-violet-50 to-white px-3 py-2">
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center gap-1.5">
+            <span className="text-[11px] font-semibold uppercase tracking-wider text-violet-700">
+              Airlines Hub
+            </span>
+            {city.view_count ? (
+              <span className="rounded bg-ink-100 px-1 text-[10px] tabular-nums text-ink-600">
+                访问 {city.view_count}
+              </span>
+            ) : null}
+          </div>
+          <div className="mt-0.5 truncate text-[15px] font-semibold text-ink-900">
+            {city.name}
+          </div>
+          <div className="text-[11px] text-ink-500">
+            {city.iata} · {airlines.length} 家航司 hub
+          </div>
+        </div>
+        <button
+          type="button"
+          onClick={onClose}
+          className="grid h-6 w-6 shrink-0 place-items-center rounded text-ink-400 transition hover:bg-ink-100 hover:text-ink-900"
+          aria-label="关闭"
+          title="关闭 (ESC)"
         >
-          {visible.map((a) => (
-            <div
+          <X className="h-3.5 w-3.5" />
+        </button>
+      </div>
+
+      {/* 航司列表 */}
+      <div className="flex-1 overflow-y-auto">
+        {airlines.map((a) => {
+          const hubHere = (a.hubs || []).find(
+            (h) => h.city_code === city.code
+          );
+          return (
+            <Link
               key={a.iata}
-              className="flex items-center gap-1.5 whitespace-nowrap"
+              href={`/airlines/${a.iata}`}
+              className="group flex items-center gap-2.5 border-b border-ink-50 px-3 py-2 transition hover:bg-violet-50/50"
             >
               <span
-                style={{
-                  color: "#7c3aed",
-                  fontWeight: 700,
-                  fontSize: "11px",
-                  letterSpacing: "0.02em",
-                }}
+                className="grid h-9 w-9 shrink-0 place-items-center rounded-md text-[12px] font-bold tabular-nums text-white"
+                style={{ background: "#7c3aed" }}
+                title={a.iata}
               >
                 {a.iata}
               </span>
-              <span style={{ fontSize: "11px", color: "#1f2937" }}>
-                {a.name_short || a.name_cn}
-              </span>
-            </div>
-          ))}
-          {moreCount > 0 && (
-            <div
-              style={{
-                color: "#9ca3af",
-                fontSize: "10px",
-                marginTop: "1px",
-              }}
-            >
-              还有 {moreCount} 家…
-            </div>
-          )}
-        </div>
-      </Tooltip>
-    </CircleMarker>
+              <div className="min-w-0 flex-1">
+                <div className="truncate text-[13px] font-medium text-ink-900 group-hover:text-violet-700">
+                  {a.name_short || a.name_cn}
+                </div>
+                <div className="mt-0.5 flex items-center gap-1.5 text-[10px] text-ink-500">
+                  {a.alliance && a.alliance !== "无" && (
+                    <span className="rounded bg-ink-100 px-1 text-ink-700">
+                      {a.alliance}
+                    </span>
+                  )}
+                  {a.fleet_size > 0 && (
+                    <span className="tabular-nums">
+                      机队 {a.fleet_size}
+                    </span>
+                  )}
+                  {hubHere?.type && (
+                    <span
+                      className="rounded px-1"
+                      style={{
+                        background:
+                          hubHere.type === "hub" ? "#fef3c7" : "#dbeafe",
+                        color:
+                          hubHere.type === "hub" ? "#92400e" : "#1e40af",
+                      }}
+                    >
+                      {hubHere.type === "hub" ? "主基地" : "重点"}
+                    </span>
+                  )}
+                </div>
+              </div>
+            </Link>
+          );
+        })}
+      </div>
+
+      {/* 底部 — flyTo 提示 + 总数 */}
+      <div className="flex items-center justify-between border-t border-ink-100 bg-ink-50/40 px-3 py-1.5 text-[10px] text-ink-500">
+        <span>点航司行跳详情</span>
+        <span className="tabular-nums">{airlines.length} 家</span>
+      </div>
+    </div>
   );
 }
 
@@ -502,6 +615,33 @@ export function WorldMapLeaflet({
   } | null>(null);
   const mapRef = React.useRef<L.Map | null>(null);
   const lastSelectedCodeRef = React.useRef<string | null>(null);
+
+  // V22: 航司 hub panel state (NJX 拍 B — flyTo + 右侧 panel)
+  // city 选中 → flyTo zoom 5 + 滑出右侧 panel 列 N 航司
+  const [airlinePanel, setAirlinePanel] = React.useState<{
+    cityCode: string;
+    airlines: Airline[];
+  } | null>(null);
+
+  // V22: hub badge click handler — flyTo city + 打开 panel
+  const handleHubClick = React.useCallback(
+    (city: City, airlines: Airline[]) => {
+      // toggle: 同一 city 再点关闭
+      setAirlinePanel((prev) => {
+        if (prev?.cityCode === city.code) return null;
+        return { cityCode: city.code, airlines };
+      });
+      // flyTo 到该 city, zoom 5 (够近看到附近, 不太近避免太小)
+      if (mapRef.current && city.lat != null && city.lon != null) {
+        mapRef.current.flyTo([city.lat, city.lon], 5, { duration: 0.6 });
+      }
+    },
+    []
+  );
+
+  const closeHubPanel = React.useCallback(() => {
+    setAirlinePanel(null);
+  }, []);
 
   const tier: 1 | 2 | 3 = getTier(zoom);
 
@@ -943,19 +1083,21 @@ export function WorldMapLeaflet({
                 );
               })}
 
-            {/* V17: 航司 hub 紫色外环 layer (叠加在 city 圆点之上, 装饰层 interactive=false)
-                仅渲染 airlineHubsByCity 里的 city, 其他 city 不加环. */}
+            {/* V17→V22: 航司 hub 数字徽章 layer
+                V17: 紫环 + permanent tooltip (堆叠)
+                V22 (NJX 拍 B): 紫环保留 + 中心数字徽章 (click → flyTo + 右侧 panel) */}
             {airlineHubsByCity.size > 0 &&
               Array.from(airlineHubsByCity.entries()).map(
                 ([cityCode, airlinesHere]) => {
                   const city = withCoords.find((c) => c.code === cityCode);
                   if (!city) return null;
                   return (
-                    <AirlineHubDot
+                    <AirlineHubBadge
                       key={`airline-hub-${cityCode}`}
                       city={city}
                       airlines={airlinesHere}
-                      onSelect={onSelectCity}
+                      active={airlinePanel?.cityCode === cityCode}
+                      onHubClick={handleHubClick}
                     />
                   );
                 }
@@ -1236,6 +1378,24 @@ export function WorldMapLeaflet({
             </div>
           </div>
         )}
+
+        {/* V22: 航司 hub 详情 panel (NJX 拍 B)
+            浮在地图右上, 列选中城市的所有航司
+            数字徽章 click → flyTo + setState 触发 */}
+        {airlinePanel &&
+          (() => {
+            const panelCity = withCoords.find(
+              (c) => c.code === airlinePanel.cityCode
+            );
+            if (!panelCity) return null;
+            return (
+              <AirlineHubPanel
+                city={panelCity}
+                airlines={airlinePanel.airlines}
+                onClose={closeHubPanel}
+              />
+            );
+          })()}
       </div>
     </div>
   );
