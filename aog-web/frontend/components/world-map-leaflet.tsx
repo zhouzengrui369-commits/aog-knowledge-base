@@ -18,7 +18,8 @@ import { MapPin, RotateCcw, ZoomIn, ZoomOut } from "lucide-react";
 import type { City } from "@/lib/types";
 import { citiesWithCoords } from "@/lib/city-stats";
 import { cn, firstLetter } from "@/lib/utils";
-import type { Airline } from "@/lib/types";
+import type { Airline, Airport } from "@/lib/types";
+import { getAirports } from "@/lib/api";
 import Supercluster from "supercluster";
 
 /* ============================================================
@@ -47,6 +48,15 @@ import Supercluster from "supercluster";
  *  - airlineHubsByCity: Map<city_code, Airline[]>  (聚合各 city 的航司 hub)
  *  - city CircleMarker 外层加紫色环 (#7c3aed, radius + 6) 标识有航司 hub
  *  - tooltip 显示航司 IATA + 简称/中文名 (国航 CA / 东航 MU / 南航 CZ 等)
+ *
+ *  V20 新增 (NJX 拍 C — 两层叠加 + 颜色区分):
+ *  - airports prop (可选): 全局机场列表 (OpenFlights 6072 站)
+ *  - 如未传 → useEffect 懒加载 /data/global-airports.json (public 静态资源)
+ *  - AOG 城市保持现有红/蓝/灰颜色 (cities 渲染逻辑不变)
+ *  - 非 AOG 机场: 灰色小点 (#9ca3af, radius 1.5, fillOpacity 0.55, no event)
+ *  - zoom < 4: supercluster 聚合灰点 (避免 6072 DOM node 同时渲染)
+ *  - zoom >= 4: 散开所有灰点 (视口内 ~600-1000 节点, 可接受)
+ *  - 缩略图: 地图 bottom-left 浮窗, 显示 top 12 国家机场数 (V20 面板)
  *
  *  React 19 strict mode 防御: mounted 状态 gate (避免 "Map container is already initialized")
  * ============================================================ */
@@ -89,6 +99,8 @@ interface Props {
   cities: City[];
   /** V17: 航司列表 (Sprint C) — city 上叠加航司 hub 紫色环 + tooltip */
   airlines?: Airline[];
+  /** V20: 全球机场 (OpenFlights 6072) — 灰点 layer. 如不传则组件内 fetch 静态 JSON */
+  airports?: Airport[];
   className?: string;
   /** 父级 hover 的字母 — 地图上该字母城市 pulse */
   hoveredLetter?: string | null;
@@ -445,6 +457,7 @@ function ClusterMarker({
 export function WorldMapLeaflet({
   cities,
   airlines,
+  airports: airportsProp,
   className,
   hoveredLetter,
   selectedCity,
@@ -495,6 +508,73 @@ export function WorldMapLeaflet({
     }
     return map;
   }, [airlines]);
+
+  // V20: 全球机场 (OpenFlights 6072). 如未传 prop → 懒加载 /data/global-airports.json
+  const [globalAirports, setGlobalAirports] = React.useState<Airport[]>(
+    () => airportsProp || []
+  );
+  React.useEffect(() => {
+    if (airportsProp && airportsProp.length > 0) {
+      setGlobalAirports(airportsProp);
+      return;
+    }
+    let cancelled = false;
+    getAirports().then((list) => {
+      if (!cancelled && list && list.length > 0) setGlobalAirports(list);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [airportsProp]);
+
+  // V20: AOG 城市 IATA 集合 (用于灰点去重 — 已上图的不重复渲染灰点)
+  const aogIatas = React.useMemo(() => {
+    const s = new Set<string>();
+    for (const c of cities) {
+      if (c.iata && c.iata !== "—") s.add(c.iata.toUpperCase());
+    }
+    return s;
+  }, [cities]);
+
+  // V20: 非 AOG 机场 (灰点 layer 数据源)
+  const nonAogAirports = React.useMemo(() => {
+    if (globalAirports.length === 0) return [];
+    return globalAirports.filter((a) => !aogIatas.has(a.iata.toUpperCase()));
+  }, [globalAirports, aogIatas]);
+
+  // V20: 全局机场 supercluster (zoom < 4 用, 灰点聚合)
+  const globalCluster = React.useMemo(() => {
+    if (nonAogAirports.length === 0) return null;
+    const idx = new Supercluster<
+      { iata: string; country: string },
+      { country: string }
+    >({ radius: 60, maxZoom: 4, minPoints: 4 });
+    idx.load(
+      nonAogAirports.map((a) => ({
+        type: "Feature" as const,
+        properties: { iata: a.iata, country: a.country },
+        geometry: { type: "Point" as const, coordinates: [a.lon, a.lat] },
+      }))
+    );
+    return idx;
+  }, [nonAogAirports]);
+
+  // V20: 当前 viewport 内的灰点 cluster features (zoom < 4)
+  const globalClusterFeatures = React.useMemo(() => {
+    if (!globalCluster || zoom >= 4) return null;
+    return globalCluster.getClusters([-180, -85, 180, 85], Math.floor(zoom));
+  }, [globalCluster, zoom]);
+
+  // V20: top 国家机场数 (面板显示用)
+  const topCountries = React.useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const a of globalAirports) {
+      counts.set(a.country, (counts.get(a.country) || 0) + 1);
+    }
+    return Array.from(counts.entries())
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 12);
+  }, [globalAirports]);
 
   // supercluster — T1 聚合 hubs
   const cluster = React.useMemo(() => {
@@ -841,6 +921,69 @@ export function WorldMapLeaflet({
                   );
                 }
               )}
+
+            {/* V20: 全球机场灰点 layer
+                - zoom < 4: 用 globalCluster 聚合 (避免 6072 DOM node 同时渲染)
+                - zoom >= 4: 散开所有非 AOG 机场 (视口内 ~600-1000 节点)
+                - 颜色: #9ca3af (ink-400) — 区别于 AOG 红/蓝 hub
+                - 半径: 1.5 (更小, 不抢 AOG 城市视觉)
+                - interactive: false (灰点不响应 click/hover)
+                - 渲染顺序: 在 city + airline hub 之后 (但灰点 radius 1.5, 不会盖住 AOG) */}
+            {zoom < 4 && globalClusterFeatures
+              ? globalClusterFeatures.map((feat) => {
+                  const [lon, lat] = feat.geometry.coordinates;
+                  const props: any = feat.properties;
+                  if (props.cluster) {
+                    // 聚合气泡: 浅灰半透明, 数字显示机场数
+                    return (
+                      <Marker
+                        key={`gcluster-${props.cluster_id}`}
+                        position={[lat, lon]}
+                        icon={L.divIcon({
+                          className: "global-cluster-wrapper",
+                          html: `<div class="global-cluster-bubble">${
+                            props.point_count >= 1000
+                              ? `${(props.point_count / 1000).toFixed(1)}k`
+                              : props.point_count
+                          }</div>`,
+                          iconSize: [22, 22],
+                          iconAnchor: [11, 11],
+                        })}
+                        interactive={false}
+                      />
+                    );
+                  } else {
+                    // 单机场 (cluster 未能聚合到的偏远单点) — 灰点
+                    return (
+                      <CircleMarker
+                        key={`gairport-${props.iata}`}
+                        center={[lat, lon]}
+                        radius={1.5}
+                        pathOptions={{
+                          color: "transparent",
+                          fillColor: "#9ca3af",
+                          fillOpacity: 0.55,
+                        }}
+                        interactive={false}
+                      />
+                    );
+                  }
+                })
+              : null}
+            {zoom >= 4 &&
+              nonAogAirports.map((a) => (
+                <CircleMarker
+                  key={`gairport-${a.iata}`}
+                  center={[a.lat, a.lon]}
+                  radius={1.5}
+                  pathOptions={{
+                    color: "transparent",
+                    fillColor: "#9ca3af",
+                    fillOpacity: 0.55,
+                  }}
+                  interactive={false}
+                />
+              ))}
           </MapContainer>
         )}
 
@@ -993,6 +1136,70 @@ export function WorldMapLeaflet({
             点城市查看周边 · 红圈 = 选中
           </span>
         </div>
+
+        {/* V20: 区域数字面板 (bottom-left, 选中 chip 上方)
+            显示 top 12 国家机场数, 区分 AOG 预案城市 vs OpenFlights 总机场 */}
+        {globalAirports.length > 0 && (
+          <div
+            className={cn(
+              "absolute z-[400] max-w-[280px] rounded-lg border border-ink-200 bg-white/95 px-3 py-2 text-[11px] shadow-soft backdrop-blur",
+              selectedCity ? "bottom-[68px] left-3" : "bottom-3 left-3"
+            )}
+            data-testid="global-airports-panel"
+          >
+            <div className="mb-1.5 flex items-center justify-between gap-3">
+              <span className="font-semibold text-ink-900">
+                全球机场 · 按国家
+              </span>
+              <span className="tabular-nums text-ink-500">
+                <span className="font-bold text-ink-700">
+                  {globalAirports.length.toLocaleString()}
+                </span>{" "}
+                站
+              </span>
+            </div>
+            <div className="grid grid-cols-2 gap-x-3 gap-y-0.5">
+              {topCountries.map(([country, count]) => {
+                const aogInCountry = cities.filter(
+                  (c) => c.iata && globalAirports.find(
+                    (a) => a.iata.toUpperCase() === c.iata.toUpperCase() && a.country === country
+                  )
+                ).length;
+                return (
+                  <div
+                    key={country}
+                    className="flex items-center justify-between gap-2 text-ink-600"
+                  >
+                    <span className="truncate">{country}</span>
+                    <span className="flex items-center gap-1 tabular-nums">
+                      {aogInCountry > 0 && (
+                        <span
+                          className="rounded bg-red-50 px-1 text-[9px] font-bold text-red-700"
+                          title={`AOG 预案 ${aogInCountry} 站`}
+                        >
+                          {aogInCountry}
+                        </span>
+                      )}
+                      <span className="font-medium text-ink-700">
+                        {count.toLocaleString()}
+                      </span>
+                    </span>
+                  </div>
+                );
+              })}
+            </div>
+            <div className="mt-1.5 flex items-center gap-2 border-t border-ink-100 pt-1.5 text-[10px] text-ink-500">
+              <span className="inline-flex items-center gap-1">
+                <span className="inline-block h-1.5 w-1.5 rounded-full bg-[#9ca3af]" />
+                灰点 = 暂无 AOG 预案
+              </span>
+              <span className="inline-flex items-center gap-1">
+                <span className="inline-block h-1.5 w-1.5 rounded-full bg-red-500" />
+                红/蓝 = AOG
+              </span>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );

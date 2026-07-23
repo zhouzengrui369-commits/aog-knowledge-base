@@ -154,3 +154,23 @@ export interface Airline {
 }
 
 /** normalize 函数已迁移到 lib/utils.ts（避免循环依赖） */
+
+// ===== V20: 全球机场（OpenFlights） =====
+
+/** OpenFlights airports.dat 单条记录（前端只保留必要字段） */
+export interface Airport {
+  iata: string;
+  name: string;
+  city: string;
+  country: string;
+  lat: number;
+  lon: number;
+}
+
+/** 全球机场 + by_country（V20 静态 JSON） */
+export interface GlobalAirportsData {
+  total: number;
+  countries: number;
+  by_country: Record<string, number>;
+  airports: Airport[];
+}

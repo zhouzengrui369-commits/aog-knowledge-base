@@ -4,10 +4,10 @@ import Link from "next/link";
 import { FeaturedCities } from "@/components/featured-cities";
 import { AlphabetNav } from "@/components/alphabet-nav";
 import dynamic from "next/dynamic";
-import { getCities, getAirlines } from "@/lib/api";
+import { getCities, getAirlines, getAirports } from "@/lib/api";
 import { enrichCities, topByViewCount } from "@/lib/city-stats";
 import { FileText, BookOpen, ArrowUpRight, MapPin, Plane } from "lucide-react";
-import type { City, Airline } from "@/lib/types";
+import type { City, Airline, Airport } from "@/lib/types";
 
 // V18: 解决 SSR window 报错 — leaflet 内部用 window, 客户端动态 import
 const WorldMapLeaflet = dynamic(
@@ -51,6 +51,7 @@ const QUICK_LINKS = [
 export function HomeData() {
   const [cities, setCities] = useState<City[]>([]);
   const [airlines, setAirlines] = useState<Airline[]>([]);
+  const [airports, setAirports] = useState<Airport[]>([]);
   const [loading, setLoading] = useState(true);
   const [hoveredLetter, setHoveredLetter] = useState<string | null>(null);
   const [selectedCity, setSelectedCity] = useState<City | null>(null);
@@ -58,13 +59,15 @@ export function HomeData() {
   useEffect(() => {
     let cancelled = false;
     (async () => {
-      const [citiesData, airlinesData] = await Promise.all([
+      const [citiesData, airlinesData, airportsData] = await Promise.all([
         getCities(),
         getAirlines(),
+        getAirports(),
       ]);
       if (cancelled) return;
       setCities(enrichCities(citiesData ?? []));
       setAirlines(airlinesData ?? []);
+      setAirports(airportsData ?? []);
       setLoading(false);
     })();
     return () => {
@@ -117,6 +120,7 @@ export function HomeData() {
                 <WorldMapLeaflet
                   cities={cities}
                   airlines={airlines}
+                  airports={airports}
                   hoveredLetter={hoveredLetter}
                   selectedCity={selectedCity}
                   onSelectCity={setSelectedCity}

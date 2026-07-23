@@ -10,6 +10,8 @@ import type {
   CorePlan,
   SyncStatus,
   Airline,
+  Airport,
+  GlobalAirportsData,
 } from "@/lib/types";
 import { MOCK_CITIES } from "@/lib/mock/cities";
 import { MOCK_EXPERIENCES } from "@/lib/mock/experiences";
@@ -194,4 +196,47 @@ export async function searchAirlines(q: string, limit = 20): Promise<Airline[]> 
     const haystack = `${a.iata} ${a.icao} ${a.name_cn} ${a.name_en} ${a.name_short || ""}`.toLowerCase();
     return haystack.includes(k);
   }).slice(0, limit);
+}
+
+// ===== V20: 全球机场（OpenFlights） =====
+
+/** V20 进程内缓存 — 避免每次组件 mount 都 fetch 700KB JSON */
+let _airportsCache: Airport[] | null = null;
+let _byCountryCache: Record<string, number> | null = null;
+let _airportsPromise: Promise<Airport[]> | null = null;
+
+/** 静态 fetch /data/global-airports.json（public/ 静态资源） */
+export async function getAirports(): Promise<Airport[]> {
+  if (_airportsCache) return _airportsCache;
+  if (_airportsPromise) return _airportsPromise;
+  _airportsPromise = (async () => {
+    try {
+      const res = await fetch("/data/global-airports.json", { cache: "force-cache" });
+      if (!res.ok) {
+        console.warn(`[api] /data/global-airports.json → HTTP ${res.status}`);
+        return [];
+      }
+      const data = (await res.json()) as GlobalAirportsData;
+      _airportsCache = data.airports;
+      _byCountryCache = data.by_country;
+      return data.airports;
+    } catch (err) {
+      console.warn(`[api] /data/global-airports.json failed:`, err);
+      return [];
+    } finally {
+      _airportsPromise = null;
+    }
+  })();
+  return _airportsPromise;
+}
+
+/** 按国家筛机场 */
+export async function getAirportsByCountry(country: string): Promise<Airport[]> {
+  const all = await getAirports();
+  return all.filter((a) => a.country === country);
+}
+
+/** 取 by_country 统计（懒加载, 第一次 getAirports 后才有） */
+export function getByCountryCounts(): Record<string, number> {
+  return _byCountryCache || {};
 }
