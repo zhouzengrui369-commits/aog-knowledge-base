@@ -55,6 +55,8 @@ export function HomeData() {
   const [loading, setLoading] = useState(true);
   const [hoveredLetter, setHoveredLetter] = useState<string | null>(null);
   const [selectedCity, setSelectedCity] = useState<City | null>(null);
+  // V24: 航司 tab 选中状态 — 列表点航司行 → 地图高亮 base + 顶部 chip
+  const [selectedAirline, setSelectedAirline] = useState<Airline | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -112,6 +114,8 @@ export function HomeData() {
                   mode="sidebar"
                   hoveredLetter={hoveredLetter}
                   onLetterHover={setHoveredLetter}
+                  selectedAirline={selectedAirline}
+                  onSelectAirline={setSelectedAirline}
                 />
               </div>
 
@@ -124,6 +128,8 @@ export function HomeData() {
                   hoveredLetter={hoveredLetter}
                   selectedCity={selectedCity}
                   onSelectCity={setSelectedCity}
+                  selectedAirline={selectedAirline}
+                  onSelectAirline={setSelectedAirline}
                 />
               </div>
             </div>

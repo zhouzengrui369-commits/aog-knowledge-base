@@ -316,6 +316,23 @@ body {
   letter-spacing: 0.01em;
 }
 
+/* V24: 选中航司后, 非 base 城市 dim — 紫环/badge/inline 透明度降到 0.25 */
+.airline-hub-badge-dim {
+  opacity: 0.25;
+  filter: grayscale(0.4);
+}
+.airline-hub-inline-dim {
+  opacity: 0.25;
+  filter: grayscale(0.4);
+}
+.airline-base-ring {
+  animation: airline-base-pulse 2s ease-in-out infinite;
+}
+@keyframes airline-base-pulse {
+  0%, 100% { opacity: 0.5; }
+  50% { opacity: 1; }
+}
+
 /* cluster bubble — 蓝填充 + 白数字 + 描边 + 阴影 */
 .cluster-bubble-wrapper {
   background: transparent;

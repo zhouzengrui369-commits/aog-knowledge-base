@@ -123,6 +123,10 @@ interface Props {
   selectedCity?: City | null;
   /** 通知父级城市被选中 */
   onSelectCity?: (city: City | null) => void;
+  /** V24: 父级选中的航司 — 顶部 chip + 地图高亮 base 城市 + 非 base dim + fitBounds */
+  selectedAirline?: Airline | null;
+  /** 通知父级航司被选中 (X 关闭 / 再点 toggle) */
+  onSelectAirline?: (airline: Airline | null) => void;
 }
 
 /* ============================================================
@@ -231,6 +235,8 @@ function CityDot({
   isLetterPulse,
   isNearby,
   showLabel,
+  isDimmed,
+  isAirlineBase,
   onSelect,
   setHovered,
 }: {
@@ -242,6 +248,10 @@ function CityDot({
   isLetterPulse: boolean;
   isNearby: boolean;
   showLabel: boolean;
+  /** V24: 选中航司后, 该城市非 base → 透明 0.25 */
+  isDimmed?: boolean;
+  /** V24: 该城市是当前航司的 base 城市 → 加 amber ring */
+  isAirlineBase?: boolean;
   onSelect?: (city: City | null) => void;
   setHovered: (code: string | null) => void;
 }) {
@@ -250,12 +260,16 @@ function CityDot({
   // 选中态外圈 (pulse ring 用一个外层 transparent circle)
   const fill = isSelected
     ? "#dc2626"
+    : isAirlineBase
+    ? "#f59e0b" // V24: 航司 base 城市 → 琥珀色, 跟"未选中"区分
     : isHub
     ? "#2563eb"
     : isHovered
     ? "#1e40af"
     : "#9ca3af";
-  const fillOpacity = isSelected
+  const fillOpacity = isDimmed
+    ? 0.25
+    : isSelected
     ? 1
     : isHovered
     ? 1
@@ -292,6 +306,21 @@ function CityDot({
             weight: 1,
             fillOpacity: 0,
             className: "letter-pulse-ring",
+          }}
+          interactive={false}
+        />
+      )}
+      {/* V24: 航司 base 城市 — amber ring 高亮 (NJX 拍 B) */}
+      {isAirlineBase && !isSelected && (
+        <CircleMarker
+          center={[city.lat!, city.lon!]}
+          radius={r + 4}
+          pathOptions={{
+            color: "#f59e0b",
+            weight: 2.5,
+            fillColor: "#f59e0b",
+            fillOpacity: 0.18,
+            className: "airline-base-ring",
           }}
           interactive={false}
         />
@@ -363,11 +392,14 @@ function AirlineHubBadge({
   city,
   airlines,
   active,
+  isDimmed,
   onHubClick,
 }: {
   city: City;
   airlines: Airline[];
   active: boolean;
+  /** V24: 当前航司选中, 但该 city 不是 base → dim 紫环 + badge 透明度 */
+  isDimmed?: boolean;
   onHubClick?: (city: City, airlines: Airline[]) => void;
 }) {
   if (city.lat == null || city.lon == null) return null;
@@ -389,7 +421,8 @@ function AirlineHubBadge({
           color: "#7c3aed",
           weight: 2,
           fillColor: "#7c3aed",
-          fillOpacity: 0.08,
+          fillOpacity: isDimmed ? 0.02 : 0.08,
+          opacity: isDimmed ? 0.3 : 1,
         }}
         interactive={false}
       />
@@ -401,7 +434,7 @@ function AirlineHubBadge({
             className: "airline-hub-inline-wrapper",
             html: `<div class="airline-hub-inline ${
               active ? "airline-hub-inline-active" : ""
-            }"><span class="airline-hub-inline-iata">${only.iata}</span><span class="airline-hub-inline-name">${
+            }${isDimmed ? " airline-hub-inline-dim" : ""}"><span class="airline-hub-inline-iata">${only.iata}</span><span class="airline-hub-inline-name">${
               only.name_short || only.name_cn
             }</span></div>`,
             iconSize: [160, 26],
@@ -410,7 +443,7 @@ function AirlineHubBadge({
           eventHandlers={{ click: handleClick }}
           keyboard={true}
           title={`${only.iata} ${only.name_cn} · ${city.name}`}
-          zIndexOffset={500}
+          zIndexOffset={isDimmed ? 100 : 500}
         />
       ) : (
         // V22: N>=2 数字徽章 (重叠场景)
@@ -420,14 +453,14 @@ function AirlineHubBadge({
             className: "airline-hub-badge-wrapper",
             html: `<div class="airline-hub-badge ${
               active ? "airline-hub-badge-active" : ""
-            }">${count}</div>`,
+            }${isDimmed ? " airline-hub-badge-dim" : ""}">${count}</div>`,
             iconSize: [28, 28],
             iconAnchor: [14, 14],
           })}
           eventHandlers={{ click: handleClick }}
           keyboard={true}
           title={`${city.name} · ${count} 家航司 hub`}
-          zIndexOffset={500}
+          zIndexOffset={isDimmed ? 100 : 500}
         />
       )}
     </>
@@ -625,6 +658,8 @@ export function WorldMapLeaflet({
   hoveredLetter,
   selectedCity,
   onSelectCity,
+  selectedAirline,
+  onSelectAirline,
 }: Props) {
   // React 19 strict mode 防御 — 第一次 render discard, 不渲染 MapContainer
   const [mounted, setMounted] = React.useState(false);
@@ -642,6 +677,18 @@ export function WorldMapLeaflet({
   } | null>(null);
   const mapRef = React.useRef<L.Map | null>(null);
   const lastSelectedCodeRef = React.useRef<string | null>(null);
+
+  // V24: 当前选中航司的 base 城市 code 集合
+  // 用作 CityDot isDimmed / isAirlineBase 判断 + 顶部 chip 显示
+  const selectedAirlineBaseCodes = React.useMemo(() => {
+    const s = new Set<string>();
+    if (selectedAirline?.hubs) {
+      for (const h of selectedAirline.hubs) {
+        if (h.city_code) s.add(h.city_code);
+      }
+    }
+    return s;
+  }, [selectedAirline]);
 
   // V22: 航司 hub panel state (NJX 拍 B — flyTo + 右侧 panel)
   // city 选中 → flyTo zoom 5 + 滑出右侧 panel 列 N 航司
@@ -669,6 +716,27 @@ export function WorldMapLeaflet({
   const closeHubPanel = React.useCallback(() => {
     setAirlinePanel(null);
   }, []);
+
+  // V24: 选中航司变化 → 自动 fitBounds 到该航司 base 城市
+  // 1 个 base → flyTo 中心 zoom 5
+  // 多个 base → fitBounds 加 padding
+  React.useEffect(() => {
+    if (!mapRef.current || !selectedAirline) return;
+    const map = mapRef.current;
+    const baseCities: City[] = (selectedAirline.hubs || [])
+      .map((h) => (h.city_code ? withCoords.find((c) => c.code === h.city_code) : null))
+      .filter((c): c is City => !!c && c.lat != null && c.lon != null);
+    if (baseCities.length === 0) return;
+    if (baseCities.length === 1) {
+      const c = baseCities[0];
+      map.flyTo([c.lat!, c.lon!], 5, { duration: 0.6 });
+      return;
+    }
+    const bounds = L.latLngBounds(
+      baseCities.map((c) => [c.lat!, c.lon!] as [number, number])
+    );
+    map.flyToBounds(bounds, { padding: [60, 60], duration: 0.7, maxZoom: 6 });
+  }, [selectedAirline?.iata, withCoords]);
 
   const tier: 1 | 2 | 3 = getTier(zoom);
 
@@ -935,6 +1003,59 @@ export function WorldMapLeaflet({
       )}
       data-testid="world-map-root"
     >
+      {/* V24: 当前选中航司 chip (NJX 拍 B — 列表切航司 tab, 地图切换)
+          显示在地图上方, 顶部状态条之下, 跟 V22 右侧 panel 不冲突
+          关闭 X → onSelectAirline(null) */}
+      {selectedAirline && (
+        <div
+          className="flex items-center gap-2 border-b border-violet-200 bg-gradient-to-r from-violet-50 via-violet-50/80 to-amber-50/60 px-3 py-1.5"
+          data-testid="airline-view-chip"
+        >
+          <span
+            className="grid h-6 w-6 shrink-0 place-items-center rounded text-[10px] font-bold text-white"
+            style={{ background: "#7c3aed" }}
+            title={selectedAirline.iata}
+          >
+            {selectedAirline.iata}
+          </span>
+          <div className="min-w-0 flex-1">
+            <div className="truncate text-[12px] font-semibold text-ink-900">
+              {selectedAirline.name_short || selectedAirline.name_cn}
+              <span className="ml-1 text-[10px] font-normal text-ink-500">
+                {selectedAirline.iata} · {selectedAirline.icao}
+              </span>
+            </div>
+            <div className="flex items-center gap-1.5 text-[10px] text-ink-500">
+              {selectedAirline.alliance && selectedAirline.alliance !== "无" && (
+                <span className="rounded bg-ink-100 px-1 text-ink-700">
+                  {selectedAirline.alliance}
+                </span>
+              )}
+              {selectedAirline.fleet_size > 0 && (
+                <span className="tabular-nums">
+                  机队 {selectedAirline.fleet_size}
+                </span>
+              )}
+              <span className="tabular-nums text-amber-700">
+                {selectedAirlineBaseCodes.size} 个 base 高亮
+              </span>
+              {selectedAirline.hq && (
+                <span className="hidden sm:inline">· 总部 {selectedAirline.hq}</span>
+              )}
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={() => onSelectAirline?.(null)}
+            className="grid h-5 w-5 shrink-0 place-items-center rounded text-ink-400 transition hover:bg-violet-100 hover:text-ink-900"
+            aria-label="关闭航司视图"
+            title="关闭航司视图 (再点列表行可重新打开)"
+          >
+            <X className="h-3 w-3" />
+          </button>
+        </div>
+      )}
+
       {/* 顶部状态条 */}
       <div className="flex items-center justify-between border-b border-ink-100 bg-ink-50/40 px-3 py-1.5 text-[11px] text-ink-500">
         <div className="flex items-center gap-3">
@@ -1062,6 +1183,11 @@ export function WorldMapLeaflet({
                     }
                     isNearby={nearbyCodes.has(props.code)}
                     showLabel={showLabel}
+                    isDimmed={
+                      selectedAirlineBaseCodes.size > 0 &&
+                      !selectedAirlineBaseCodes.has(props.code)
+                    }
+                    isAirlineBase={selectedAirlineBaseCodes.has(props.code)}
                     onSelect={onSelectCity}
                     setHovered={setHovered}
                   />
@@ -1104,6 +1230,11 @@ export function WorldMapLeaflet({
                     isLetterPulse={isLetterPulse}
                     isNearby={isNearby}
                     showLabel={showLabel}
+                    isDimmed={
+                      selectedAirlineBaseCodes.size > 0 &&
+                      !selectedAirlineBaseCodes.has(c.code)
+                    }
+                    isAirlineBase={selectedAirlineBaseCodes.has(c.code)}
                     onSelect={onSelectCity}
                     setHovered={setHovered}
                   />
@@ -1112,7 +1243,8 @@ export function WorldMapLeaflet({
 
             {/* V17→V22: 航司 hub 数字徽章 layer
                 V17: 紫环 + permanent tooltip (堆叠)
-                V22 (NJX 拍 B): 紫环保留 + 中心数字徽章 (click → flyTo + 右侧 panel) */}
+                V22 (NJX 拍 B): 紫环保留 + 中心数字徽章 (click → flyTo + 右侧 panel)
+                V24: 选中航司后, 非 base 城市 dim */}
             {airlineHubsByCity.size > 0 &&
               Array.from(airlineHubsByCity.entries()).map(
                 ([cityCode, airlinesHere]) => {
@@ -1124,6 +1256,10 @@ export function WorldMapLeaflet({
                       city={city}
                       airlines={airlinesHere}
                       active={airlinePanel?.cityCode === cityCode}
+                      isDimmed={
+                        selectedAirlineBaseCodes.size > 0 &&
+                        !selectedAirlineBaseCodes.has(cityCode)
+                      }
                       onHubClick={handleHubClick}
                     />
                   );

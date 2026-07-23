@@ -25,6 +25,9 @@ interface Props {
   /** 受控当前 tab (默认内部 useState) */
   activeTab?: SidebarTab;
   onTabChange?: (tab: SidebarTab) => void;
+  /** V24: 选中航司 (航司 tab 列表行 click → 通知父级) */
+  selectedAirline?: Airline | null;
+  onSelectAirline?: (airline: Airline | null) => void;
 }
 
 type SidebarTab = "city" | "airline";
@@ -52,6 +55,8 @@ export function AlphabetNav({
   onLetterHover,
   activeTab: controlledTab,
   onTabChange,
+  selectedAirline,
+  onSelectAirline,
 }: Props) {
   const hasCities = !!cities && cities.length >= 0; // 接受空数组
   const hasAirlines = !!airlines && airlines.length >= 0;
@@ -282,19 +287,33 @@ export function AlphabetNav({
                   );
                 } else {
                   const a = (airlines || []).find((x) => x.iata === it.key)!;
+                  const isSelected = selectedAirline?.iata === a.iata;
                   return (
                     <li key={a.iata}>
-                      <Link
-                        href={`/airlines/${encodeURIComponent(a.iata)}`}
-                        className="flex items-center justify-between gap-2 px-3 py-1.5 text-sm transition hover:bg-primary-50"
+                      <button
+                        type="button"
+                        onClick={() => onSelectAirline?.(isSelected ? null : a)}
+                        className={cn(
+                          "flex w-full items-center justify-between gap-2 px-3 py-1.5 text-left text-sm transition",
+                          isSelected
+                            ? "bg-violet-100 text-violet-900"
+                            : "hover:bg-primary-50"
+                        )}
                       >
                         <span className="min-w-0 truncate text-ink-900">
                           {a.name_short || a.name_cn}
                         </span>
-                        <span className="shrink-0 rounded bg-ink-50 px-1 font-mono text-[10px] tabular-nums text-ink-700">
+                        <span
+                          className={cn(
+                            "shrink-0 rounded px-1 font-mono text-[10px] tabular-nums",
+                            isSelected
+                              ? "bg-violet-600 text-white"
+                              : "bg-ink-50 text-ink-700"
+                          )}
+                        >
                           {a.iata}
                         </span>
-                      </Link>
+                      </button>
                     </li>
                   );
                 }
