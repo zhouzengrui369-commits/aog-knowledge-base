@@ -209,9 +209,9 @@ body {
   letter-spacing: 0.2px;
 }
 .leaflet-tooltip.city-label-tooltip .city-label {
-  color: #6b7280;
-  font-size: 12px;
-  font-weight: 500;
+  color: #1e40af; /* V27b: 灰→蓝, NJX 反馈"218 个航站都是蓝色标签" */
+  font-size: 13px;
+  font-weight: 600;
 }
 .leaflet-tooltip.city-label-tooltip .selected-label {
   color: #dc2626;
