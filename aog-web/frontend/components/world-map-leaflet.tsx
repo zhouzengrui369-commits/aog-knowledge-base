@@ -860,32 +860,32 @@ export function WorldMapLeaflet({
     return m;
   }, [cities, globalAirports]);
 
-  // supercluster — T1 聚合 hubs
-  const cluster = React.useMemo(() => {
-    if (hubs.length === 0) return null;
+  // V28: supercluster 聚合 218 AOG 城市 (zoom 5-7 数字聚合, zoom 8 全散开)
+  // 治本 NJX 反馈 "zoom 5 标签重叠, 重叠的航站应该显示为数字"
+  // 之前 V19 15 hub cluster 删, V27 visibleCities 218 label 保留为 zoom 8 全散开
+  const aogCluster = React.useMemo(() => {
+    if (withCoords.length === 0) return null;
     const idx = new Supercluster<
       { code: string; name: string; iata: string },
       any
-    >({ radius: 80, maxZoom: 4, minPoints: 2 });
+    >({ radius: 50, maxZoom: 7, minPoints: 2 });
     idx.load(
-      hubs
-        .filter((c) => c.lat != null && c.lon != null)
-        .map((c) => ({
-          type: "Feature" as const,
-          properties: { code: c.code, name: c.name, iata: c.iata || "" },
-          geometry: {
-            type: "Point" as const,
-            coordinates: [c.lon as number, c.lat as number],
-          },
-        }))
+      withCoords.map((c) => ({
+        type: "Feature" as const,
+        properties: { code: c.code, name: c.name, iata: c.iata || "" },
+        geometry: {
+          type: "Point" as const,
+          coordinates: [c.lon as number, c.lat as number],
+        },
+      }))
     );
     return idx;
-  }, [hubs]);
+  }, [withCoords]);
 
   const clusterFeatures = React.useMemo(() => {
-    if (!cluster || zoom > 4) return null;
-    return cluster.getClusters([-180, -85, 180, 85], Math.floor(zoom));
-  }, [cluster, zoom]);
+    if (!aogCluster || zoom > 7) return null;
+    return aogCluster.getClusters([-180, -85, 180, 85], Math.floor(zoom));
+  }, [aogCluster, zoom]);
 
   // 可见城市集 by tier (V14 逻辑保留)
   const visibleCities = React.useMemo(() => {
@@ -1148,28 +1148,29 @@ export function WorldMapLeaflet({
               setMouseAnchor={setMouseAnchor}
             />
 
-            {/* T1 cluster 模式 (zoom ≤ 4): supercluster 聚合 hubs */}
+            {/* V28: supercluster 聚合 218 AOG 城市 (zoom 5-7 数字 bubble + 单点 label)
+                治本 NJX 反馈 "zoom 5 标签重叠, 重叠的航站应该显示为数字" */}
             {clusterFeatures?.map((feat) => {
               const [lon, lat] = feat.geometry.coordinates;
               const props: any = feat.properties;
               if (props.cluster) {
                 return (
                   <ClusterMarker
-                    key={`cluster-${props.cluster_id}`}
+                    key={`aog-cluster-${props.cluster_id}`}
                     count={props.point_count as number}
                     clusterId={props.cluster_id as number}
                     lat={lat}
                     lon={lon}
-                    cluster={cluster!}
+                    cluster={aogCluster!}
                     zoom={zoom}
                     mapRef={mapRef}
                   />
                 );
               } else {
-                // single hub (cluster 不形成, 偏远地区单 hub)
-                const city = hubs.find((h) => h.code === props.code);
+                // 单城市 (cluster 不形成, 偏远地区单点) - 走 V27 CityDot + label
+                const city = withCoords.find((c) => c.code === props.code);
                 if (!city) return null;
-                const isHub = true;
+                const isHub = hubSet.has(props.code);
                 const inLabelSet = labelSet.has(props.code);
                 const showLabel =
                   inLabelSet ||
@@ -1180,7 +1181,7 @@ export function WorldMapLeaflet({
                     firstLetter(props.code) === hoveredLetter);
                 return (
                   <CityDot
-                    key={`hub-${props.code}`}
+                    key={`aog-city-${props.code}`}
                     city={city}
                     isHub={isHub}
                     isLabel={inLabelSet}
@@ -1205,12 +1206,10 @@ export function WorldMapLeaflet({
               }
             })}
 
-            {/* 非 cluster 模式: 普通 CircleMarker */}
-            {visibleCities
-              .filter((c) => {
-                if (clusterFeatures && hubSet.has(c.code)) return false;
-                return true;
-              })
+            {/* V28: 非 cluster 模式 (zoom > 7) 走 visibleCities 全散开 label
+                zoom 5-7 已由 aogCluster supercluster 渲染 (cluster 数字 bubble + 单点 label) */}
+            {!clusterFeatures &&
+              visibleCities
               .map((c) => {
                 const isHub = hubSet.has(c.code);
                 const r = isHub ? 5 : 3;
