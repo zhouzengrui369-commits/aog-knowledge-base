@@ -868,7 +868,7 @@ export function WorldMapLeaflet({
     const idx = new Supercluster<
       { code: string; name: string; iata: string },
       any
-    >({ radius: 50, maxZoom: 7, minPoints: 2 });
+    >({ radius: 80, maxZoom: 7, minPoints: 2 }); // V28b: radius 50→80 (治本 NJX 反馈"5.0 还是有点挤", 聚合更狠)
     idx.load(
       withCoords.map((c) => ({
         type: "Feature" as const,
