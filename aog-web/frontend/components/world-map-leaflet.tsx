@@ -1223,9 +1223,10 @@ export function WorldMapLeaflet({
                   firstLetter(c.code) === hoveredLetter &&
                   !isSelected;
                 const inLabelSet = labelSet.has(c.code);
+                // V27: 所有 AOG 城市 zoom >= 5 都常驻 label (治本 "有保障预案的应该都显示标签")
                 const showLabel =
                   inLabelSet ||
-                  (isHub && zoom >= 5) ||
+                  zoom >= 5 ||
                   isSelected ||
                   isHover ||
                   isLetterPulse;
