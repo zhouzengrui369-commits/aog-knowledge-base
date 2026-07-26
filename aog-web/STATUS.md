@@ -113,12 +113,22 @@
 
 ## 📦 最近一次重要修改
 
-- **Commit**: `f86ab42` (HEAD)
+### 最近代码 (V28b)
+- **Commit**: `f86ab42`
 - **分支**: `integration/sprint-abc` (待 merge → main)
 - **标题**: V28b fix(map): supercluster radius 50→80 (治本 "5.0 还是有点挤")
 - **内容**: 1 行改 (`world-map-leaflet.tsx` supercluster radius 50→80)
 - **效果**: zoom 5 单点 label 156→90 (-42%)，数字 bubble 28→53 (+89%)，拥挤治本
-- **Push**: ✓ GitHub `zhouzengrui369-commits/aog-knowledge-base` integration/sprint-abc
+
+### 最近文档 (本批基线 5 文档)
+- **Commit**: `da8562c` (HEAD)
+- **标题**: docs: 建项目基线 5 文档 (STATUS / TODO / ARCHITECTURE / CHANGELOG / DECISIONS)
+- **内容**: 5 个新 md 文件, 1236 行, 含 V13-V28b 全部状态快照 + 28 条决策 + 架构说明
+- **意义**: 任何新 AI 接手 10 分钟内能继续开发
+
+### Push 状态
+- ✓ GitHub `zhouzengrui369-commits/aog-knowledge-base` integration/sprint-abc
+- 全部 5 文档已 push 成功 (commit `da8562c`)
 
 ---
 
