@@ -4,7 +4,7 @@ import Link from "next/link";
 import { FeaturedCities } from "@/components/featured-cities";
 import { AlphabetNav } from "@/components/alphabet-nav";
 import dynamic from "next/dynamic";
-import { getCities, getAirlines, getAirports } from "@/lib/api";
+import { getCities, getAirlines, getAirports, getMockFallbackPaths, resetMockFallbackCount } from "@/lib/api";
 import { enrichCities, topByViewCount } from "@/lib/city-stats";
 import { FileText, BookOpen, ArrowUpRight, MapPin, Plane } from "lucide-react";
 import type { City, Airline, Airport } from "@/lib/types";
@@ -59,6 +59,16 @@ export function HomeData() {
   const [selectedAirline, setSelectedAirline] = useState<Airline | null>(null);
   // V25: 当前 sidebar tab (受控, 传给 WorldMapLeaflet 决定航司 layer 是否渲染)
   const [activeTab, setActiveTab] = useState<"city" | "airline">("city");
+  // ★ P1-2 治本: mock fallback 检测 — 后端不可用时 fallback MOCK, 显红框"演示数据"
+  const [mockFallbackPaths, setMockFallbackPaths] = useState<string[]>([]);
+  useEffect(() => {
+    // 周期 poll mock fallback 状态 (api.ts 写 window.__aogMockFallback)
+    const id = setInterval(() => {
+      const paths = getMockFallbackPaths();
+      if (paths.length !== mockFallbackPaths.length) setMockFallbackPaths(paths);
+    }, 1000);
+    return () => clearInterval(id);
+  }, [mockFallbackPaths.length]);
 
   useEffect(() => {
     let cancelled = false;
@@ -83,6 +93,37 @@ export function HomeData() {
 
   return (
     <>
+      {/* ★ P1-2 治本: mock fallback 红框"演示数据" 提示 (治本 NJX 7/26 评审"用户被蒙骗")
+          - 只在 mockFallbackPaths.length > 0 时显示
+          - 列出 fallback 的具体 path 让 NJX 一眼看出后端哪几个 endpoint 挂了
+          - 文案参考 NJX 7/26 反馈: 演示数据必须显式标, 不能让用户当真的 */}
+      {mockFallbackPaths.length > 0 && (
+        <div
+          role="alert"
+          data-testid="mock-fallback-banner"
+          className="border-b-2 border-red-300 bg-red-50 px-4 py-3 text-sm text-red-900 sm:px-6"
+        >
+          <div className="mx-auto flex max-w-7xl items-start gap-3">
+            <span className="mt-0.5 inline-block h-2 w-2 shrink-0 rounded-full bg-red-500" />
+            <div>
+              <div className="font-semibold">
+                ⚠️ 演示数据 (NJX 拍 P1-2 治本: 用户被蒙骗)
+              </div>
+              <div className="mt-0.5 text-xs text-red-800">
+                后端 <code>NEXT_PUBLIC_API_BASE</code> 不可用或返空, 已 fallback 到 MOCK 数据。
+                影响 {mockFallbackPaths.length} 个 endpoint:
+                <code className="ml-1 break-all">
+                  {mockFallbackPaths.slice(0, 5).join(", ")}
+                  {mockFallbackPaths.length > 5 && ` 等 ${mockFallbackPaths.length - 5} 个`}
+                </code>
+              </div>
+              <div className="mt-1 text-[11px] text-red-700">
+                生产环境此 banner 必须消失才表示所有数据来自真实后端。
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
       {/* SECTION 1 — 浏览城市 (V2 统一视图: 字母 sidebar + 地图) */}
       <section className="mx-auto max-w-7xl px-4 py-12 sm:px-6 sm:py-16 lg:px-8">
         <div className="mb-6 flex flex-wrap items-end justify-between gap-3">

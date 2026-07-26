@@ -1,5 +1,6 @@
 // API client — 1:1 对应 CONTRACT §2 端点
 // 错误兜底：fetch 失败或后端未启动 → 降级到 lib/mock 数据
+// ★ P1-2 治本: 5 个 mock fallback 场景有 isMockFallback 标志, UI 顶部红框 "演示数据" 提示
 // 验证：Lighthouse 测试时需 NEXT_PUBLIC_API_BASE=http://localhost:8000
 
 import type {
@@ -16,6 +17,25 @@ import type {
 import { MOCK_CITIES } from "@/lib/mock/cities";
 import { MOCK_EXPERIENCES } from "@/lib/mock/experiences";
 import { MOCK_AIRLINES } from "@/lib/mock/airlines";
+
+// ★ P1-2 治本: 5 个 mock fallback 场景计数 (写到 window 让 UI useEffect 监听)
+function _recordMockFallback(path: string) {
+  _mockFallbackCount++;
+  if (typeof window !== "undefined") {
+    const w = window as any;
+    if (!w.__aogMockFallback) w.__aogMockFallback = new Set<string>();
+    w.__aogMockFallback.add(path);
+  }
+}
+let _mockFallbackCount = 0;
+export function getMockFallbackCount() { return _mockFallbackCount; }
+export function resetMockFallbackCount() { _mockFallbackCount = 0; }
+export function getMockFallbackPaths(): string[] {
+  if (typeof window === "undefined") return [];
+  const w = window as any;
+  if (!w.__aogMockFallback) return [];
+  return Array.from(w.__aogMockFallback) as string[];
+}
 
 // ★ P0-1 治本: BASE 必须去尾 /api, 否则 ${BASE}/api/cities 拼成 /api/api/cities 返 400
 //   公网 NEXT_PUBLIC_API_BASE=https://...service.tcloudbase.com/api
@@ -66,7 +86,8 @@ export async function getCities(params?: {
   const data = await safeFetch<City[]>(`/api/cities${q}`);
   // dev backend 返空数组时也 fallback 到 MOCK (避免 dev 看到 0 城市)
   if (data && data.length > 0) return data;
-  // 降级 mock
+  // 降级 mock — ★ P1-2 治本: 记录到全局 set, UI 端读 set 显红框
+  _recordMockFallback("/api/cities");
   let list = [...MOCK_CITIES];
   if (params?.region) list = list.filter((c) => c.region === params.region);
   if (params?.status) list = list.filter((c) => c.status === params.status);
@@ -82,6 +103,8 @@ export async function getCity(code: string): Promise<City | null> {
   const encoded = encodeURIComponent(code);
   const data = await safeFetch<City>(`/api/city/${encoded}`);
   if (data) return data;
+  // ★ P1-2 治本: 记录 mock fallback
+  _recordMockFallback(`/api/city/${encoded}`);
   return MOCK_CITIES.find((c) => c.code === code) || null;
 }
 
@@ -99,6 +122,8 @@ export async function getExperiences(params?: {
   const data = await safeFetch<Experience[]>(`/api/experiences${q}`);
   // dev backend 返空数组时 fallback MOCK
   if (data && data.length > 0) return data;
+  // ★ P1-2 治本: 记录 mock fallback
+  _recordMockFallback("/api/experiences");
   let list = [...MOCK_EXPERIENCES];
   if (params?.category) list = list.filter((e) => e.category === params.category || e.topic === params.category);
   if (params?.status) list = list.filter((e) => e.status === params.status);
@@ -118,13 +143,18 @@ export async function getExperiences(params?: {
 export async function getExperience(id: string): Promise<Experience | null> {
   const data = await safeFetch<Experience>(`/api/experience/${encodeURIComponent(id)}`);
   if (data) return data;
+  // ★ P1-2 治本: 记录 mock fallback
+  _recordMockFallback(`/api/experience/${encodeURIComponent(id)}`);
   return MOCK_EXPERIENCES.find((e) => e.id === id) || null;
 }
 
 /** 核心预案 (CONTRACT §2.6) */
 export async function getCorePlans(): Promise<CorePlan[]> {
   const data = await safeFetch<CorePlan[]>(`/api/core-plans`);
-  return data || [];
+  if (data) return data;
+  // ★ P1-2 治本: 记录 mock fallback
+  _recordMockFallback("/api/core-plans");
+  return [];
 }
 
 /** AI 对话 (CONTRACT §2.7) — 必须 references.length >= 1 (NSM-2)
@@ -137,7 +167,10 @@ export async function chat(req: ChatRequest): Promise<ChatResponse | null> {
     body: JSON.stringify(req),
     timeoutMs: 30000,
   });
-  return data;
+  if (data) return data;
+  // ★ P1-2 治本: 记录 mock fallback (chat 走 null 时不返 mock, 改返 null 让 UI 显错)
+  _recordMockFallback("/api/chat");
+  return null;
 }
 
 /** 同步状态 (CONTRACT §2.9) */
@@ -167,6 +200,8 @@ export async function getAirlines(params?: {
   // dev backend 返空数组时 fallback MOCK
   if (data && data.length > 0) return data;
   // 降级 mock
+  // ★ P1-2 治本: 记录 mock fallback
+  _recordMockFallback("/api/airlines");
   let list = [...MOCK_AIRLINES];
   if (params?.letter) {
     const l = params.letter.toUpperCase();
@@ -184,6 +219,8 @@ export async function getAirline(iata: string): Promise<Airline | null> {
   const code = iata.toUpperCase();
   const data = await safeFetch<Airline>(`/api/airlines/${encodeURIComponent(code)}`);
   if (data) return data;
+  // ★ P1-2 治本: 记录 mock fallback
+  _recordMockFallback(`/api/airlines/${encodeURIComponent(code)}`);
   return MOCK_AIRLINES.find((a) => a.iata === code) || null;
 }
 
@@ -196,6 +233,8 @@ export async function searchAirlines(q: string, limit = 20): Promise<Airline[]> 
   // dev backend 返空数组时 fallback MOCK
   if (data && data.length > 0) return data;
   // 降级 mock
+  // ★ P1-2 治本: 记录 mock fallback
+  _recordMockFallback("/api/airlines/search");
   const k = q.trim().toLowerCase();
   return MOCK_AIRLINES.filter((a) => {
     const haystack = `${a.iata} ${a.icao} ${a.name_cn} ${a.name_en} ${a.name_short || ""}`.toLowerCase();

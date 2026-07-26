@@ -353,7 +353,7 @@ def build(
         return result
 
     # 5. Embedding
-    embedder = Embedder(batch_size=batch_size, ollama_concurrency=ollama_concurrency)
+    embedder = Embedder(batch_size=batch_size, ollama_concurrency=ollama_concurrency, backend="sentence-transformers")  # V26 严禁 ollama
     print(f"[embed] model={embedder.model_name} backend={embedder.backend} concurrency={ollama_concurrency}")
     texts = [c["text"] for c in chunks]
     # 分 batch 显示进度
