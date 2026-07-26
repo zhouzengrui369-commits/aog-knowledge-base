@@ -17,7 +17,12 @@ import { MOCK_CITIES } from "@/lib/mock/cities";
 import { MOCK_EXPERIENCES } from "@/lib/mock/experiences";
 import { MOCK_AIRLINES } from "@/lib/mock/airlines";
 
-const BASE = process.env.NEXT_PUBLIC_API_BASE || "http://localhost:8000";
+// ★ P0-1 治本: BASE 必须去尾 /api, 否则 ${BASE}/api/cities 拼成 /api/api/cities 返 400
+//   公网 NEXT_PUBLIC_API_BASE=https://...service.tcloudbase.com/api
+//   localhost 模式 NEXT_PUBLIC_API_BASE=http://localhost:8000 (无 /api)
+//   两种情况都 .replace(/\/api\/?$/, "") 安全去尾
+const BASE = (process.env.NEXT_PUBLIC_API_BASE || "http://localhost:8000")
+  .replace(/\/api\/?$/, "");
 
 /** fetch 包装：超时 + 错误捕获 */
 async function safeFetch<T>(
