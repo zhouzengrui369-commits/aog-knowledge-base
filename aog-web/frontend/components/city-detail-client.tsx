@@ -90,8 +90,13 @@ export function CityDetailClient({ code }: { code: string }) {
 
   // P0 治本 (D-029, 2026-07-27): S-上海浦东/虹桥 在 02_外战预案/ 目录无真 docx
   //   7/26 PM 误写 stub 已 mavis-trash 清理, UI 直接显示"待补"页
+  //   必须在 city 状态检查**之前** — 否则 `city === undefined` 提前 return 永远走不到这里
   //   NJX 补真 docx 后从此 PENDING set 移除即可, 走正常 /api/city/{code} 路径
-  if (PENDING_CITY_CODES.has(code)) {
+  //   ⚠️ next.js RSC 传的 code 是 URL-encoded 形式 (S-%E4%B8%8A...), 必须 decode 后比对
+  const decodedCode = (() => {
+    try { return decodeURIComponent(code); } catch { return code; }
+  })();
+  if (PENDING_CITY_CODES.has(decodedCode)) {
     return (
       <>
         <NavBar />
@@ -101,10 +106,10 @@ export function CityDetailClient({ code }: { code: string }) {
               <AlertTriangle className="mt-0.5 h-6 w-6 flex-shrink-0 text-amber-600" />
               <div className="flex-1">
                 <h2 className="text-lg font-semibold text-amber-900">
-                  预案待补 · {code}
+                  预案待补 · {decodedCode}
                 </h2>
                 <p className="mt-2 text-sm leading-6 text-amber-800">
-                  该机场的 AOG 应急预案尚未录入。AOG 知识库目前没有 {code.replace(/^[A-Z]-/, "")} 的真实预案数据。
+                  该机场的 AOG 应急预案尚未录入。AOG 知识库目前没有 {decodedCode.replace(/^[A-Z]-/, "")} 的真实预案数据。
                 </p>
                 <p className="mt-3 text-sm leading-6 text-amber-700">
                   <strong>为什么待补？</strong>{" "}
@@ -122,7 +127,7 @@ export function CityDetailClient({ code }: { code: string }) {
                   <strong>需要支援？</strong>{" "}
                   若您是该机场的航材保障员，请联系 AOG 支援工程师提交真实预案 docx 到{" "}
                   <code className="rounded bg-amber-100 px-1.5 py-0.5 text-xs">
-                    AOG知识库/02_外战预案/{code}.docx
+                    AOG知识库/02_外战预案/{decodedCode}.docx
                   </code>
                   。
                 </p>
