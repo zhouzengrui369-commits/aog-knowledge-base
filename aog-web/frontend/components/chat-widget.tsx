@@ -51,31 +51,63 @@ function splitThink(s: string): { think: string | null; body: string } {
  *  不支持: 链接 / 图片 / 嵌套列表 (RAG 输出极少用到)
  */
 function formatInline(text: string): React.ReactNode[] {
-  // 处理 **bold** 和 `code` inline
+  // 处理 **bold** / *italic* / `code` inline
+  // 顺序: ** (bold) → * (italic, 但排除 **) → ` (code)
   const parts: React.ReactNode[] = [];
-  const re = /(\*\*[^*]+\*\*|`[^`]+`)/g;
+  // 用 3 个独立 regex 顺序处理 (避免一个 match 把另一个吃掉)
+  // 先用 placeholder 替换 **bold** 和 `code`, 再用 *italic*
+  let s = text;
+  // 1) 替换 **bold** 为 \u0001B... \u0001E (sentinel)
+  const boldSentinels: string[] = [];
+  s = s.replace(/\*\*([^*]+?)\*\*/g, (_, content) => {
+    boldSentinels.push(content);
+    return `\u0001B${boldSentinels.length - 1}\u0001E`;
+  });
+  // 2) 替换 `code` 为 \u0001C... \u0001E
+  const codeSentinels: string[] = [];
+  s = s.replace(/`([^`]+?)`/g, (_, content) => {
+    codeSentinels.push(content);
+    return `\u0001C${codeSentinels.length - 1}\u0001E`;
+  });
+  // 3) 替换 *italic* (单星, 不在行首 — 行首 `* ` 是 list)
+  const italicSentinels: string[] = [];
+  s = s.replace(/(?<![*\s])\*([^*\n]+?)\*(?!\*)/g, (_, content) => {
+    italicSentinels.push(content);
+    return `\u0001I${italicSentinels.length - 1}\u0001E`;
+  });
+  // 4) 现在 s 含 sentinel + 普通文本, 按顺序 split
+  const re = /(\u0001B\d+\u0001E|\u0001C\d+\u0001E|\u0001I\d+\u0001E)/g;
   let last = 0;
   let m: RegExpExecArray | null;
-  let i = 0;
-  while ((m = re.exec(text)) !== null) {
-    if (m.index > last) parts.push(text.slice(last, m.index));
+  let idx = 0;
+  while ((m = re.exec(s)) !== null) {
+    if (m.index > last) parts.push(s.slice(last, m.index));
     const tok = m[0];
-    if (tok.startsWith("**")) {
+    if (tok.startsWith("\u0001B")) {
+      const i = parseInt(tok.slice(1, -1), 10);
       parts.push(
-        <strong key={`b-${i++}`} className="font-semibold text-ink-900">
-          {tok.slice(2, -2)}
+        <strong key={`b-${idx++}`} className="font-semibold text-ink-900">
+          {boldSentinels[i]}
         </strong>
       );
-    } else if (tok.startsWith("`")) {
+    } else if (tok.startsWith("\u0001C")) {
+      const i = parseInt(tok.slice(1, -1), 10);
       parts.push(
-        <code key={`c-${i++}`} className="rounded bg-ink-100 px-1 py-0.5 font-mono text-[12px]">
-          {tok.slice(1, -1)}
+        <code key={`c-${idx++}`} className="rounded bg-ink-100 px-1 py-0.5 font-mono text-[12px]">
+          {codeSentinels[i]}
         </code>
+      );
+    } else if (tok.startsWith("\u0001I")) {
+      const i = parseInt(tok.slice(1, -1), 10);
+      parts.push(
+        <em key={`i-${idx++}`} className="italic text-ink-700">
+          {italicSentinels[i]}
+        </em>
       );
     }
     last = m.index + tok.length;
   }
-  if (last < text.length) parts.push(text.slice(last));
+  if (last < s.length) parts.push(s.slice(last));
   return parts;
 }
 
@@ -292,18 +324,27 @@ function parseInlineTable(s: string): { header: string[]; rows: string[][]; rest
 
 /** 鲁棒 markdown 渲染: 自动 normalize 单行 markdown → 多行
  *  P0 治本: minimax stream output 有时把表格行拼成单行 |...|...|...|...|...|...| (没 \n)
- *  修法: 检测 | 连续字符 ≥ 3 个 |, 自动插入 \n 让 renderMarkdown 正常解析
+ *        或 把 # / * / - 标记 inline 不分行 (# 二、| *机场: | - 故障)
+ *  修法: 检测 markdown 标记前自动插 \n, 让 renderMarkdown 正常解析
  */
 function normalizeMarkdownLineBreaks(s: string): string {
   if (!s) return s;
-  // 检测: 连续 ≥ 3 个 | 分隔的 cells, 后面跟 1 个 | (表格行尾)
-  // 用 regex 把 |xxx|xxx| 切成 |xxx|\n|xxx|
-  // 但要避免破坏 normal inline | (e.g. "A | B" 是 OR)
-  // 启发式: 至少 3 个 cells 紧挨 + 至少 1 个 cell 包含 : 或 - 或 # 或 [ 或 - 字符 (像 markdown)
-  return s.replace(
+  let out = s;
+  // 1) 表格行: 连续 ≥ 3 个 | cells, 自动加 \n
+  out = out.replace(
     /\|(\s*[^\n|]{2,40}\s*)(\|\s*[^\n|]{2,40}\s*){2,}\|(\s*[^\n|]{2,40}\s*)(\|\s*[^\n|]{2,40}\s*)*\|/g,
     (m) => m.replace(/\s*\|\s*/g, " | ").replace(/(?<!^)\s*\|\s*(?!$)/g, "\n| ")
   );
+  // 2) Heading: 前面不是行首的 # (1-3 个), 自动插 \n
+  // 匹配: 不是行首的 ## ## / ### ###, 前面是中文/英文/数字/符号 (非空白)
+  out = out.replace(/([^\n\s])(\s*)(#{1,3}\s+)/g, "$1\n$3");
+  // 3) List item: 前面不是行首的 `* ` 或 `- ` (1-3 个空格缩进 + 字符), 自动插 \n
+  // ⚠️ 跳过 "**bold**" 内的 `*` (这里用 lookahead: `*` 后面跟空格 + 非 `*`)
+  out = out.replace(/([^\n])\s+(\*+\s+[^*\n])/g, "$1\n$2");
+  out = out.replace(/([^\n])\s+(-\s+[-*\w\u4e00-\u9fff])/g, "$1\n$2");
+  // 4) Numbered list: 1. 2. 3. (前面不是行首, 后面是中文/英文)
+  out = out.replace(/([^\n])\s+(\d+\.\s+[\u4e00-\u9fff\w])/g, "$1\n$2");
+  return out;
 }
 
 /** Markdown 渲染 (自写, 不依赖第三方) + 思考过程折叠
