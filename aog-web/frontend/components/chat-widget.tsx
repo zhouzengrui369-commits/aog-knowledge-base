@@ -121,7 +121,7 @@ function renderMarkdown(body: string): React.ReactNode {
   while (i < lines.length) {
     const line = lines[i];
 
-    // 表格块: |...| 连续行
+    // 表格块: |...| 连续行 (V29d 升级: 更宽容处理 LLM 输出 `||` 空 cell)
     if (line.trim().startsWith("|") && line.trim().endsWith("|")) {
       const tableLines: string[] = [];
       while (i < lines.length && lines[i].trim().startsWith("|") && lines[i].trim().endsWith("|")) {
@@ -129,28 +129,60 @@ function renderMarkdown(body: string): React.ReactNode {
         i++;
       }
       // 分离 header + body (第二行是 |---|---|)
-      const isSep = (l: string) => /^\|?[\s:|-]+\|?$/.test(l.trim());
+      // V29d: 兼容性增强 — separator 行允许 `|---|---|` / `|---|` / `||---|` (空 cell 前)
+      const isSep = (l: string) => {
+        const t = l.trim();
+        if (!t.startsWith("|") || !t.endsWith("|")) return false;
+        // 每个 cell 必须是 : / - / 空白
+        return t.slice(1, -1).split("|").every((c) => /^[\s:\-]+$/.test(c));
+      };
       let header: string[] = [];
       let rows: string[][] = [];
       if (tableLines.length >= 2 && isSep(tableLines[1])) {
-        header = tableLines[0].split("|").slice(1, -1).map((c) => c.trim());
+        // V29d: 兼容空 cell  `| 机型| 备注 ||---|---|` split 会多出一个空 string
+        const splitRow = (r: string) => {
+          const cells = r.split("|");
+          // 去头尾空 (开头 | 和 结尾 |)
+          if (cells.length > 0 && cells[0] === "") cells.shift();
+          if (cells.length > 0 && cells[cells.length - 1] === "") cells.pop();
+          return cells.map((c) => c.trim());
+        };
+        header = splitRow(tableLines[0]);
         for (let r = 2; r < tableLines.length; r++) {
-          rows.push(tableLines[r].split("|").slice(1, -1).map((c) => c.trim()));
+          rows.push(splitRow(tableLines[r]));
+        }
+        // V29d: 如果 header 全部为空, 第一行也当 row, 第二行是 sep
+        if (header.every((c) => c === "")) {
+          rows.unshift(splitRow(tableLines[0]));
+          header = [];
         }
       } else {
         // 没 separator 全部当 rows
+        const splitRow = (r: string) => {
+          const cells = r.split("|");
+          if (cells.length > 0 && cells[0] === "") cells.shift();
+          if (cells.length > 0 && cells[cells.length - 1] === "") cells.pop();
+          return cells.map((c) => c.trim());
+        };
         for (const tl of tableLines) {
-          rows.push(tl.split("|").slice(1, -1).map((c) => c.trim()));
+          rows.push(splitRow(tl));
+        }
+        // 第一行当 header (heuristic)
+        if (rows.length >= 1) {
+          header = rows.shift()!;
         }
       }
       out.push(
-        <div key={`tbl-${k++}`} className="my-2 overflow-x-auto">
+        <div key={`tbl-${k++}`} className="my-3 overflow-x-auto rounded-md border border-ink-200">
           <table className="w-full border-collapse text-[12px]">
             {header.length > 0 && (
-              <thead className="bg-ink-100">
+              <thead className="bg-primary/5">
                 <tr>
                   {header.map((h, idx) => (
-                    <th key={idx} className="border border-ink-200 px-2 py-1 text-left font-semibold">
+                    <th
+                      key={idx}
+                      className="border-b border-ink-200 bg-primary/10 px-2.5 py-1.5 text-left text-[11px] font-semibold uppercase tracking-wide text-primary"
+                    >
                       {formatInline(h)}
                     </th>
                   ))}
@@ -159,9 +191,9 @@ function renderMarkdown(body: string): React.ReactNode {
             )}
             <tbody>
               {rows.map((row, ri) => (
-                <tr key={ri} className="even:bg-ink-50/50">
+                <tr key={ri} className="even:bg-ink-50/50 hover:bg-primary/5 transition-colors">
                   {row.map((cell, ci) => (
-                    <td key={ci} className="border border-ink-200 px-2 py-1 align-top">
+                    <td key={ci} className="border-b border-ink-100 px-2.5 py-1.5 align-top text-ink-800">
                       {formatInline(cell)}
                     </td>
                   ))}
@@ -179,15 +211,17 @@ function renderMarkdown(body: string): React.ReactNode {
     if (hMatch) {
       const level = hMatch[1].length;
       const text = hMatch[2].trim();
+      // V29d 视觉升级: h1/h2 加左边色块 + 强调
       const cls =
         level === 1
-          ? "mt-2 mb-1.5 text-base font-semibold text-ink-900"
+          ? "mt-3 mb-2 flex items-center gap-2 border-l-4 border-primary bg-primary/5 px-2.5 py-1.5 text-base font-bold text-ink-900"
           : level === 2
-          ? "mt-2 mb-1 text-[15px] font-semibold text-ink-900"
-          : "mt-1.5 mb-1 text-sm font-semibold text-ink-800";
+          ? "mt-3 mb-1.5 flex items-center gap-2 border-l-2 border-primary/70 pl-2 text-[15px] font-bold text-ink-900"
+          : "mt-2 mb-1 text-sm font-semibold text-primary";
       const Tag = (`h${level}` as unknown) as keyof JSX.IntrinsicElements;
       out.push(
         <Tag key={`h-${k++}`} className={cls}>
+          {level === 1 || level === 2 ? <span className="text-primary/70">▎</span> : null}
           {formatInline(text)}
         </Tag>
       );
@@ -198,7 +232,10 @@ function renderMarkdown(body: string): React.ReactNode {
     // 引用: > ...
     if (line.startsWith("> ")) {
       out.push(
-        <blockquote key={`q-${k++}`} className="my-1 border-l-2 border-primary pl-2 text-ink-700">
+        <blockquote
+          key={`q-${k++}`}
+          className="my-2 rounded-r-md border-l-4 border-primary bg-primary/5 px-3 py-1.5 text-ink-700"
+        >
           {formatInline(line.slice(2))}
         </blockquote>
       );
@@ -221,10 +258,13 @@ function renderMarkdown(body: string): React.ReactNode {
         i++;
       }
       out.push(
-        <ol key={`ol-${k++}`} className="my-1 ml-4 list-decimal space-y-0.5">
+        <ol key={`ol-${k++}`} className="my-1.5 ml-1 space-y-1">
           {items.map((it, idx) => (
-            <li key={idx} className="leading-relaxed">
-              {formatInline(it)}
+            <li key={idx} className="flex gap-2 leading-relaxed">
+              <span className="mt-0.5 inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-primary text-[10px] font-bold text-white">
+                {idx + 1}
+              </span>
+              <span className="flex-1">{formatInline(it)}</span>
             </li>
           ))}
         </ol>
@@ -240,10 +280,11 @@ function renderMarkdown(body: string): React.ReactNode {
         i++;
       }
       out.push(
-        <ul key={`ul-${k++}`} className="my-1 ml-4 list-disc space-y-0.5">
+        <ul key={`ul-${k++}`} className="my-1.5 ml-1 space-y-1">
           {items.map((it, idx) => (
-            <li key={idx} className="leading-relaxed">
-              {formatInline(it)}
+            <li key={idx} className="flex gap-2 leading-relaxed">
+              <span className="mt-1.5 inline-block h-1.5 w-1.5 shrink-0 rounded-full bg-primary" />
+              <span className="flex-1">{formatInline(it)}</span>
             </li>
           ))}
         </ul>
@@ -259,7 +300,7 @@ function renderMarkdown(body: string): React.ReactNode {
 
     // 普通段落
     out.push(
-      <p key={`p-${k++}`} className="my-1 leading-relaxed">
+      <p key={`p-${k++}`} className="my-1.5 leading-relaxed text-ink-800">
         {formatInline(line)}
       </p>
     );
@@ -326,24 +367,47 @@ function parseInlineTable(s: string): { header: string[]; rows: string[][]; rest
  *  P0 治本: minimax stream output 有时把表格行拼成单行 |...|...|...|...|...|...| (没 \n)
  *        或 把 # / * / - 标记 inline 不分行 (# 二、| *机场: | - 故障)
  *  修法: 检测 markdown 标记前自动插 \n, 让 renderMarkdown 正常解析
+ *
+ *  V29d 升级 (NJX 7/27 20:34 反馈"AI 文本输出依然不便于阅读"):
+ *    1) heading 允许紧贴前字符 (无空白也拆): `([^\s\n])(#{1,3}\s+...)` 
+ *       v2c 旧规则要求前有空白, LLM 输出 `--###` 紧贴, 完全不触发
+ *    2) hr `---` 整行规整 (用 anchor 排除前 -, 但仍然处理行中的 \n---\n)
+ *    3) list `-`/`*` 加 context guard: 排除 `数字-数字` (3-1531) / 排除 `**bold**` 中间 `*`
+ *    4) 表格: `| ` (空格 + |) 在文本中(非行首) 拆行, 兼容 LLM 输出 `| 机型| 备注 ||---|---|` 空 cell
  */
 function normalizeMarkdownLineBreaks(s: string): string {
   if (!s) return s;
   let out = s;
-  // 1) 表格行: 连续 ≥ 3 个 | cells, 自动加 \n
-  out = out.replace(
-    /\|(\s*[^\n|]{2,40}\s*)(\|\s*[^\n|]{2,40}\s*){2,}\|(\s*[^\n|]{2,40}\s*)(\|\s*[^\n|]{2,40}\s*)*\|/g,
-    (m) => m.replace(/\s*\|\s*/g, " | ").replace(/(?<!^)\s*\|\s*(?!$)/g, "\n| ")
-  );
-  // 2) Heading: 前面不是行首的 # (1-3 个), 自动插 \n
-  // 匹配: 不是行首的 ## ## / ### ###, 前面是中文/英文/数字/符号 (非空白)
-  out = out.replace(/([^\n\s])(\s*)(#{1,3}\s+)/g, "$1\n$3");
-  // 3) List item: 前面不是行首的 `* ` 或 `- ` (1-3 个空格缩进 + 字符), 自动插 \n
-  // ⚠️ 跳过 "**bold**" 内的 `*` (这里用 lookahead: `*` 后面跟空格 + 非 `*`)
-  out = out.replace(/([^\n])\s+(\*+\s+[^*\n])/g, "$1\n$2");
-  out = out.replace(/([^\n])\s+(-\s+[-*\w\u4e00-\u9fff])/g, "$1\n$2");
-  // 4) Numbered list: 1. 2. 3. (前面不是行首, 后面是中文/英文)
-  out = out.replace(/([^\n])\s+(\d+\.\s+[\u4e00-\u9fff\w])/g, "$1\n$2");
+
+  // 0) HR --- 整行规整 (3 个或以上连续的 -, 前面是空白/行首/中文, 后面空白/行尾/中文)
+  //    把 \n?---\n? 变成 \n\n---\n\n (用边界避免误伤: 后接字母是 hr 文字说明, 不拆)
+  out = out.replace(/(^|[\n\u4e00-\u9fff，。；：、）])---($|[\n\u4e00-\u9fff，。；：、（])/g, "$1\n\n---\n\n$2");
+
+  // 1) Heading: #{1,3} + 1+ space + 非空白, 前面有非空白字符就插 \n (V29d 升级: 允许 ## 紧贴)
+  //   兼容: `文本# title` / `文本 ##title` / `## 文本## 标题` (LLM 流式拼接丢 \n) / `---###已知` (前 -, 仍拆)
+  //   排除: 行首的 # (前面是 \n 或行首)
+  out = out.replace(/(\S)(#{1,3}\s+[^\s#])/g, "$1\n$2");
+
+  // 2) List item "- " (1+ 空白 + - + 1+ 空白 + 中文/大写英文/数字.)
+  //   排除: 数字-数字 (3-1531) — 用 lookbehind (?<!\d)
+  //   排除: 减号-减号 (---) 已被 step 0 处理
+  //   排除: ":" 后紧跟 - (e.g. "机场: - 处置" 仍要拆, 但 "件号:" 后跟 C20649000-兰州 不是 list)
+  //   lookbehind 不支持变长, 但 (?<!\d) 可用
+  out = out.replace(/(?<!\d)([^\s\n:])(-\s+[\u4e00-\u9fff])/g, "$1\n$2");
+  out = out.replace(/(?<!\d)([^\s\n:])(-\s+[A-Z])/g, "$1\n$2");
+
+  // 3) List item "* " (单星, 排除 **bold** 内的 *)
+  //   排除: ** 在前 (lookbehind (?<!\*)) 或在后 (lookahead (?!\*))
+  out = out.replace(/(?<!\*)([^\s\n*])(\*\s+[\u4e00-\u9fff])/g, "$1\n$2");
+
+  // 4) Numbered list: 数字. 空格 + 中文/英文
+  //   排除: 数字. 数字 (e.g. "1.5" 分数) — 用 lookbehind (?<!\d)
+  out = out.replace(/(?<!\d)(\d+\.\s+[\u4e00-\u9fff])/g, "\n$1");
+
+  // 5) 表格: "| " (空格+|) 在文本中(非行首) 拆行, 兼容 LLM 输出 `| 机型| 备注 ||---|`
+  //   规则: 找到非行首的 "| " (前面不是 \n 也不是 |), 插 \n
+  out = out.replace(/([^\n|])\s+\|/g, "$1\n|");
+
   return out;
 }
 

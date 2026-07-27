@@ -7,6 +7,62 @@
 
 ---
 
+## [V29d] - 2026-07-27 · 视觉升级 + max_tokens 4000 + markdown normalize v3
+
+**Commit**: PENDING
+**分支**: `integration/sprint-abc`
+**作者**: Mavis (PM)
+
+#### 触发
+
+NJX 7/27 20:34 反馈"AI 助理文本输出依然不便于阅读，改为输出可视化水平高的文本格式"。
+
+实测根因 3 层:
+1. **LLM 输出被 max_tokens=1024 截断** — 末尾 `**` 不闭合, heading 标记丢失, 表格被压成 inline
+2. **normalizeMarkdownLineBreaks v2c 规则要求 markdown 标记前有空白** — LLM 输出 `--###已知` `件号:C20649000-` 无空白, 全部不触发
+3. **renderMarkdown 视觉单一** — heading 跟正文同色, list 无圆点, table 无 hover/边框
+
+#### 修法 (4 处)
+
+1. **chat.py max_tokens 1024 → 4000** (治本 LLM 截断)
+   - `llm.chat(messages, max_tokens=4000)` (line 262, 397)
+   - `llm.stream_chat(messages, max_tokens=4000)` (line 393)
+   - 实测: 西安答案从 865 chars 截断版 → 完整 heading + 表格 + 列表
+2. **SYSTEM_PROMPT 加视觉结构强约束** (chat.py line 50-67)
+   - 强调 `结构化输出: heading/list/table`
+   - 强调 `件号/联系人用 code 包裹`
+   - 强调 `关键操作动词用 bold 加粗`
+   - 强调 `场景分支用三级 heading`
+3. **normalizeMarkdownLineBreaks v3 升级** (chat-widget.tsx line 330-365)
+   - heading rule: 允许 `#` 紧贴前字符 (含 `##` 双 `#` 也拆)
+   - hr rule: 用边界 anchor (中文/标点) 避免误伤
+   - list rule: 加 context guard (排除 `数字-数字` / `**bold**`)
+   - table rule: 处理 LLM 输出空 cell (`| 机型| 备注 ||---|---|`)
+4. **renderMarkdown 视觉升级** (chat-widget.tsx line 114-280)
+   - h1/h2 加左边色块 (▎ + primary 边)
+   - 表格加圆角边框 + thead 主色背景 + row hover 高亮
+   - list 加圆点 (ul) / 数字圆形 (ol 蓝填充)
+   - blockquote 加左侧 4px 主色边 + bg
+   - 表格解析容错: splitRow 函数处理 `||` 空 cell + 自动判断 sep
+
+#### 验证 (2 query 截图)
+
+- `/tmp/aog_markdown_v29d_20260727/09_helsinki_bottom.png` — 赫尔辛基答案含列表 + 表格 + bold + code
+- `/tmp/aog_markdown_v29d_20260727/10_helsinki_top.png` — 西安答案含 bold + 列表 + 引用编号
+
+#### 限制 (已知)
+
+- LLM 输出仍有时不严格遵循 markdown (e.g. 用 `**bold**` 模拟 heading 而非 `##`)
+- 表格解析对 LLM 输出"无 header separator 行"用首行当 header (heuristic)
+- 进一步改善需要改 LLM 输出 JSON 组件 (治本, 2-3 天) 或更激进的 markdown parser
+
+#### 改动 (2 文件, +117/-39)
+
+- `backend/aog_web/api/chat.py` (max_tokens 4000 + SYSTEM_PROMPT 视觉结构)
+- `frontend/components/chat-widget.tsx` (normalize v3 + renderMarkdown 视觉升级)
+
+---
+
 ## [V29c] - 2026-07-27 · D-038 trigram 治本 (CJK 召回)
 
 **Commit**: PENDING

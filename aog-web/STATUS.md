@@ -29,6 +29,7 @@
 
 | 版本 | 日期 | 内容 |
 |---|---|---|
+| **V29d** | 2026-07-27 | 视觉升级: max_tokens 1024→4000 (治本 LLM 截断) + normalize v3 (heading 允许紧贴) + renderMarkdown 视觉升级 (h1/h2 色块 + table 边框 + list 圆点) (NJX 20:34 反馈"AI 输出依然不便于阅读"根因) |
 | **V29c** | 2026-07-27 | D-038 trigram 治本 CJK 召回: 3 张 FTS5 表改 trigram tokenizer + 应用层 3-gram + 短 CJK LIKE fallback (NJX 19:55 反馈"未找到赫尔辛基预案"根因) |
 | **V29b** | 2026-07-27 | 流式 SSE + 自写 markdown 渲染 + P1-1 chat 5 段式 (wiki > city > contacts > experience > core_plan) |
 | **V29** | 2026-07-27 | 🅰️ 双轨方案: RAG (D-030 治本) + LLM wiki 整理 (3 城市 MVP) + chat widget panel 治本 + 思考过程鲁棒折叠 |

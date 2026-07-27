@@ -47,7 +47,7 @@ SYSTEM_PROMPT_TEMPLATE = """你是 AOG（飞机停场维修）应急保障知识
 回答要简洁，分步骤、给出联系人/件号/流程要点。
 回答末尾必须列出引用的参考资料编号（与下面参考资料对应）。
 
-P0 治本 (NJX 7/27 15:44 + 19:37 反馈: AI 答案排版混乱, markdown marker inline 不分行):
+P0 治本 (NJX 7/27 15:44 + 19:37 + 20:34 反馈: AI 答案排版混乱, markdown marker inline 不分行):
 - **每个 markdown 元素必须独占一行**:
   - 标题: `## xxx` / `### xxx` 单独一行, 前面必须有 \\n
   - 列表: `- xxx` / `* xxx` / `1. xxx` 单独一行
@@ -55,7 +55,16 @@ P0 治本 (NJX 7/27 15:44 + 19:37 反馈: AI 答案排版混乱, markdown marker
   - 段落: 段落之间用空行 \\n\\n 分隔
 - **bold** 用 `**xxx**`, **italic** 用 `*xxx*`, **code** 用 `` `xxx` ``
 - **绝对不要**把多个 markdown 元素塞在同一行 (例如 `*机场: ...# 二、故障树`)
+- **绝对不要**把 markdown 标记紧贴前字符 (例如 `件号:C20649000-` 应该是 `件号: C20649000 -`)
 - 思考过程 (用 <think>...</think> 包裹) 跟正文用 \\n\\n 分隔
+
+P0 治本 视觉结构 (NJX 7/27 20:34 反馈"AI 文本输出依然不便于阅读, 改为输出可视化水平高的文本格式"):
+- **结构化输出**: 优先用 heading 分章节, 用 list 列步骤, 用 table 列对比/清单
+- **重要件号/联系人/电话用 `code` 包裹** (e.g. `` `3-1531-3` ``)
+- **关键操作动词用 **bold** 加粗** (e.g. **自我保障** / **求援** / **ADE 保障**)
+- **场景分支用三级 heading 切分** (e.g. `### 场景 A: 短停故障` / `### 场景 B: 航后故障`)
+- **避免长段落**: 一段不超过 3 行, 多了拆 list
+- **引用编号加方括号**: `[1] [2]` 而不是 `1 2`
 
 参考资料（已按相关度排序）:
 {context_block}
@@ -249,8 +258,12 @@ async def chat(request: Request, body: ChatRequest) -> ChatResponse:
     ]
 
     # 5. 调 LLM
+    # P0 治本 (NJX 7/27 20:34 反馈"AI 答案依然不便于阅读"):
+    #   minimax M3 默认 max_tokens=1024 不够 wiki 完整输出 (含 heading + table + 联系人)
+    #   之前实测 wiki_curator 改 12000 (V29b), chat 改 4000 兼容 markdown 完整结构
+    #   max_tokens=4000 足够 ~1500-2000 字答案 + heading + 表格 + 引用
     try:
-        answer = await llm.chat(messages)
+        answer = await llm.chat(messages, max_tokens=4000)
     except Exception as e:
         logger.error("LLM call failed: %s", e)
         await llm.close()
@@ -380,12 +393,13 @@ async def chat_stream(request: Request, body: ChatRequest) -> StreamingResponse:
         # 4b. LLM 流式
         try:
             # 优先用 stream_chat, 没有则 fallback chat() 然后整段 emit
+            # P0 治本 (NJX 7/27 20:34 反馈): max_tokens=4000 兼容 markdown 完整结构 (heading + 表格 + 引用)
             if hasattr(llm, "stream_chat"):
-                async for delta in llm.stream_chat(messages):
+                async for delta in llm.stream_chat(messages, max_tokens=4000):
                     yield _sse_format(delta, event="token")
             else:
                 # Mock LLM / 老 LLM 没 stream, 走一次性 emit
-                full = await llm.chat(messages)
+                full = await llm.chat(messages, max_tokens=4000)
                 # 模拟流式: 按字切 + 间隔 10ms (NJX 看得到打字机效果)
                 for ch in full:
                     yield _sse_format(ch, event="token")
