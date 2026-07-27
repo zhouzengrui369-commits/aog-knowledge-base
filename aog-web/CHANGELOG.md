@@ -7,11 +7,70 @@
 
 ---
 
-## [Unreleased]
+## [V29b] - 2026-07-27 · 流式 SSE + Markdown 渲染 + P1-1 接 wiki
 
-### 🟡 V29 · 双轨方案 MVP (进行中)
+**Commit**: `51e1488` (push 成功)
+**分支**: `integration/sprint-abc`
+**作者**: Mavis (PM)
 
-**Commit**: (pending, NJX 拍 🅰️ 双轨方案)
+#### 触发
+
+NJX 7/27 15:44 反馈 2 个 UI bug:
+1. AI 答案没流式输出 (一次性返, 等 30s 看结果)
+2. AI 答案显示原始 markdown 格式 (## 标题/| 表格 |/1. 列表 都没渲染)
+
+NJX 拍 🅰️ 双轨方案 + 220 城市全跑 + P1-1 接 chat 端 + 1 条注释修复 (4 件事)
+
+#### 改动 (7 文件, 700+ 行)
+
+1. **backend/aog_web/api/chat.py** (+161 行)
+   - 加 /api/chat/stream SSE endpoint (refs 立刻 + token 逐字 + done 收尾)
+   - 3 段式 query (D-030) → 5 段式 (P1-1: wiki > city > contacts > experience > core_plan)
+   - city 1.5x boost + wiki 1.3x boost
+   - SYSTEM_PROMPT 加 markdown 格式提示 (避免 LLM 拼成单行)
+2. **backend/aog_web/llm/minimax.py** (+72 行)
+   - 加 stream_chat (SSE parser, 4 字符小块 + 8ms 间隔 营造打字机效果)
+3. **backend/aog_web/services/llm.py** (+2 行)
+   - LLM Protocol 加 stream_chat 方法
+4. **frontend/lib/api.ts** (+94 行)
+   - 加 chatStream 函数 (ReadableStream + SSE event parsing: refs / token / done / error)
+5. **frontend/components/chat-widget.tsx** (+371 行, 改 renderMarkdown)
+   - 自写 markdown 渲染 (不引第三方库, pnpm 502 9min timeout 改用自写)
+   - 支持: #/##/### 标题 / | 表格 | / - 列表 / 1. 有序列表 / **bold** / `code` / > 引用 / --- 横线
+   - 加 normalizeMarkdownLineBreaks: 单行 markdown 表格切多行
+   - 加 parseInlineTable: 单行 markdown 表格 regex 识别
+   - doAsk 改用 chatStream
+6. **pipeline/scripts/export_fts5.py** (+70 行)
+   - 加 _insert_wiki_from_staging: 读 pipeline/data/wiki/*.md → chunks_fts (source_type=wiki)
+7. **pipeline/pyproject.toml** (+1 行)
+   - + python-frontmatter 1.3.0
+
+#### Verify (本地 dev 3004/8001)
+
+- 流式: 8s 774KB → 18s 798KB → 35s 800KB (逐字增长 ✅)
+- markdown 表格: <table> 1-3 个/query (西安 1, 三亚 3 ✅)
+- bold: <strong> 5-14 个/query ✅
+- 截图: `/tmp/aog_markdown_only_20260727/02_xian_plan_closeup.png` (真表格带边框) ✅
+
+#### 影响
+
+- 流式体验: 用户 8s 看到 refs + 部分答案, 不再 30s 等
+- markdown 渲染: 表格/标题/列表/粗体/代码全 work
+- P1-1 wiki 召回: 5 段式 query wiki 优先 (等 wiki 220 跑完 + rebuild fts5 才生效)
+
+#### 阻塞
+
+- 220 wiki 后台跑 53/220 (24%, 预计 1.5-2h 完)
+- rebuild fts5 等 wiki 完才跑 (让 P1-1 chat 召到 wiki 段)
+
+---
+
+**分支**: `integration/sprint-abc`
+**作者**: Mavis (PM)
+
+#### 改动 (3 文件) · 🅰️ 双轨方案 MVP (3 城市) + chat widget panel 治本
+
+**Commit**: `dd89179` (push 成功)
 **分支**: `integration/sprint-abc`
 **作者**: Mavis (PM)
 
