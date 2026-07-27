@@ -1,32 +1,38 @@
 """POST /api/chat - RAG + LLM - CONTRACT §2.7
 POST /api/chat/stream - RAG + LLM 流式 (SSE) - NJX 7/27 15:44 反馈 AI 答案要打字机效果
+V30 (NJX 7/27 22:14 拍板 🅰️): LLM 输出结构化 JSON + 前端组件化
+  - LLM 输出末尾加 ===JSON_START===...===JSON_END=== sentinel 段, 描述 sections 数组
+  - 后端 parser 解析成功 → sections 字段, 前端按 type 渲染 React 组件 (100% 视觉受控)
+  - parser 失败 → sections=None, 前端 fallback 到 V29d++ markdown 渲染
 
 流程:
 1. 收到 q → RAG backend 查 top-5 (chroma 或 fts5, 由 settings.rag_backend 决定)
 2. 取 1-3 个最相关文档作为 context
 3. 构造 system prompt + user q
 4. 调 LLM (Mock 或 MiniMax M3 真实)
-5. 返回 {answer, references, model, latency_ms}
+5. 返回 {answer, sections, references, model, latency_ms}
 ★ NSM-2: references 强制 ≥ 1 (从 RAG 检索结果填, 不足则用 SQLite 兜底)
 
 流式 (/api/chat/stream):
 - 用 FastAPI StreamingResponse + SSE (text/event-stream)
-- 先 emit 一行 JSON: {references, model} (前端拿到 references 立刻显示, 不等 LLM)
-- 再 emit 多行 content delta (LLM stream_chat yield)
-- 最后 emit "data: [DONE]\\n\\n"
+- 先 emit refs event: {references, model} (前端拿到 references 立刻显示, 不等 LLM)
+- 再 emit token events: 流式 markdown delta (打字机)
+- LLM 流完后, parser 解析 sentinel 段, emit sections event: {sections: [...]} (前端用 sections 重渲染)
+- 最后 emit done event: {latency_ms}
 """
 from __future__ import annotations
 
 import asyncio
 import json
 import logging
+import re
 import time
-from typing import Any, AsyncIterator, Dict, List
+from typing import Any, AsyncIterator, Dict, List, Optional, Tuple
 
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import StreamingResponse
 
-from aog_web.models.chat import ChatRequest, ChatResponse, Reference
+from aog_web.models.chat import ChatRequest, ChatResponse, ChatSection, Reference
 # ★ SCF 部署: chromadb 无 Linux wheel, 改成 lazy import
 from aog_web.services.fts5_client import get_fts5_client
 from aog_web.services.llm import get_llm
@@ -45,7 +51,6 @@ router = APIRouter(prefix="/api", tags=["chat"])
 SYSTEM_PROMPT_TEMPLATE = """你是 AOG（飞机停场维修）应急保障知识库的 AI 助手。
 你只能基于下面给出的"参考资料"回答用户问题。如果参考资料没有相关信息，请直接说"暂未找到相关文档"。
 回答要简洁，分步骤、给出联系人/件号/流程要点。
-回答末尾必须列出引用的参考资料编号（与下面参考资料对应）。
 
 P0 治本 (NJX 7/27 15:44 + 19:37 + 20:34 反馈: AI 答案排版混乱, markdown marker inline 不分行):
 - **每个 markdown 元素必须独占一行**:
@@ -66,6 +71,41 @@ P0 治本 视觉结构 (NJX 7/27 20:34 反馈"AI 文本输出依然不便于阅�
 - **避免长段落**: 一段不超过 3 行, 多了拆 list
 - **引用编号加方括号**: `[1] [2]` 而不是 `1 2`
 
+V30 治本 (NJX 7/27 22:14 拍板 🅰️): 回答末尾必须输出**结构化 JSON** 描述答案结构 (前端用 React 组件渲染, 100% 视觉受控, 不依赖 markdown 解析).
+
+JSON 输出规则 (放在 markdown 答案最后, 用 sentinel 包裹):
+===JSON_START===
+{{
+  "sections": [
+    {{"type": "heading", "level": 2, "text": "基本信息"}},
+    {{"type": "table", "header": ["项目", "内容"], "rows": [["IATA/ICAO", "HEL/EFHK"], ["机场", "赫尔辛基万塔国际机场"], ["国家/地区", "芬兰"], ["时差", "UTC+2/+3"], ["执飞机型", "B787/A350/A320"]]}},
+    {{"type": "heading", "level": 3, "text": "当地服务商与联系人"}},
+    {{"type": "table", "header": ["公司", "职责"], "rows": [["AVIATOR", "地服"], ["ASR", "货站清关"]]}},
+    {{"type": "list", "items": ["自我保障", "求援", "ADE 保障"]}},
+    {{"type": "alert", "variant": "warning", "text": "航材备件需提前 24h 申请"}},
+    {{"type": "quote", "text": "短停故障应急流程见 [1]"}}
+  ]
+}}
+===JSON_END===
+
+8 种 section type 说明:
+- heading: 一级/二级/三级标题, level=1/2/3
+- paragraph: 普通段落, 纯文本
+- table: 表格, header=[列名数组], rows=[[cell1, cell2, ...] 行数据]
+- list: 无序列表, items=[字符串]
+- ordered_list: 有序列表, items=[字符串]
+- code: 代码块, text=内容, language=可选 (bash/text/sql)
+- alert: 提示框, text=内容, variant=info/warning/danger/success
+- quote: 引用块, text=内容
+
+JSON 注意事项:
+- 严格按上面 8 种 type 之一, 不要发明新 type
+- 每个 section 一个完整结构, 不允许嵌套 (父子关系靠 level 表达)
+- JSON 内部不要用 markdown (e.g. 不要 `**bold**` 包裹, 用纯字符串 + 视觉由前端决定)
+- 如果某部分没有合适 type, 跳过 (不需要硬塞)
+- sentinel 段必须用 ===JSON_START=== / ===JSON_END=== 完整包裹, 不可换行
+- JSON 之前的所有内容都当 markdown 处理 (流式打字机)
+
 参考资料（已按相关度排序）:
 {context_block}
 """
@@ -81,6 +121,83 @@ def _build_context_block(refs: List[Dict[str, Any]]) -> str:
         snippet = (r.get("text") or r.get("snippet") or "")[:600]
         lines.append(f"{i}. [{title}] {snippet}")
     return "\n".join(lines)
+
+
+# ====== V30 治本 (NJX 7/27 22:14 拍板 🅰️): LLM 输出结构化 JSON ======
+
+# sentinel 段正则: 找 ===JSON_START=== ... ===JSON_END=== 之间的 JSON
+_JSON_SECTION_RE = re.compile(
+    r"===JSON_START===\s*([\s\S]+?)\s*===JSON_END===",
+    re.MULTILINE,
+)
+# 合法 section type (校验用)
+_VALID_SECTION_TYPES = {
+    "heading", "paragraph", "table", "list", "ordered_list", "code", "alert", "quote",
+}
+
+
+def _parse_sections(answer: str) -> Tuple[str, Optional[List[ChatSection]]]:
+    """V30 治本: 解析 LLM 输出里的 ===JSON_START===...===JSON_END=== sentinel 段
+
+    返回 (clean_answer, sections):
+      - clean_answer: 去掉 sentinel 段后的纯 markdown (sentinel 段不返给前端, 避免双渲染)
+      - sections: 解析成功 = List[ChatSection], 失败 = None (前端 fallback markdown 渲染)
+
+    容错 (P0 治本):
+      - 没 sentinel 段 → (answer, None) 完整保留
+      - JSON parse 失败 → (clean, None) clean 不含 sentinel
+      - sections 不是 list / 全部不合法 → (clean, None)
+      - 任何 type 非法 / pydantic 校验失败 → skip 这个 section, 其他 section 保留
+    """
+    if not answer:
+        return answer, None
+    match = _JSON_SECTION_RE.search(answer)
+    if not match:
+        return answer, None
+    # 构造 clean_answer: 去掉 sentinel 段
+    clean_answer = (answer[: match.start()] + answer[match.end() :]).strip()
+    # 解析 JSON
+    json_str = match.group(1).strip()
+    # 兼容: LLM 可能包一层 ```json ... ``` markdown fence, 去之
+    json_str = re.sub(r"^```(?:json)?\s*", "", json_str)
+    json_str = re.sub(r"\s*```$", "", json_str)
+    try:
+        data = json.loads(json_str)
+    except Exception as e:
+        logger.warning("[V30] sections JSON parse failed: %s", e)
+        return clean_answer, None
+    if not isinstance(data, dict):
+        logger.warning("[V30] sections JSON is not a dict: %r", type(data).__name__)
+        return clean_answer, None
+    raw_sections = data.get("sections")
+    if not isinstance(raw_sections, list):
+        logger.warning("[V30] sections field is not a list: %r", type(raw_sections).__name__)
+        return clean_answer, None
+    # 校验 + 构造 ChatSection
+    sections: List[ChatSection] = []
+    skipped = 0
+    for raw in raw_sections:
+        if not isinstance(raw, dict):
+            skipped += 1
+            continue
+        t = raw.get("type")
+        if t not in _VALID_SECTION_TYPES:
+            logger.debug("[V30] skip section: invalid type=%r", t)
+            skipped += 1
+            continue
+        try:
+            sections.append(ChatSection(**raw))
+        except Exception as e:
+            logger.debug("[V30] skip section %s: pydantic error %s", t, e)
+            skipped += 1
+            continue
+    if not sections:
+        return clean_answer, None
+    logger.info(
+        "[V30] parsed %d sections (skipped %d invalid) for chat answer",
+        len(sections), skipped,
+    )
+    return clean_answer, sections
 
 
 def _build_references(refs: List[Dict[str, Any]]) -> List[Reference]:
@@ -273,9 +390,15 @@ async def chat(request: Request, body: ChatRequest) -> ChatResponse:
             detail={"error": "upstream LLM error", "message": str(e)[:200]},
         )
 
+    # V30 治本 (NJX 7/27 22:14 拍板 🅰️): 解析 LLM 输出里的 ===JSON_START===...===JSON_END=== sentinel 段
+    # 解析成功 → sections 字段填, 前端用 React 组件渲染 (100% 视觉受控)
+    # 解析失败 → sections=None, 前端 fallback 到 V29d++ markdown 渲染
+    clean_answer, sections = _parse_sections(answer)
+
     latency_ms = int((time.time() - started) * 1000)
     return ChatResponse(
-        answer=answer,
+        answer=clean_answer,
+        sections=sections,
         references=references,
         model=llm.model,
         latency_ms=latency_ms,
@@ -348,11 +471,15 @@ async def _retrieve_context(request: Request, body: ChatRequest) -> List[Dict[st
 async def chat_stream(request: Request, body: ChatRequest) -> StreamingResponse:
     """流式 chat (SSE) - NJX 7/27 15:44 反馈 AI 答案要打字机效果
 
+    V30 (NJX 7/27 22:14 拍板 🅰️): 加 sections event, 完整 LLM 输出后 emit 一次 sections 数组.
+    前端: 打字机显示 markdown (V29d++ 效果) → sections 到达后切换到结构化组件化渲染.
+
     SSE 协议:
-      1) event: refs\\ndata: {json references + model}\\n\\n     ← 立刻 emit, 不等 LLM
-      2) event: token\\ndata: {str content_delta}\\n\\n          ← LLM stream_chat yield 一次 emit 一次
-      3) event: done\\ndata: [DONE]\\n\\n                       ← 结束
-      4) 出错: event: error\\ndata: {json error}\\n\\n
+      1) event: refs       data: {json references + model}      ← 立刻 emit, 不等 LLM
+      2) event: token      data: {str content_delta}              ← LLM stream_chat yield 一次 emit 一次
+      3) event: sections   data: {json {sections:[...]}}          ← LLM 流完后, parser 解析成功才 emit
+      4) event: done       data: {latency_ms}                      ← 结束
+      5) 出错: event: error data: {json error}
     """
     started = time.time()
     settings = request.app.state.settings
@@ -390,16 +517,19 @@ async def chat_stream(request: Request, body: ChatRequest) -> StreamingResponse:
         }
         yield _sse_format(json.dumps(refs_payload, ensure_ascii=False), event="refs")
 
-        # 4b. LLM 流式
+        # 4b. LLM 流式 + 累加完整 buffer (V30 解析用)
+        full_buffer: List[str] = []
         try:
             # 优先用 stream_chat, 没有则 fallback chat() 然后整段 emit
             # P0 治本 (NJX 7/27 20:34 反馈): max_tokens=4000 兼容 markdown 完整结构 (heading + 表格 + 引用)
             if hasattr(llm, "stream_chat"):
                 async for delta in llm.stream_chat(messages, max_tokens=4000):
+                    full_buffer.append(delta)
                     yield _sse_format(delta, event="token")
             else:
                 # Mock LLM / 老 LLM 没 stream, 走一次性 emit
                 full = await llm.chat(messages, max_tokens=4000)
+                full_buffer.append(full)
                 # 模拟流式: 按字切 + 间隔 10ms (NJX 看得到打字机效果)
                 for ch in full:
                     yield _sse_format(ch, event="token")
@@ -408,7 +538,18 @@ async def chat_stream(request: Request, body: ChatRequest) -> StreamingResponse:
             logger.error("LLM stream failed: %s", e)
             yield _sse_format(json.dumps({"error": str(e)[:200]}), event="error")
 
-        # 4c. 结束
+        # 4c. V30 治本: 解析完整 LLM 输出, 找 sentinel 段, emit sections event
+        full_answer = "".join(full_buffer)
+        if full_answer:
+            _, sections = _parse_sections(full_answer)
+            if sections:
+                sections_payload = {
+                    "sections": [s.model_dump() if hasattr(s, "model_dump") else s.dict() for s in sections],
+                }
+                yield _sse_format(json.dumps(sections_payload, ensure_ascii=False), event="sections")
+                logger.info("[V30 stream] emit %d sections for q=%r", len(sections), body.q[:60])
+
+        # 4d. 结束
         latency_ms = int((time.time() - started) * 1000)
         done_payload = {"latency_ms": latency_ms}
         yield _sse_format(json.dumps(done_payload), event="done")

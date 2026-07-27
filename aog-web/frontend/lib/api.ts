@@ -175,21 +175,24 @@ export async function chat(req: ChatRequest): Promise<ChatResponse | null> {
 
 /** 流式 chat (SSE) — NJX 7/27 15:44 反馈 AI 答案要打字机效果
  *
- *  后端 /api/chat/stream emit 3 类 SSE event:
- *    1. event: refs    data: {references, model}            ← 立刻返, 不等 LLM
- *    2. event: token   data: {content_delta}                 ← LLM 每 yield 一段就 emit
- *    3. event: done    data: {latency_ms}                    ← 结束
- *    4. event: error   data: {error}                         ← 异常
+ *  V30 (NJX 7/27 22:14 拍板 🅰️): 后端 /api/chat/stream emit 4 类 SSE event:
+ *    1. event: refs       data: {references, model}              ← 立刻返, 不等 LLM
+ *    2. event: token      data: {content_delta}                   ← LLM 每 yield 一段就 emit
+ *    3. event: sections   data: {sections: ChatSection[]}        ← LLM 流完后, parser 解析成功才 emit (V30 治本)
+ *    4. event: done       data: {latency_ms}                      ← 结束
+ *    5. event: error      data: {error}                           ← 异常
  *
  *  回调:
- *    onRefs({references, model})   ← 第一次 event=refs 触发 (可立刻显示引用)
- *    onToken(delta)                ← 每个 event=token 触发 (前端逐字渲染)
- *    onDone(latency_ms)            ← event=done 触发
- *    onError(message)              ← event=error 或 fetch 失败触发
+ *    onRefs({references, model})                     ← event=refs 触发
+ *    onToken(delta)                                  ← event=token 触发 (前端逐字渲染)
+ *    onSections(sections)                            ← event=sections 触发 (V30: 切到结构化渲染)
+ *    onDone(latency_ms)                              ← event=done 触发
+ *    onError(message)                                ← event=error 或 fetch 失败触发
  */
 export interface ChatStreamCallbacks {
   onRefs?: (refs: { references: ChatResponse["references"]; model: string }) => void;
   onToken?: (delta: string) => void;
+  onSections?: (sections: NonNullable<ChatResponse["sections"]>) => void;
   onDone?: (latencyMs: number) => void;
   onError?: (message: string) => void;
 }
@@ -243,6 +246,17 @@ export async function chatStream(req: ChatRequest, cbs: ChatStreamCallbacks): Pr
           }
         } else if (event === "token") {
           cbs.onToken?.(dataStr);
+        } else if (event === "sections") {
+          // V30 治本: 后端 parser 解析成功, emit sections 数组
+          // 前端拿到后用 React 组件渲染, 覆盖之前流式 markdown 显示
+          try {
+            const payload = JSON.parse(dataStr);
+            if (Array.isArray(payload.sections)) {
+              cbs.onSections?.(payload.sections as NonNullable<ChatResponse["sections"]>);
+            }
+          } catch (e) {
+            console.warn("[chatStream] sections parse failed:", e);
+          }
         } else if (event === "done") {
           try {
             const payload = JSON.parse(dataStr);

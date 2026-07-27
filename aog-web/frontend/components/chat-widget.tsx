@@ -1,15 +1,21 @@
 "use client";
 
 import * as React from "react";
-import { Send, Sparkles, X, Link2, AlertTriangle, Loader2 } from "lucide-react";
+import {
+  Send, Sparkles, X, Link2, AlertTriangle, Loader2,
+  Info, AlertCircle, CheckCircle2, ShieldAlert,
+  Terminal, Code2,
+} from "lucide-react";
 import { cn } from "@/lib/utils";
 import { chat as chatApi, chatStream } from "@/lib/api";
-import type { ChatResponse } from "@/lib/types";
+import type { ChatResponse, ChatSection, ChatSectionType } from "@/lib/types";
 
 interface Msg {
   id: string;
   role: "user" | "assistant";
   text: string;
+  /** V30 治本: LLM 解析成功时填充, 优先于 text 渲染 */
+  sections?: ChatSection[];
   refs?: ChatResponse["references"];
   loading?: boolean;
   /** LLM model name (from stream refs) */
@@ -43,6 +49,236 @@ function splitThink(s: string): { think: string | null; body: string } {
     }
   }
   return { think: null, body: s };
+}
+
+// ====== V30 治本 (NJX 7/27 22:14 拍板 🅰️): 结构化 section 组件化渲染 ======
+// LLM 输出 JSON 描述 sections 数组, 每个 section 独立 React 组件, 100% 视觉受控.
+// 完全替代 V29d++ 的"正则吃 markdown" 模式, 不再依赖 LLM 严格遵循 markdown 标记.
+
+/** V30 治本: strip text 字段里残留的 markdown 标记 (NJX 7/27 22:14 拍板)
+ *  P0 容错: minimax M3 在 JSON 模板里也偶有 inline 残破 (前导 # / 紧贴 ** / 含 raw JSON 例子)
+ *  避免: 用户看到 "### 注意事项" 在 paragraph 段里显示成 "### 注意事项"
+ *  不动: formatInline 内的 `**bold**` / `*italic*` / `code` (LLM 偶有, 仍渲染)
+ *  P1 容错: 整段是 raw JSON 例子 (LLM 错误地把 JSON 模板塞到 text/rows), 整段 strip */
+function cleanText(s: string): string {
+  if (!s) return s;
+  let out = String(s)
+    // 行首的 # 标记 (e.g. "### 注意事项" → "注意事项", "## 标题" → "标题")
+    .replace(/^\s*#{1,6}\s+/gm, "")
+    // 行首的 list 标记 (e.g. "- 步骤 1" → "步骤 1", "* 项目" → "项目", "1. 第一步" → "第一步")
+    .replace(/^\s*[-*]\s+/gm, "")
+    .replace(/^\s*\d+\.\s+/gm, "")
+    // 单独一行的 # 字符 (LLM 流拼接产物)
+    .replace(/^\s*#\s*$/gm, "")
+    // 末尾孤立 # 字符
+    .replace(/\s*#\s*$/g, "")
+    .trim();
+  // P1 容错: 整段就是 raw JSON 例子 (LLM 错误地把 JSON 模板塞到 text/items/rows)
+  if (/^\s*\{[\s\S]*"sections"[\s\S]*\}\s*$/.test(out)) {
+    return "";  // 整段是 raw JSON 模板, 不显示
+  }
+  return out;
+}
+
+/** 单个 section 渲染 — 按 type 分发到对应组件 */
+function SectionRenderer({ section }: { section: ChatSection }) {
+  switch (section.type) {
+    case "heading":
+      return <HeadingSection level={section.level ?? 2} text={section.text ?? ""} />;
+    case "paragraph":
+      return <ParagraphSection text={cleanText(section.text ?? "")} />;
+    case "table":
+      return <TableSection header={section.header ?? []} rows={section.rows ?? []} />;
+    case "list":
+      return <ListSection items={section.items ?? []} />;
+    case "ordered_list":
+      return <OrderedListSection items={section.items ?? []} />;
+    case "code":
+      return <CodeSection text={section.text ?? ""} language={section.language} />;
+    case "alert":
+      return <AlertSection text={cleanText(section.text ?? "")} variant={section.variant ?? "info"} />;
+    case "quote":
+      return <QuoteSection text={cleanText(section.text ?? "")} />;
+    default:
+      return null;
+  }
+}
+
+/** 多个 sections 渲染 (key 稳定, 避免 React warning) */
+function renderSections(sections: ChatSection[]): React.ReactNode {
+  return (
+    <div className="space-y-1.5">
+      {sections.map((s, i) => (
+        <SectionRenderer key={i} section={s} />
+      ))}
+    </div>
+  );
+}
+
+/** H1/H2/H3 视觉分级 (沿用 V29d 视觉 + V30 增强)
+ *  P0 容错: strip text 里残留的 markdown 标记 (LLM 输出 "### xxx" 偶有) */
+function HeadingSection({ level, text }: { level: number; text: string }) {
+  // strip 前导的 # / ## / ### (兼容 LLM 偶有 inline 残破)
+  const cleanText = String(text).replace(/^\s*#{1,6}\s*/, "").trim();
+  if (level === 1) {
+    return (
+      <h1 className="mt-2.5 mb-1.5 flex items-center gap-2 border-l-4 border-primary bg-primary/5 px-2.5 py-1.5 text-base font-bold text-ink-900">
+        <span className="text-primary/70">▎</span>
+        {cleanText}
+      </h1>
+    );
+  }
+  if (level === 2) {
+    return (
+      <h2 className="mt-2.5 mb-1 flex items-center gap-2 border-l-2 border-primary/70 pl-2 text-[15px] font-bold text-ink-900">
+        <span className="text-primary/70">▎</span>
+        {cleanText}
+      </h2>
+    );
+  }
+  return (
+    <h3 className="mt-2 mb-0.5 text-sm font-semibold text-primary">{cleanText}</h3>
+  );
+}
+
+/** 段落 (允许 inline **bold** / *italic* / `code` — 走 formatInline) */
+function ParagraphSection({ text }: { text: string }) {
+  return (
+    <p className="leading-relaxed text-ink-800">{formatInline(text)}</p>
+  );
+}
+
+/** 表格 — V30 治本: header + rows 二维数组, 100% 视觉受控, 不依赖 |---| 解析 */
+function TableSection({ header, rows }: { header: string[]; rows: string[][] }) {
+  return (
+    <div className="my-2 overflow-x-auto rounded-md border border-ink-200">
+      <table className="w-full border-collapse text-[12px]">
+        {header.length > 0 && (
+          <thead className="bg-primary/5">
+            <tr>
+              {header.map((h, i) => (
+                <th
+                  key={i}
+                  className="border-b border-ink-200 bg-primary/10 px-2.5 py-1.5 text-left text-[11px] font-semibold uppercase tracking-wide text-primary"
+                >
+                  {formatInline(cleanText(h))}
+                </th>
+              ))}
+            </tr>
+          </thead>
+        )}
+        <tbody>
+          {rows.map((row, ri) => (
+            <tr key={ri} className="even:bg-ink-50/50 hover:bg-primary/5 transition-colors">
+              {row.map((cell, ci) => {
+                const cleaned = cleanText(cell);
+                if (!cleaned) return <td key={ci} className="border-b border-ink-100 px-2.5 py-1.5 align-top text-ink-400 italic">—</td>;
+                return (
+                  <td key={ci} className="border-b border-ink-100 px-2.5 py-1.5 align-top text-ink-800">
+                    {formatInline(cleaned)}
+                  </td>
+                );
+              })}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+/** 无序列表 (蓝圆点, 沿用 V29d 视觉) */
+function ListSection({ items }: { items: string[] }) {
+  if (items.length === 0) return null;
+  return (
+    <ul className="ml-1 space-y-0.5">
+      {items.map((it, i) => (
+        <li key={i} className="flex gap-2 leading-relaxed">
+          <span className="mt-1.5 inline-block h-1.5 w-1.5 shrink-0 rounded-full bg-primary" />
+          <span className="flex-1 text-ink-800">{formatInline(cleanText(it))}</span>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+/** 有序列表 (蓝数字圆形, 沿用 V29d 视觉) */
+function OrderedListSection({ items }: { items: string[] }) {
+  if (items.length === 0) return null;
+  return (
+    <ol className="ml-1 space-y-0.5">
+      {items.map((it, i) => (
+        <li key={i} className="flex gap-2 leading-relaxed">
+          <span className="mt-0.5 inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-primary text-[10px] font-bold text-white">
+            {i + 1}
+          </span>
+          <span className="flex-1 text-ink-800">{formatInline(cleanText(it))}</span>
+        </li>
+      ))}
+    </ol>
+  );
+}
+
+/** 代码块 (block, 灰色背景 + 终端 icon + language 标签) */
+function CodeSection({ text, language }: { text: string; language?: string }) {
+  return (
+    <div className="my-1.5 overflow-hidden rounded-md border border-ink-200 bg-ink-900 text-[12px]">
+      <div className="flex items-center gap-1.5 border-b border-ink-700 bg-ink-800 px-2.5 py-1 text-[10px] text-ink-300">
+        <Terminal className="h-3 w-3" />
+        <span className="font-mono uppercase tracking-wide">{language || "text"}</span>
+      </div>
+      <pre className="overflow-x-auto px-2.5 py-2 font-mono leading-relaxed text-ink-100">
+        {text}
+      </pre>
+    </div>
+  );
+}
+
+/** 提示框 (4 变体: info / warning / danger / success)
+ *  P0 容错: tailwind config 没 info color, info 改用 primary (蓝色, 跟 AOG 主题一致) */
+function AlertSection({ text, variant }: { text: string; variant: "info" | "warning" | "danger" | "success" }) {
+  const config = {
+    info: {
+      cls: "border-primary/30 bg-primary-50 text-primary-900",
+      icon: <Info className="h-3.5 w-3.5 text-primary" />,
+      label: "提示",
+    },
+    warning: {
+      cls: "border-warning/30 bg-warning-50 text-warning-700",
+      icon: <AlertCircle className="h-3.5 w-3.5 text-warning" />,
+      label: "注意",
+    },
+    danger: {
+      cls: "border-danger/30 bg-danger-50 text-danger-700",
+      icon: <ShieldAlert className="h-3.5 w-3.5 text-danger" />,
+      label: "危险",
+    },
+    success: {
+      cls: "border-success/30 bg-success-50 text-success-700",
+      icon: <CheckCircle2 className="h-3.5 w-3.5 text-success" />,
+      label: "成功",
+    },
+  }[variant];
+  return (
+    <div className={cn("my-1.5 flex gap-2 rounded-md border px-2.5 py-1.5", config.cls)}>
+      <div className="mt-0.5 shrink-0">{config.icon}</div>
+      <div className="flex-1 leading-relaxed">
+        <div className="mb-0.5 text-[10px] font-semibold uppercase tracking-wide opacity-80">
+          {config.label}
+        </div>
+        <div>{formatInline(text)}</div>
+      </div>
+    </div>
+  );
+}
+
+/** 引用块 (左边色块 + 灰底) */
+function QuoteSection({ text }: { text: string }) {
+  return (
+    <blockquote className="my-1.5 rounded-r-md border-l-4 border-primary bg-primary/5 px-3 py-1.5 text-ink-700">
+      {formatInline(text)}
+    </blockquote>
+  );
 }
 
 /** 简单 markdown 渲染 (不引第三方库, 减少依赖体积 + 避免 pnpm 502 慢)
@@ -472,10 +708,18 @@ function normalizeMarkdownLineBreaks(s: string): string {
 }
 
 /** Markdown 渲染 (自写, 不依赖第三方) + 思考过程折叠
- *  P0 治本 (NJX 7/27 15:44 反馈: AI 答案显示原始 markdown 格式, ## 标题 / | 表格 | / 1. 列表 都没渲染) */
-function formatAnswer(s: string): React.ReactNode {
-  if (!s) return null;
-  const { think, body } = splitThink(s);
+ *  P0 治本 (NJX 7/27 15:44 反馈: AI 答案显示原始 markdown 格式, ## 标题 / | 表格 | / 1. 列表 都没渲染)
+ *  V30 治本 (NJX 7/27 22:14 拍板 🅰️): 有 sections 走组件化渲染, 否则 fallback markdown */
+function formatAnswer(msg: Msg): React.ReactNode {
+  const { text, sections } = msg;
+  // V30 治本: 优先 sections 渲染 (NJX 22:14 拍板, 100% 视觉受控)
+  if (sections && sections.length > 0) {
+    // sections 模式不解析 think (LLM 在 JSON 模板里不输出 <think>)
+    return <>{renderSections(sections)}</>;
+  }
+  // Fallback: markdown 渲染 (V29d++ 兼容, 解析失败 / 老 LLM 走这里)
+  if (!text) return null;
+  const { think, body } = splitThink(text);
   const thinkBlock = think ? (
     <details key="think" className="mb-2 rounded-md border border-ink-100 bg-ink-50 px-2.5 py-1.5 text-[11px] text-ink-500">
       <summary className="cursor-pointer select-none font-medium text-ink-600 hover:text-primary">
@@ -560,9 +804,10 @@ export const ChatWidget = React.forwardRef<ChatWidgetHandle>((_, ref) => {
     ]);
 
     // P0 治本 (NJX 7/27 15:44 反馈: AI 答案没流式输出)
-    //   改用 chatStream: 后端 SSE emit refs (立刻) + token (打字机) + done (结束)
+    //   改用 chatStream: 后端 SSE emit refs (立刻) + token (打字机) + sections (V30 组件化) + done (结束)
     //   - 收到 refs 立刻显示引用, 不等 LLM 30s
-    //   - 收到 token 增量拼到 text, React state 触发 re-render
+    //   - 收到 token 增量拼到 text, React state 触发 re-render (markdown 打字机)
+    //   - 收到 sections 用 React 组件化渲染, 覆盖之前的 markdown (V30 治本)
     await chatStream({ q: text }, {
       onRefs: ({ references, model }) => {
         setMsgs((prev) =>
@@ -578,6 +823,17 @@ export const ChatWidget = React.forwardRef<ChatWidgetHandle>((_, ref) => {
           prev.map((m) =>
             m.id === loadingId
               ? { ...m, text: m.text + delta, loading: false }
+              : m
+          )
+        );
+      },
+      onSections: (sections) => {
+        // V30 治本: LLM 解析成功, 用 sections 覆盖流式 markdown 渲染
+        // 100% 视觉受控 — 不再依赖 markdown 解析, 8 种 type 各对应独立 React 组件
+        setMsgs((prev) =>
+          prev.map((m) =>
+            m.id === loadingId
+              ? { ...m, sections, loading: false }
               : m
           )
         );
@@ -752,7 +1008,7 @@ function MessageBubble({ msg }: { msg: Msg }) {
             <span className="h-1.5 w-1.5 rounded-full bg-ink-500" />
           </span>
         ) : (
-          <div className="space-y-1">{formatAnswer(msg.text)}</div>
+          <div className="space-y-1">{formatAnswer(msg)}</div>
         )}
       </div>
 

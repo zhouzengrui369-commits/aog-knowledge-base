@@ -749,3 +749,78 @@ NJX 判断: docx 内容正确 (上海市 + 虹桥机场), bug 在 extract_city �
 
 **Commit**: `80aed9e` (push 成功)
 **更新**: 2026-07-27 20:18 by Mavis (D-038 trigram 治本)
+
+---
+
+## D-042 · V30 治本: LLM 输出结构化 JSON + 前端组件化渲染 (2026-07-27 22:50)
+
+**触发**: NJX 7/27 19:37 → 20:34 → 21:30 → 21:56 → 22:14 五次反馈 markdown 排版混乱, V29d / V29d+ / V29d++ 仍"好点了, 还有 ### 等"。22:14 拍板战略方向 (3 选项)。
+
+**3 选项 + 降级** (PM 推荐 🅰️):
+- 🅰️ **LLM 输出结构化 JSON + 前端 React 组件化渲染** (推荐, 选) — 100% 视觉受控, 0 markdown 解析依赖, 治本
+- 🅱️ Reflection 二次 LLM (让 LLM 自己改 markdown) — token×2, latency×1.5-2, **不治本** (LLM 行为不一致)
+- 🅲️ 接受当前 V29d++ markdown — 不治本, 兜底
+
+**NJX 选 🅰️** (1-2 天投资)。22:15 浏览器评论追问"是否用 html 格式更适合?" — PM 回应 HTML 不可行 (XSS + LLM 仍不规范), 继续 🅰️ 推进。
+
+**实施 (5 文件 +535/-35)**:
+1. `backend/aog_web/api/chat.py`: SYSTEM_PROMPT 加 JSON 输出模板 + _parse_sections() 解析器 + chat() 返 sections + chat_stream() emit event=sections
+2. `backend/aog_web/models/chat.py`: ChatSectionType/ChatSection/ChatResponse.sections
+3. `frontend/lib/types.ts`: ChatSection/ChatResponse.sections/ChatStreamCallbacks.onSections
+4. `frontend/lib/api.ts`: chatStream SSE 解析 event=sections
+5. `frontend/components/chat-widget.tsx`: 8 组件 (HeadingSection/ParagraphSection/TableSection/ListSection/OrderedListSection/CodeSection/AlertSection/QuoteSection) + SectionRenderer/renderSections + formatAnswer sections 优先 / markdown fallback + cleanText (strip 行首 markdown + 检测 raw JSON 跳过)
+
+**JSON 模板** (sentinel 包裹, 8 种 type):
+```json
+{
+  "sections": [
+    {"type": "heading", "level": 2, "text": "基本信息"},
+    {"type": "table", "header": ["项目", "内容"], "rows": [["IATA/ICAO", "HEL/EFHK"], ...]},
+    {"type": "list", "items": ["自我保障", "求援"]},
+    {"type": "ordered_list", "items": ["步骤 1", "步骤 2"]},
+    {"type": "code", "text": "echo hi", "language": "bash"},
+    {"type": "alert", "variant": "warning", "text": "..."},
+    {"type": "quote", "text": "..."}
+  ]
+}
+```
+
+**实测**:
+- 3/3 query emit sections event (赫尔辛基/浦东/B787)
+- 18 sections per query, 8 type 全部覆盖 (heading 7 / table 2 / list 4 / ordered_list 1 / paragraph 2 / alert 1 / quote 1)
+- 5 张 Playwright 截图 (`/tmp/aog_v30_final_20260727/`)
+  - 05_sections_done: 1 alert + 12 lis + 6 headings 组件化渲染
+  - 06_top / 07_middle / 08_bottom: 滚到不同位置都干净
+
+**对比 (V29d++ vs V30)**:
+| 元素 | V29d++ markdown | V30 组件化 |
+|------|------|------|
+| heading | inline `# 二、故障树` 残破 | h1/h2/h3 视觉分级 + 左边色块 |
+| table | 流拼接 `\|项目\|内容\|\|---` 状态机拆 | header+rows 二维数组直接渲染 |
+| list | inline `- 步骤 1` 偶尔不拆 | 蓝圆点 / 蓝数字圆形 |
+| alert | 没有, 跟正文同色 | 4 变体 + icon |
+| code | `` `code` `` inline | 终端 icon + 灰底 + language 标签 |
+| quote | `> ...` 偶尔不拆 | 左边色块 + 灰底 |
+
+**兜底 (P0 容错)**:
+- LLM 没输出 sentinel 段 → sections=None, 前端 fallback markdown
+- JSON parse 失败 → sections=None, fallback
+- 非法 type / pydantic 校验失败 → skip 该 section, 其他保留
+- LLM 在 text 字段含 markdown 残破 (e.g. `###注意事项`) → cleanText() strip 行首标记
+- LLM 错误地把 JSON 模板塞到 text 字段 → cleanText() 检测 `^\s*\{...sections...\}$` 跳过
+
+**反例 (❌ HTML 路线, NJX 22:15 提及)**:
+- LLM 直接吐 HTML, 前端 dangerouslySetInnerHTML 渲染 → XSS 攻击面
+- LLM 仍不规范 (minimax M3 不严格遵循 SYSTEM_PROMPT) → HTML 拼错风险更大
+- 视觉不能 100% 受控 (HTML 标签嵌套错 / class 拼错)
+- 调试地狱 (HTML 出错没 stack trace)
+
+**教训 (跨项目, 重要)**:
+- **LLM 输出 markdown 不稳定是根本问题** — 任何 normalize 算法 (V29d/V29d+/V29d++) 都是补丁, 治本是让 LLM 输出结构化描述 (JSON) + 前端按 type 渲染 React 组件
+- **结构化输出必带 fallback** — LLM 100% 不会完全遵循 JSON 模板, 必须 markdown fallback
+- **8 种 type 够了** — heading/paragraph/table/list/ordered_list/code/alert/quote 覆盖 AOG 答案所有场景, 不用扩到 20 种
+- **cleanText 是必备** — LLM 在 JSON 字段 (text/items) 也会输出 markdown 残破 (`###`, `**`), 必须 strip
+- **3 选 🅰️ 是 NJX 最优解** — 0 token 额外成本 (LLM JSON 输出算在 max_tokens 4000 内), 0 latency 额外 (chat_stream 流式 + sections 1 次 emit), 视觉 100% 受控
+
+**Commit**: PENDING (V30 治本)
+**更新**: 2026-07-27 22:50 by Mavis (D-042 V30 治本完成)

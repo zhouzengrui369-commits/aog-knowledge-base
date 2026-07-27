@@ -102,8 +102,49 @@ export interface ChatReference {
   score: number;
 }
 
+// ===== V30 (NJX 7/27 22:14 拍板 🅰️): 结构化输出 =====
+// LLM 输出 JSON 描述 sections 数组, 前端用 React 组件渲染, 100% 视觉受控
+// 失败 fallback: sections=undefined, 前端用 markdown 渲染 (answer 字段)
+
+export type ChatSectionType =
+  | "heading"          // heading.text + level (1-3)
+  | "paragraph"        // paragraph.text
+  | "table"            // table.header + table.rows
+  | "list"             // list.items
+  | "ordered_list"     // ordered_list.items
+  | "code"             // code.text + code.language
+  | "alert"            // alert.text + alert.variant (info/warning/danger/success)
+  | "quote";           // quote.text
+
+export type ChatAlertVariant = "info" | "warning" | "danger" | "success";
+
+export interface ChatSection {
+  type: ChatSectionType;
+  /** heading 专用: 1=h1, 2=h2, 3=h3 */
+  level?: number;
+  /** paragraph / heading / code / quote / alert 专用 */
+  text?: string;
+  /** table 专用: 列名数组 */
+  header?: string[];
+  /** table 专用: rows = [[cell1, cell2, ...], ...] */
+  rows?: string[][];
+  /** list / ordered_list 专用 */
+  items?: string[];
+  /** code 专用: bash/text/sql 等 */
+  language?: string;
+  /** alert 专用 */
+  variant?: ChatAlertVariant;
+}
+
 export interface ChatResponse {
+  /** markdown 字符串 (V29d++ 兼容, V30 fallback 时用) */
   answer: string;
+  /**
+   * V30: 结构化 sections, 解析成功时填充.
+   * undefined → 前端用 markdown 渲染 (answer 字段)
+   * 有值 → 前端用 React 组件化渲染
+   */
+  sections?: ChatSection[];
   references: ChatReference[];
   model: string;
   latency_ms: number;

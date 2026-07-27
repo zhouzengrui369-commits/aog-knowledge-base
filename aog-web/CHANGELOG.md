@@ -3,6 +3,95 @@
 > **目的**: 简要记录每次重要修改、日期、内容、原因、影响。
 > **格式**: 按时间倒序（新→旧），按版本号组织。
 > **维护**: 每完成一个功能 / 阶段必更新。
+> **最后更新**: 2026-07-27 22:50 by Mavis (PM) - V30 治本完成
+
+---
+
+## [V30] - 2026-07-27 · 🅰️ AI 答案结构化 JSON + 前端组件化渲染
+
+**Commit**: PENDING
+**分支**: `integration/sprint-abc`
+**作者**: Mavis (PM)
+
+#### 触发
+
+NJX 7/27 22:14 拍板 🅰️ (3 选项中, 见 DECISIONS D-042):
+- 🅰️ LLM 输出结构化 JSON + 前端 React 组件化渲染 (推荐, 选)
+- 🅱️ Reflection 二次 LLM (token×2, latency×1.5-2)
+- 🅲️ 接受当前 V29d++ markdown (不治本, 兜底)
+
+NJX 22:15 浏览器评论追问"是否用 html 格式更适合?" — PM 回应 HTML 不可行 (XSS 风险 + LLM 仍不规范 + 视觉不能 100% 受控), 继续按 🅰️ 推进。
+
+#### 修法 (3 处, 5 文件, +535/-35 lines)
+
+1. **后端 chat.py: SYSTEM_PROMPT 加 JSON 输出模板** (line 50-118)
+   - LLM 末尾输出 `===JSON_START===...===JSON_END===` sentinel 段
+   - 描述 8 种 type: heading/paragraph/table/list/ordered_list/code/alert/quote
+   - 显式约束: "JSON 内部不要用 markdown, 用纯字符串 + 视觉由前端决定"
+
+2. **后端 chat.py: _parse_sections() 解析器** (line 117-189)
+   - 正则 `===JSON_START===...===JSON_END===` 抓 JSON 段
+   - 容错: 兼容 ```json fence 包裹 / pydantic 校验失败 skip / 非法 type skip
+   - 8/8 单元测试通过 (test_v30_parser_20260727.py)
+
+3. **后端 chat.py: chat() + chat_stream() 双路径**
+   - `chat()`: 解析后 sections 字段填 ChatResponse
+   - `chat_stream()`: 流式 token 期间发 markdown 打字机; LLM 流完后调 _parse_sections 解析, emit 新事件 `event: sections` (前端用 sections 覆盖 markdown 渲染)
+   - SSE 协议扩展: 4 类 event (refs/token/sections/done)
+
+4. **前端 lib/types.ts: ChatSection type** (+41 lines)
+   - `ChatSectionType` Literal: 8 种 type
+   - `ChatAlertVariant` Literal: 4 种 variant
+   - `ChatSection` interface + `ChatResponse.sections?` 字段
+
+5. **前端 lib/api.ts: chatStream onSections 回调** (+32 lines)
+   - `ChatStreamCallbacks` 加 `onSections(sections: ChatSection[])` 回调
+   - SSE 解析 `event: sections` payload → onSections
+
+6. **前端 chat-widget.tsx: 8 组件 + sections 优先 / markdown fallback** (+274 lines)
+   - `SectionRenderer` 路由 switch 按 type 分发
+   - `renderSections()` 数组 map
+   - 8 组件: HeadingSection / ParagraphSection / TableSection / ListSection / OrderedListSection / CodeSection / AlertSection / QuoteSection
+   - `formatAnswer(msg)`: sections 优先, markdown fallback
+   - `cleanText()`: strip 行首 markdown 标记 (#, -, *, 1.) + 检测整段 raw JSON 跳过 (LLM 错误地把 JSON 例子塞到 text 字段)
+   - `Msg` 加 `sections?: ChatSection[]` 字段
+   - `chatStream` onSections 触发时 setMsgs 更新 sections 字段
+
+#### 实测
+
+- **后端 curl 测试**: 3/3 query emit sections event (赫尔辛基/浦东/B787)
+- **后端 sections 解析**: 18 sections per query, 8 type 全部覆盖 (heading 7 / table 2 / list 4 / ordered_list 1 / paragraph 2 / alert 1 / quote 1)
+- **前端 Playwright verify**: 5 张截图 (`/tmp/aog_v30_final_20260727/`)
+  - 05_sections_done: 1 alert + 12 lis + 6 headings 组件化渲染
+  - 06_sections_top / 07_middle / 08_bottom: 滚到不同位置都干净
+- **console.log debug**: onSections 触发 sections count=20, msg.sections 字段正确更新
+
+#### 视觉对比 (V29d++ markdown 渲染 vs V30 组件化渲染)
+
+| 元素 | V29d++ markdown 渲染 (NJX 22:15 反馈"依然不便于阅读") | V30 组件化渲染 (本次治本) |
+|------|------|------|
+| heading | inline `# 二、故障树` 残破 | h1/h2/h3 视觉分级 + 左边色块 |
+| table | 流拼接 `\|项目\|内容\|\|---` 单行 + renderMarkdown normalize 状态机拆 | header+rows 二维数组直接渲染, 0 解析 |
+| list | inline `- 步骤 1` 偶尔不拆 | 蓝圆点 / 蓝数字圆形, 100% 受控 |
+| alert | 没有, 跟正文同色 | 4 变体 (info=蓝/warning=黄/danger=红/success=绿) + icon |
+| code | `` `code` `` inline | 终端 icon + 灰底 + language 标签 |
+| quote | `> ...` 偶尔不拆 | 左边色块 + 灰底 |
+
+#### 兜底 (P0 容错)
+
+- LLM 没输出 sentinel 段 → sections=None, 前端 fallback markdown (V29d++ 兼容)
+- JSON parse 失败 → sections=None, fallback
+- 非法 type / pydantic 校验失败 → skip 该 section, 其他保留
+- LLM 在 text 字段含 markdown 残破 (e.g. `###注意事项`) → cleanText() strip 行首标记
+- LLM 错误地把 JSON 模板塞到 text 字段 → cleanText() 检测 `^\s*\{...sections...\}$` 跳过
+
+#### 关联决策
+
+- **D-042** (DECISIONS.md): V30 🅰️ 双轨 → 实施完成
+
+---
+
+## [V29d] - 2026-07-27 · 视觉升级 + max_tokens 4000 + markdown normalize v3
 > **最后更新**: 2026-07-27 by Mavis (PM)
 
 ---

@@ -8,10 +8,10 @@
 
 ## 🎯 当前阶段
 
-**Phase 1.5 · 🅰️ 双轨方案 (RAG + LLM wiki 整理) 启动**
+**Phase 1.5 · V30 治本完成 (LLM 结构化 JSON + 组件化渲染)**
 
-- **里程碑**: RAG 实时查询 (D-030 治本) + LLM wiki 整理 (3 城市 MVP) 全部就位
-- **下一里程碑**: chat.py 加 wiki 段 (5 段式 query) + rebuild index + 公网 SCF 重新部署
+- **里程碑**: V30 治本完成 — LLM 输出 `===JSON_START===...===JSON_END===` 段, 后端解析成 18 sections, 前端用 8 组件渲染 (heading/paragraph/table/list/ordered_list/code/alert/quote)
+- **下一里程碑**: 公网 SCF 重新部署 V30 + DECISIONS D-042 落地
 
 ---
 
@@ -21,7 +21,8 @@
 
 1. **本地浏览器硬刷 http://localhost:3004/** → 看到 V28b 治本后的地图（218 蓝点 + 数字 bubble + 6,072 灰点）
 2. **点击紫色数字 bubble** → 自动 flyTo + zoom in 展开
-3. **公网部署更新** → 含 V13-V28b 全部新功能（密码登录 + 航司 tab + 地图治本）
+3. **AI panel 提问** → V30 治本: 流式 markdown 打字机 → sections event 到达后切到结构化组件化 (heading 色块 / 表格 / 列表 蓝圆点 / alert 4 变体)
+4. **公网部署更新** → 含 V13-V30 全部新功能
 
 ---
 
@@ -29,6 +30,7 @@
 
 | 版本 | 日期 | 内容 |
 |---|---|---|
+| **V30** | 2026-07-27 | 🅰️ 治本: LLM 输出结构化 JSON (`===JSON_START===`...`===JSON_END===` sentinel) + 后端 _parse_sections 解析 + 前端 8 组件化渲染 (HeadingSection/ParagraphSection/TableSection/ListSection/OrderedListSection/CodeSection/AlertSection/QuoteSection) (NJX 22:14 拍板 🅰️, 治本 LLM 输出 markdown 不稳定根因) |
 | **V29d** | 2026-07-27 | 视觉升级: max_tokens 1024→4000 (治本 LLM 截断) + normalize v3 (heading 允许紧贴) + renderMarkdown 视觉升级 (h1/h2 色块 + table 边框 + list 圆点) (NJX 20:34 反馈"AI 输出依然不便于阅读"根因) |
 | **V29c** | 2026-07-27 | D-038 trigram 治本 CJK 召回: 3 张 FTS5 表改 trigram tokenizer + 应用层 3-gram + 短 CJK LIKE fallback (NJX 19:55 反馈"未找到赫尔辛基预案"根因) |
 | **V29b** | 2026-07-27 | 流式 SSE + 自写 markdown 渲染 + P1-1 chat 5 段式 (wiki > city > contacts > experience > core_plan) |
@@ -64,10 +66,9 @@
 
 ## 🔄 正在进行 (In Progress)
 
-- **V29 wiki 扩量**: 3 城市 MVP 跑通, NJX 评审质量后扩 220 城市
-- **V29 chat 加 wiki 段**: 5 段式 query (wiki > city > contacts > experience > core_plan) + wiki score boost
-- **V29 rebuild index 含 wiki**: export_fts5 改读 `pipeline/data/wiki/*.md` 当 source_type=wiki
-- **V29 backend LLM timeout**: 30s → 120s (wiki max_tokens 12000 兼容)
+- **V30 公网 deploy**: SCF 重新部署含 V30 sections 解析 + 组件化渲染 (等 NJX 续费 CloudBase)
+- **V30 wiki 同步**: wiki_curator 改用 JSON sections 输出 (V30 兼容)
+- **V30 回归测试**: minimax M3 JSON 模板遵循率 (3/3 query emit, 待扩量验证)
 
 ---
 
@@ -122,8 +123,25 @@
 
 ## 📦 最近一次重要修改
 
-### 最近代码 (V29)
-- **Commit**: (pending, 2 modified + 1 new)
+### 最近代码 (V30)
+- **Commit**: (pending, 5 modified)
+- **分支**: `integration/sprint-abc`
+- **标题**: V30 feat(chat): 🅰️ LLM 结构化 JSON + 前端组件化 (治本 markdown 排版混乱)
+- **内容**:
+  - `backend/aog_web/api/chat.py` — SYSTEM_PROMPT 加 JSON 输出模板 + _parse_sections() 解析器 + chat() 返 sections + chat_stream() emit event=sections
+  - `backend/aog_web/models/chat.py` — ChatSectionType Literal + ChatSection model + ChatResponse.sections 字段
+  - `frontend/lib/types.ts` — ChatSection interface + ChatResponse.sections? + ChatStreamCallbacks.onSections
+  - `frontend/lib/api.ts` — chatStream SSE 解析 event=sections 回调
+  - `frontend/components/chat-widget.tsx` — 8 组件 (HeadingSection/ParagraphSection/TableSection/ListSection/OrderedListSection/CodeSection/AlertSection/QuoteSection) + SectionRenderer/renderSections + formatAnswer sections 优先 / markdown fallback + cleanText
+- **效果**:
+  - 18 sections per query (heading 7 / table 2 / list 4 / ordered_list 1 / paragraph 2 / alert 1 / quote 1)
+  - 8 type 全部组件化渲染, 0 markdown 解析依赖
+  - 流式打字机 (token 阶段) → sections event 触发后切到结构化
+  - 5 张 Playwright 截图 (`/tmp/aog_v30_final_20260727/`)
+- **本地 verify**: 3/3 query emit sections event, DOM 渲染 h1=1, h2=3-7, h3=1-3, lis=12-19, alerts=1-2, quotes=1, thinks=0
+
+### 最近代码 (V29d)
+- **Commit**: `21b20c9` (push 成功)
 - **分支**: `integration/sprint-abc`
 - **标题**: V29 feat(wiki_curator): 🅰️ 双轨方案 MVP (3 城市) + chat widget panel 治本
 - **内容**:
