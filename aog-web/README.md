@@ -128,3 +128,20 @@ aog-web/
 - [../project/AOG知识库网站/plan.md](../project/AOG知识库网站/plan.md) — Wave 1 任务
 - [../project/AOG知识库网站/rules.md](../project/AOG知识库网站/rules.md) — 团队规则
 - [../project/AOG知识库网站/delivery/delivery.md](../project/AOG知识库网站/delivery/delivery.md) — 验收清单
+
+---
+
+## 🔍 产品体验评审基线（独立验收）
+
+> 本节由独立产品体验评审官线程维护，**不**修改产品代码、UI、文案、测试、数据或部署。
+
+- 通用核心章程：[docs/acceptance/PRODUCT_EXPERIENCE_REVIEWER_CORE.md](../docs/acceptance/PRODUCT_EXPERIENCE_REVIEWER_CORE.md) · v1.0.0
+- AOG 项目体验档案：[docs/acceptance/PRODUCT_EXPERIENCE_PROFILE.md](../docs/acceptance/PRODUCT_EXPERIENCE_PROFILE.md) · v1.0.0
+- 评审报告目录：[reports/product-review/](../reports/product-review/)
+
+最近一次评审：
+
+- 报告：`reports/product-review/2026-07-26-aog-product-experience-review.md`
+- 结论（独立盲测基线 V14 main）：`NOT_READY` · 6 P0 / 9 P1 / 平均 2.20/5
+
+下一轮按整改优先级定向复验 P0（API 拼接收尾 / RAG 维度 / LLM key / SCF 重新部署）。
