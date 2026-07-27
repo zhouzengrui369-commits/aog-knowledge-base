@@ -1,8 +1,10 @@
 "use client";
 
 import * as React from "react";
+import { Lock, ShieldAlert, Info } from "lucide-react";
 import { cn, LOGISTICS_ICON, METHOD_COLOR } from "@/lib/utils";
-import type { City } from "@/lib/types";
+import { getToken } from "./auth-gate";
+import type { City, ContactPermission } from "@/lib/types";
 
 type TabKey = "plan" | "contacts" | "parts" | "logistics" | "warehouse";
 
@@ -117,9 +119,100 @@ function PlanPane({ city }: { city: City }) {
   );
 }
 
+// D-030: 按 permission 分组的 contacts 渲染
+//   - public:     正常显示
+//   - internal:   半透明 + "内部" 徽章
+//   - restricted: 折叠 + "受限" 徽章 + 未登录显示登录提示
+function ContactCard({
+  c,
+  i,
+  isAuthed,
+}: {
+  c: any;
+  i: number;
+  isAuthed: boolean;
+}) {
+  const perm: ContactPermission = (c?.permission as ContactPermission) || "public";
+  const isRestricted = perm === "restricted" && !isAuthed;
+
+  return (
+    <div
+      className={cn(
+        "rounded-lg border bg-white p-4",
+        perm === "internal" && "border-ink-100 opacity-70",
+        perm === "restricted" && "border-amber-200",
+        isRestricted && "bg-amber-50/50",
+      )}
+    >
+      <div className="mb-2 flex items-center justify-between">
+        <div className="text-sm font-semibold text-ink-900">{c.org}</div>
+        <div className="flex items-center gap-1">
+          {c.method && (
+            <span
+              className={cn(
+                "rounded-full px-2 py-0.5 text-[10px] font-medium",
+                METHOD_COLOR[c.method] || "bg-ink-100 text-ink-700",
+              )}
+            >
+              {c.method}
+            </span>
+          )}
+          {perm === "internal" && (
+            <span className="inline-flex items-center gap-0.5 rounded-full bg-ink-100 px-2 py-0.5 text-[10px] font-medium text-ink-700">
+              <Info size={10} />
+              内部
+            </span>
+          )}
+          {perm === "restricted" && (
+            <span className="inline-flex items-center gap-0.5 rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-medium text-amber-800">
+              <ShieldAlert size={10} />
+              受限
+            </span>
+          )}
+        </div>
+      </div>
+      {c.scope && <p className="mb-2 text-xs text-ink-500">{c.scope}</p>}
+      {c.contact && (
+        <div className="mb-1 text-xs text-ink-700">
+          <span className="text-ink-500">联系人：</span>
+          {c.contact}
+        </div>
+      )}
+      {c.phone && !isRestricted && (
+        <div className="mb-1 text-xs text-ink-700">
+          <span className="text-ink-500">电话：</span>
+          <a href={`tel:${c.phone}`} className="text-primary hover:underline">
+            {c.phone}
+          </a>
+        </div>
+      )}
+      {c.email && !isRestricted && (
+        <div className="text-xs text-ink-700">
+          <span className="text-ink-500">邮箱：</span>
+          <a href={`mailto:${c.email}`} className="text-primary hover:underline">
+            {c.email}
+          </a>
+        </div>
+      )}
+      {isRestricted && (
+        <div className="mt-2 flex items-center gap-1.5 rounded-md bg-amber-100/60 px-2 py-1.5 text-[11px] text-amber-900">
+          <Lock size={11} />
+          <span>受限供应商联系人 — 需登录后查看完整信息</span>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function ContactsPane({ city }: { city: City }) {
-  // V14: 兼容 SCF 真实 API (city.contacts: Array<{org, phone:string[], role, email}>) + mockup
-  const contacts =
+  // D-030: 受限 contact 需登录 — 检查 token
+  const [isAuthed, setIsAuthed] = React.useState(false);
+  React.useEffect(() => {
+    setIsAuthed(!!getToken());
+  }, []);
+
+  // V14: 兼容 SCF 真实 API (city.contacts: Array<{org, phone:string[], role, email, permission}>) + mockup
+  const rawContacts =
     (city?.contacts && city.contacts.length > 0
       ? city.contacts.map((c: any) => ({
           org: c?.org,
@@ -128,74 +221,80 @@ function ContactsPane({ city }: { city: City }) {
           contact: undefined,
           phone: Array.isArray(c?.phone) ? c.phone.join(" / ") : c?.phone,
           email: c?.email,
+          permission: c?.permission as ContactPermission | undefined,
         }))
       : null) ||
     city?.contacts_mockup ||
     [];
-  if (contacts.length === 0) {
+  if (rawContacts.length === 0) {
     return (
       <div className="rounded-lg border border-dashed border-ink-100 bg-ink-50 p-8 text-center text-sm text-ink-500">
         该航站暂无详细联系人信息，建议直接联系 AOG 中心。
       </div>
     );
   }
+  // D-030: 按 permission 分组 (public 在前, internal 半透明, restricted 受限)
+  const publicContacts = rawContacts.filter(
+    (c) => (c.permission || "public") === "public",
+  );
+  const internalContacts = rawContacts.filter((c) => c.permission === "internal");
+  const restrictedContacts = rawContacts.filter((c) => c.permission === "restricted");
+  const otherContacts = rawContacts.filter(
+    (c) => !["public", "internal", "restricted"].includes(c.permission || "public"),
+  );
+  // 老 mockup 数据无 permission 字段时, 全部塞 public
+  const legacyContacts = otherContacts;
+
   return (
     <div className="prose-city max-w-none">
       <h2>当地及周边资源</h2>
       <p>当自营航材不足时，可按以下联系方式求援 / 中介 / 互援。</p>
-      <div className="not-prose mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2">
-        {contacts.map((c, i) => (
-          <div
-            key={i}
-            className="rounded-lg border border-ink-100 bg-white p-4"
-          >
-            <div className="mb-2 flex items-center justify-between">
-              <div className="text-sm font-semibold text-ink-900">
-                {c.org}
-              </div>
-              {c.method && (
-                <span
-                  className={cn(
-                    "rounded-full px-2 py-0.5 text-[10px] font-medium",
-                    METHOD_COLOR[c.method] || "bg-ink-100 text-ink-700"
-                  )}
-                >
-                  {c.method}
-                </span>
-              )}
-            </div>
-            {c.scope && <p className="mb-2 text-xs text-ink-500">{c.scope}</p>}
-            {c.contact && (
-              <div className="mb-1 text-xs text-ink-700">
-                <span className="text-ink-500">联系人：</span>
-                {c.contact}
-              </div>
-            )}
-            {c.phone && (
-              <div className="mb-1 text-xs text-ink-700">
-                <span className="text-ink-500">电话：</span>
-                <a
-                  href={`tel:${c.phone}`}
-                  className="text-primary hover:underline"
-                >
-                  {c.phone}
-                </a>
-              </div>
-            )}
-            {c.email && (
-              <div className="text-xs text-ink-700">
-                <span className="text-ink-500">邮箱：</span>
-                <a
-                  href={`mailto:${c.email}`}
-                  className="text-primary hover:underline"
-                >
-                  {c.email}
-                </a>
-              </div>
-            )}
+      <p className="text-xs text-ink-500">
+        D-030: 联系人按权限分级 — 公开 (航司 desk) / 内部 (库房手机, 半透明) / 受限 (供应商, 需登录)
+      </p>
+
+      {publicContacts.length + legacyContacts.length > 0 && (
+        <>
+          <h3 className="mt-6 text-base font-semibold text-ink-900">公开联系 (航司 desk)</h3>
+          <div className="not-prose mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
+            {[...publicContacts, ...legacyContacts].map((c, i) => (
+              <ContactCard key={`pub-${i}`} c={c} i={i} isAuthed={isAuthed} />
+            ))}
           </div>
-        ))}
-      </div>
+        </>
+      )}
+
+      {internalContacts.length > 0 && (
+        <>
+          <h3 className="mt-6 text-base font-semibold text-ink-900">
+            内部联系 (库房/负责人)
+          </h3>
+          <div className="not-prose mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
+            {internalContacts.map((c, i) => (
+              <ContactCard key={`int-${i}`} c={c} i={i} isAuthed={isAuthed} />
+            ))}
+          </div>
+        </>
+      )}
+
+      {restrictedContacts.length > 0 && (
+        <>
+          <h3 className="mt-6 text-base font-semibold text-ink-900">
+            受限联系 (供应商商务)
+          </h3>
+          {!isAuthed && (
+            <div className="mt-2 flex items-center gap-2 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
+              <Lock size={12} />
+              <span>受限供应商联系人需登录后查看。密码入口在页面右上角 / 访问被拦截时弹出。</span>
+            </div>
+          )}
+          <div className="not-prose mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
+            {restrictedContacts.map((c, i) => (
+              <ContactCard key={`rst-${i}`} c={c} i={i} isAuthed={isAuthed} />
+            ))}
+          </div>
+        </>
+      )}
     </div>
   );
 }

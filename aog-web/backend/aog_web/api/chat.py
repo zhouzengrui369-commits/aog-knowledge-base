@@ -202,8 +202,25 @@ async def chat(request: Request, body: ChatRequest) -> ChatResponse:
     if settings.rag_backend == "fts5":
         try:
             fts5 = get_fts5_client()
-            rag_hits = await fts5.query(body.q, n_results=5)
-            logger.info("fts5 hits: %d for q=%r", len(rag_hits), body.q[:60])
+            # D-030 (P1-1 FOCUSED_RETEST): city_contacts 短 chunk 在 BM25 排序里被 core_plan 长文档压住
+            # 优化: 两段式 query — 先查 city_contacts (top 3) 优先召回具体电话, 再查全量 (top 5) 续
+            contacts_hits = await fts5.query(
+                body.q, n_results=3, where={"source_type": "city_contacts"}
+            )
+            normal_hits = await fts5.query(body.q, n_results=5)
+            # 合并: contacts 优先 (业务相关), 然后 normal (不重复)
+            seen_ids: set = set()
+            rag_hits = []
+            for h in contacts_hits + normal_hits:
+                if h.get("id") not in seen_ids:
+                    seen_ids.add(h.get("id"))
+                    rag_hits.append(h)
+                if len(rag_hits) >= 5:
+                    break
+            logger.info(
+                "fts5 hits: %d (contacts=%d normal=%d) for q=%r",
+                len(rag_hits), len(contacts_hits), len(normal_hits), body.q[:60],
+            )
         except Exception as e:
             logger.warning("fts5 query failed, fallback to chroma: %s", e)
             try:

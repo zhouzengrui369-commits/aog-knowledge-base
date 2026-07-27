@@ -32,6 +32,13 @@ class ContactItem(BaseModel):
     phone: List[str] = Field(..., description="联系电话列表")
     email: Optional[str] = Field(None, description="邮箱")
     role: str = Field(..., description="职责, 例 '7×24'")
+    # D-030: 联系人权限级别 (D-030.a 合并改, FOCUSED_RETEST P0-3)
+    #   - public:     航司公开 desk 公共电话
+    #   - internal:   库房/负责人/商务内部手机号 (前端半透明)
+    #   - restricted: 供应商商务联系人 (Satair/空客/...) — 前端折叠+需登录
+    permission: Literal["public", "internal", "restricted"] = Field(
+        "public", description="D-030 权限级别"
+    )
 
 
 class Warehouse(BaseModel):

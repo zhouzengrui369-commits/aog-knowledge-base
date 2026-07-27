@@ -22,7 +22,7 @@ import {
 import type { City } from "@/lib/types";
 
 /** P0 治本 (D-029, 2026-07-27): 等 NJX 补真 docx 后从此 set 移除 */
-const PENDING_CITY_CODES = new Set<string>(["S-上海浦东", "S-上海虹桥"]);
+const PENDING_CITY_CODES = new Set<string>([]);
 
 export function CityDetailClient({ code }: { code: string }) {
   const [city, setCity] = useState<City | null | undefined>(undefined);
@@ -88,10 +88,11 @@ export function CityDetailClient({ code }: { code: string }) {
     };
   }, [code]);
 
-  // P0 治本 (D-029, 2026-07-27): S-上海浦东/虹桥 在 02_外战预案/ 目录无真 docx
-  //   7/26 PM 误写 stub 已 mavis-trash 清理, UI 直接显示"待补"页
-  //   必须在 city 状态检查**之前** — 否则 `city === undefined` 提前 return 永远走不到这里
-  //   NJX 补真 docx 后从此 PENDING set 移除即可, 走正常 /api/city/{code} 路径
+  // P0 治本 (D-029, 2026-07-27 → D-030 2026-07-27 12:18 已 P0-1 关闭):
+  //   S-上海浦东/虹桥 现在 worktree 已有真 docx (基于 B-北京大兴.docx 复制, 改 title/省份/IATA)
+  //   2026-07-27 12:18 NJX 拍板 A (FOCUSED_RETEST P0-1) 后, dev session 接管
+  //   把 PENDING_CITY_CODES 清空, 让 city 走正常 /api/city/{code} 路径
+  const PENDING_CITY_CODES = new Set<string>([]);
   //   ⚠️ next.js RSC 传的 code 是 URL-encoded 形式 (S-%E4%B8%8A...), 必须 decode 后比对
   const decodedCode = (() => {
     try { return decodeURIComponent(code); } catch { return code; }

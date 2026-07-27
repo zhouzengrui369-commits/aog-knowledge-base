@@ -188,12 +188,42 @@ def _process_core_plans(files: list[Path], kb_root: Path) -> tuple[list[dict], l
     return out, failed, indexed
 
 
+def _build_contacts_chunk(c: dict) -> str | None:
+    """D-030: 把 city.contacts[] 拼成一段文本, 喂 RAG 让 AI 能召回 "021-22379771" 等具体电话。
+    返回 None 表示无 contacts, 跳过。
+    """
+    contacts = c.get("contacts") or []
+    if not contacts:
+        return None
+    # 按 permission 分组拼, 避免 internal/restricted 联系人直接当答案 (但保留在索引供 RAG 召回)
+    lines: list[str] = [f"# {c['name']} ({c['iata']}) 现场联系人清单"]
+    for ct in contacts:
+        perm = ct.get("permission", "public")
+        org = ct.get("org", "")
+        phones = ct.get("phone") or []
+        email = ct.get("email", "")
+        role = ct.get("role", "")
+        phone_str = " / ".join(phones) if phones else ""
+        parts: list[str] = [f"- [{perm.upper()}] {org}"]
+        if role:
+            parts.append(f"  职责: {role}")
+        if phone_str:
+            parts.append(f"  电话: {phone_str}")
+        if email:
+            parts.append(f"  邮箱: {email}")
+        lines.append("\n".join(parts))
+    return "\n".join(lines)
+
+
 def _build_chunks(
     cities: list[dict],
     experiences: list[dict],
     core_plans: list[dict],
 ) -> list[dict]:
-    """把 records 切成 chunks, 准备写 chroma。"""
+    """把 records 切成 chunks, 准备写 chroma。
+
+    D-030 (P1-1): city 额外把 contacts[] 拼成独立 chunk, 让 RAG 能召 "021-22379771" 等具体电话。
+    """
     chunks: list[dict] = []
     for c in cities:
         for chunk in chunk_text(c["content_md"]):
@@ -208,6 +238,23 @@ def _build_chunks(
                         "region": c["region"],
                         "status": c["status"],
                         "chunk_index": chunk.index,
+                    },
+                }
+            )
+        # D-030: contacts 单独成 chunk, RAG 召得到具体电话/邮箱
+        contacts_text = _build_contacts_chunk(c)
+        if contacts_text:
+            chunks.append(
+                {
+                    "text": contacts_text,
+                    "metadata": {
+                        "source_type": "city_contacts",  # 区分, 便于前端按类型 highlight
+                        "source_id": c["code"],
+                        "source_path": c["source_path"],
+                        "title": f"{c['name']} ({c['iata']}) 联系人",
+                        "region": c["region"],
+                        "status": c["status"],
+                        "chunk_index": 0,  # 单独 1 个 chunk, index 0
                     },
                 }
             )
@@ -304,9 +351,10 @@ def build(
                     cp_files.append(p)
         result.files_scanned = len(city_files) + len(exp_files) + len(cp_files)
     else:
-        city_files = scan_cities()
-        exp_files = scan_experiences()
-        cp_files = scan_core_plans()
+        # D-030: 全量 mode 走 kb_root 派生 (不再用 hardcode DEFAULT_CITIES_DIR)
+        city_files = scan_cities(kb_root / "02_外战预案")
+        exp_files = scan_experiences(kb_root / "03_保障经验")
+        cp_files = scan_core_plans(kb_root / "01_AOG预案")
         result.files_scanned = len(city_files) + len(exp_files) + len(cp_files)
 
     print(f"[scan] cities={len(city_files)} experiences={len(exp_files)} core_plans={len(cp_files)} total={result.files_scanned}")

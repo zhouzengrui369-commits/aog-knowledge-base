@@ -9,6 +9,9 @@ export type CityRegion =
   | "华北" | "华东" | "华南" | "华中" | "西南" | "西北" | "东北"
   | "国际-欧洲" | "国际-亚洲" | "国际-美洲" | "国际-中东" | "国际-非洲" | "国际-大洋洲";
 
+// D-030: 联系人权限级别 (FOCUSED_RETEST P0-3)
+export type ContactPermission = "public" | "internal" | "restricted";
+
 export interface City {
   code: string;
   name: string;
@@ -20,7 +23,13 @@ export interface City {
   tags?: string[];
   fleet?: Array<{ model: string; short_stay: boolean; after: boolean }>;
   parts?: Array<{ pn: string; name: string; stock: number; unit: string }>;
-  contacts?: Array<{ org: string; phone: string[]; email?: string; role: string }>;
+  contacts?: Array<{
+    org: string;
+    phone: string[];
+    email?: string;
+    role: string;
+    permission?: ContactPermission;  // D-030
+  }>;
   warehouse?: { location: string; main: string[] };
   logistics?: { rail: string; air: string; road: string };
   content_md?: string;
