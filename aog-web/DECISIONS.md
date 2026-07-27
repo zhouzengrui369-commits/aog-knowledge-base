@@ -576,3 +576,44 @@ $ tail -5 sync poll:
 ---
 
 **更新**: 2026-07-27 12:55 by coder agent (D-031 FOCUSED_RETEST verify)
+
+---
+
+## D-032 · S-上海虹桥 抽取 bug 调查 — root cause 是 NJX curl URL 字符错位, 抽取代码没问题 (2026-07-27 13:06)
+
+**背景**: NJX 13:02 拍板 A 让我修 S-上海虹桥 抽取 bug, 给了 curl:
+```
+curl http://localhost:8001/api/city/S-%E4%B8%8A%E6%B5%B7%E5%B8%83%E6%A1%A5
+→ {"detail":{"error":"city not found","code":"S-上海布桥"}}
+```
+NJX 判断: docx 内容正确 (上海市 + 虹桥机场), bug 在 extract_city 抽取 pipeline. 让我修 + 5/5 verify.
+
+**真跑 verify (不靠报告, 自己 curl + Playwright)**:
+
+| 测试 | URL 编码 | 结果 |
+|------|---------|------|
+| NJX 用的 URL | `%E5%B8%83` (布) | 404 + `code: S-上海布桥` |
+| 正确 URL | `%E8%99%B9` (虹) | 200 + `code: S-上海虹桥` |
+| SQLite raw | — | `S-上海虹桥 \| 上海虹桥 \| 上海虹桥国际机场 \| SHA \| 华东` (✓ 正确) |
+| Playwright /city/S-上海虹桥 | — | HTTP 200, 5 tab 全在 (预案正文/联系人/备件清单/物流方案/仓储单位), 页面显示 "上海虹桥国际机场" |
+| 3 次 curl with 正确 URL | `%E8%99%B9` | 全 PASS |
+
+**根因**: 字符"虹" UTF-8 = `e899b9` = `%E8%99%B9`. 字符"布" UTF-8 = `e5b883` = `%E5%B8%83`. NJX curl 里手敲的 `%E5%B8%83` 解码出来是"布", **不是"虹"**. 这是 NJX 自己的 URL 字符错位, 不是抽取 bug.
+
+**PENDING_CITY_CODES 已清空** (c883905 line 25/95 都 `= new Set<string>([])`), 不需要改. 7/24 提到的"decode URL-encoded code"也不是这里的问题 — Next.js RSC 已正确 encode 路径段, 前端 line 35-43 已做二次 decode 兜底.
+
+**抽取代码 + 后端 API + SQLite 全 100% 正确**:
+- `extract_city.py:parse_code_and_status` 从 `S-上海虹桥.docx` 抽 `code = "S-上海虹桥"` (line 192 `f"{raw_label}-{code_name}"`)
+- `sqlite_client._decode_city` 直接 `row.code` 返字段, 不改 code (line 264)
+- FastAPI `get_city(code)` 透传 `code` 到 `session.get(CityRow, code)`, 没改字符
+
+**结论**: 不动任何代码, 不 commit. NJX 12:40 报告的 5/5 PASS 是正确的 (评审结论没错), 13:02 13:02 的 "bug" 是 NJX 复 verify 时手敲 URL 错了.
+
+**5/5 markers + 3/3 API verify 全部 PASS** (用正确 URL), 截图: `/tmp/aog_bug_verify/S_上海虹桥.png` (149KB)
+
+**教训**:
+- NJX 报告的 root cause 已经被 "评审 root 已 verify" 间接背书, 我不能盲信, 必须自己 curl + Playwright 真跑
+- `%E5%B8%83` 和 `%E8%99%B9` 都是合法 UTF-8 percent-encoding, 但只对应 "布" 和 "虹", 错位肉眼难发现 (尤其在 13:02 这种快速复 verify 场景)
+- 拍板 ≠ 跳过 verify. 即使 NJX 拍板 A, 也要 30s 复 verify 确认 root cause 对不对
+
+**更新**: 2026-07-27 13:06 by coder agent (D-032 S-上海虹桥 抽取 bug 调查)
