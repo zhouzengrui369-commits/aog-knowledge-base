@@ -404,9 +404,66 @@ function normalizeMarkdownLineBreaks(s: string): string {
   //   排除: 数字. 数字 (e.g. "1.5" 分数) — 用 lookbehind (?<!\d)
   out = out.replace(/(?<!\d)(\d+\.\s+[\u4e00-\u9fff])/g, "\n$1");
 
-  // 5) 表格: "| " (空格+|) 在文本中(非行首) 拆行, 兼容 LLM 输出 `| 机型| 备注 ||---|`
-  //   规则: 找到非行首的 "| " (前面不是 \n 也不是 |), 插 \n
-  out = out.replace(/([^\n|])\s+\|/g, "$1\n|");
+  // 5) 表格 inline 重整 (NJX 7/27 21:30 反馈 "排版混乱" V29d 升级):
+  //   LLM 流式拼接把整段表格拼成单行: "| 项目| 内容 ||---|---|IATA/ ICAO| /| 机场|..."
+  //   修法: 找第一个 "|---" (非贪心), 拆 [header, sep, data] 三段, 重组多行
+  //   v5e 修: dataStart = sepEnd (separator 后立刻是 cell content, 不是 |), 不去头
+  out = out.replace(
+    /(?:^|\n)([^\n]*\|[^\n]*\|[^\n]*\|[^\n]*\|[^\n]*)/g,
+    (fullLine) => {
+      const pipeMatches = fullLine.match(/\|/g) || [];
+      if (pipeMatches.length < 4) return fullLine;
+      if (!fullLine.includes("---")) return fullLine;
+      // 找第一个 "|---" 起始位置
+      const sepStart = fullLine.indexOf("|---");
+      if (sepStart < 0) return fullLine;
+      // 状态机找 sepEnd: 接受 | - : 空白, 直到下一个 | 后跟 非 - (cell content 开始)
+      let sepEnd = sepStart;
+      while (sepEnd < fullLine.length) {
+        const c = fullLine[sepEnd];
+        if (c === "|" || c === "-" || c === ":" || /\s/.test(c)) {
+          sepEnd++;
+        } else {
+          break;
+        }
+      }
+      // sepPart: sepStart 到 sepEnd
+      let sepPart = fullLine.slice(sepStart, sepEnd);
+      // 修正 sepPart 边界: 头只 1 个 |, 尾只 1 个 |
+      while (sepPart.startsWith("||")) sepPart = "|" + sepPart.slice(2);
+      while (sepPart.endsWith("||")) sepPart = sepPart.slice(0, -2) + "|";
+      // headerPart: fullLine 开头到 sepStart, 找第一个 |
+      const firstPipe = fullLine.indexOf("|");
+      const headerPart = fullLine.slice(firstPipe, sepStart);
+      // dataPart: sepEnd 到 fullLine 末尾 (dataStart = sepEnd, 不要去头 |)
+      let dataPart = fullLine.slice(sepEnd);
+      // 去末尾的尾随 | (如果有)
+      while (dataPart.endsWith("|")) dataPart = dataPart.slice(0, -1);
+      // 切分 cells
+      // headerPart = "|项目|内容|" split = ["", "项目", "内容", ""]
+      //   我们要去首尾空 cell, 但保留中间空 cell (LLM "|x||y|" 偶有)
+      // 修法: 只 filter 开头 (i==0) 和 末尾 (i==last && empty) 的空
+      const headerArr = headerPart.split("|");
+      const headerCells = headerArr.filter((c, i, arr) => {
+        if (i === 0) return false;  // 开头空
+        if (i === arr.length - 1 && c === "") return false;  // 末尾空
+        return true;
+      });
+      const dataCells = dataPart.split("|");
+      if (headerCells.length < 1) return fullLine;
+      // 重组: prefix (fullLine 开头到第一个 |) + header 行 + sep + data 行 + suffix
+      const headPrefix = fullLine.slice(0, firstPipe);
+      const headerLine = "|" + headerCells.map((c) => c.trim()).join("|") + "|";
+      const sepLine = sepPart;
+      const dataLines: string[] = [];
+      const colCount = headerCells.length;
+      for (let i = 0; i < dataCells.length; i += colCount) {
+        const row = dataCells.slice(i, i + colCount);
+        dataLines.push("|" + row.map((c) => c.trim()).join("|") + "|");
+      }
+      return headPrefix + "\n" + headerLine + "\n" + sepLine + "\n" + dataLines.join("\n");
+    }
+  );
 
   return out;
 }
