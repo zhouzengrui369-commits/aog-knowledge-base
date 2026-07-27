@@ -42,10 +42,14 @@ logger = logging.getLogger("export_fts5")
 
 
 # ====== FTS5 schema ======
-# chunks_fts 用 unicode61 + tokenchars (CJK 单字 token, English/数字/dash 完整)
-# unicode61 把 CJK 当单字 token, "风挡" 命中; "风挡维修" 不命中 (4+ char 中文 phrase)
-# 应用层: 长中文 query 拆 "A AND B" OR 多个 token, 详见 aog_web/services/fts5_client.py
-# 决定不用 trigram: 55MB 太大, 下载慢. 改 unicode61 27MB
+# D-038 治本 (NJX 7/27 19:55 反馈"未找到赫尔辛基预案"):
+#   unicode61 不切 CJK 字符, 整 db 643 个 term 全 ASCII, 中文 query 召回 0
+#   trigram 是 sqlite 内置, 3-char substring 匹配, CJK 召回正常
+#   短 CJK (2 char, e.g. 西安/三亚) trigram 也拆不出 → 应用层 fts5_client._split_cjk
+#     拆 3-gram OR (1-2 char CJK) LIKE fallback
+# 索引大小影响: 30MB (unicode61) → ~50-100MB (trigram), SCF /tmp 100MB 限制边缘
+#   实测 100 wiki = 1.5MB, 估算 9106 chunks = ~130MB (worst case 4-5x text)
+#   决定先试 50MB 重建, 超 100MB 再考虑其他方案
 CHUNKS_FTS_SCHEMA = """
 CREATE VIRTUAL TABLE IF NOT EXISTS chunks_fts USING fts5(
     content,
@@ -57,7 +61,7 @@ CREATE VIRTUAL TABLE IF NOT EXISTS chunks_fts USING fts5(
     status UNINDEXED,
     doc_id UNINDEXED,
     chunk_index UNINDEXED,
-    tokenize = "unicode61 remove_diacritics 2 tokenchars '-_.#/'"
+    tokenize = "trigram"
 );
 """
 
@@ -70,7 +74,7 @@ CREATE VIRTUAL TABLE IF NOT EXISTS experiences_fts USING fts5(
     category UNINDEXED,
     status UNINDEXED,
     tags UNINDEXED,
-    tokenize = "unicode61 remove_diacritics 2 tokenchars '-_.#/'"
+    tokenize = "trigram"
 );
 """
 
@@ -86,7 +90,7 @@ CREATE VIRTUAL TABLE IF NOT EXISTS cities_fts USING fts5(
     region UNINDEXED,
     status UNINDEXED,
     tags UNINDEXED,
-    tokenize = "unicode61 remove_diacritics 2 tokenchars '-_.#/'"
+    tokenize = "trigram"
 );
 """
 
