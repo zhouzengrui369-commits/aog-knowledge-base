@@ -208,59 +208,22 @@ async def _sqlite_fallback_references(q: str, max_n: int = 3) -> List[Reference]
 
 @router.post("/chat", response_model=ChatResponse)
 async def chat(request: Request, body: ChatRequest) -> ChatResponse:
-    """RAG chat - 强制 references ≥ 1 (NSM-2)"""
+    """RAG chat - 强制 references ≥ 1 (NSM-2)
+
+    P0 治本 (NJX 7/27): chat() 非流式也调 _retrieve_context (5 段式 wiki > city > contacts > experience > core_plan)
+    之前 chat() 走 inline 3 段式代码, 没接 P1-1 wiki 段 — 5 段式只在 chat_stream 生效
+    """
     started = time.time()
 
     settings = request.app.state.settings
     llm = get_llm(settings=settings)
 
-    # 1. RAG 检索 (top-5) - 根据 settings.rag_backend 切换
-    rag_hits: List[Dict[str, Any]] = []
-    if settings.rag_backend == "fts5":
-        try:
-            fts5 = get_fts5_client()
-            # D-030 治本 (NJX 13:48 反馈: "西安" 召回汉中/陇南/固原 contacts, 没召 X-西安 city 主文档)
-            # 根因: BM25 文档长度归一化, 短 contacts chunk 含"西安"字 rank 反而高
-            # 修法: 3 段式 query
-            #   1) city 主文档 (source_type=city) top 5 — 治本, 优先召回完整城市预案
-            #   2) city_contacts top 3 — 具体电话号码
-            #   3) 全量 top 5 — 兜底 (experience + core_plan)
-            # + 显式 boost: city 主文档 score × 1.5 (治本 D-030)
-            city_hits = await fts5.query(
-                body.q, n_results=5, where={"source_type": "city"}
-            )
-            contacts_hits = await fts5.query(
-                body.q, n_results=3, where={"source_type": "city_contacts"}
-            )
-            normal_hits = await fts5.query(body.q, n_results=5)
-            # city 主文档 boost 1.5x (治本 NJX 13:48 反馈)
-            for h in city_hits:
-                h["score"] = min(1.0, float(h.get("score", 0.0)) * 1.5)
-            # 合并: city 优先 (主文档), 然后 contacts (业务), 然后 normal (不重复)
-            seen_ids: set = set()
-            rag_hits = []
-            for h in city_hits + contacts_hits + normal_hits:
-                if h.get("id") not in seen_ids:
-                    seen_ids.add(h.get("id"))
-                    rag_hits.append(h)
-                if len(rag_hits) >= 5:
-                    break
-            logger.info(
-                "fts5 hits: %d (city=%d contacts=%d normal=%d) for q=%r",
-                len(rag_hits), len(city_hits), len(contacts_hits), len(normal_hits), body.q[:60],
-            )
-        except Exception as e:
-            logger.warning("fts5 query failed, fallback to chroma: %s", e)
-            try:
-                chroma = _get_chroma_client_lazy()
-                rag_hits = await chroma.query(body.q, n_results=5)
-                logger.info("chroma fallback hits: %d", len(rag_hits))
-            except Exception as e2:
-                logger.error("chroma fallback also failed: %s", e2)
-    else:
-        chroma = _get_chroma_client_lazy()
-        rag_hits = await chroma.query(body.q, n_results=5)
-        logger.info("chroma hits: %d for q=%r", len(rag_hits), body.q[:60])
+    # 1. RAG 检索 (5 段式 query: P1-1 wiki + D-030 city + contacts + exp + core)
+    try:
+        rag_hits = await _retrieve_context(request, body)
+    except Exception as e:
+        logger.error("RAG retrieve failed: %s", e)
+        rag_hits = []
     # 用通用名 chroma_hits 保持下游不变
     chroma_hits = rag_hits
 
