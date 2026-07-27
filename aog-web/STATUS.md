@@ -102,7 +102,9 @@
 
 | 风险 | 等级 | 详情 | 缓解 |
 |---|---|---|---|
-| 公网 SCF 老版本 | 🔴 高 | `76cca2c` (Jul 17) 缺 V15-V28b endpoint | 拉最新 backend code + 重新部署 |
+| **🔴 P0 事故 (D-029)** | **高** | **PM 7/26 16:45 误写 stub docx 到 read-only AOG知识库/，build_index 吃进假数据** | **7/27 08:19 mavis-trash stub + UI PENDING_CITY_CODES 标"待补" + DECISIONS D-029 + rebuild index 225→223 城市** |
+| 公网 SCF InsufficientBalance | 🔴 高 | NJX 续费日 2026-07-24 23:59:59 已过，公网后端 + 前端全挂 | NJX 续费 → PM 重 deploy；本地 dev 优先走通 P0/P1 |
+| 公网 SCF 老版本 | 🟡 中 | `76cca2c` (Jul 17) 缺 V15-V28b endpoint | 拉最新 backend code + 重新部署 |
 | GitHub push SSL 偶发超时 | 🟡 中 | 之前 8333999 / 7d7dd6e / c79dab1 push 失败 1-3 次才成功 | sleep 30-90s 重试 |
 | Vite error overlay (dev) | 🟡 中 | Next.js 15 + React 19 + leaflet 已知问题，dev only | 重启 dev 15s 恢复；production OK |
 | CloudBase 静态托管 CDN 缓存 | 🟡 中 | tcb CLI 3.6.2 无 invalidate/purge/refresh | 等 10 分钟自然过期或文件名加 hash |
@@ -119,6 +121,13 @@
 - **标题**: V28b fix(map): supercluster radius 50→80 (治本 "5.0 还是有点挤")
 - **内容**: 1 行改 (`world-map-leaflet.tsx` supercluster radius 50→80)
 - **效果**: zoom 5 单点 label 156→90 (-42%)，数字 bubble 28→53 (+89%)，拥挤治本
+
+### 最近代码 (P0 修复 D-029, 进行中)
+- **Commit**: (pending, rebuild index 跑中)
+- **分支**: `integration/sprint-abc`
+- **标题**: fix(P0): 删 stub docx + UI S-上海浦东/虹桥 标"待补" (D-029 事故)
+- **内容**: mavis-trash S-上海浦东/虹桥.docx + city-detail-client.tsx PENDING_CITY_CODES set + DECISIONS.md D-029
+- **效果**: 225→223 城市, S-上海浦东/虹桥 入口"预案待补"红字提示, 等 NJX 补真 docx
 
 ### 最近文档 (本批基线 5 文档)
 - **Commit**: `da8562c` (HEAD)

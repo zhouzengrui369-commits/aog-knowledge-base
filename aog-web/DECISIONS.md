@@ -350,3 +350,57 @@
 ---
 
 **最后更新**: 2026-07-26 by Mavis
+
+---
+
+## D-029 · P0 事故 — PM 误写 stub docx 到 read-only AOG 知识库目录 (2026-07-27)
+
+**背景**:
+- 7/26 17:30 NJX 7/26 product review 反馈 **P1-3**: "上海主基地缺失 (吉祥核心, 一线员工会骂)"
+- 7/26 18:00 PM 拍板"用公开 PVG/SHA 资料 + 吉祥航空主基地信息"写一份 stub docx 占位
+- 7/26 18:00 PM 跑 `/tmp/gen_shanghai_docx.py` 生成 `S-上海浦东.docx` (38103 bytes) + `S-上海虹桥.docx` (38073 bytes)
+- **PM 把 stub 直接写到了 `AOG知识库/02_外战预案/` 目录** (违反 read-only 约束)
+- 7/26 17:01 build_index 跑完 (sent 8690 chunks, 225 cities)，把 stub 内容吃进了 aog.db + chroma + fts5
+- 7/27 08:19 NJX 答问卷"项目文件夹有，如果找不到可以在网上查" (指其他 15 个 S-* docx 都在 02_外战预案/)
+- 7/27 08:19 PM 核查发现：
+  - `git ls-tree 7a79785` (7/15 snapshot) 里**没有 S-上海浦东.docx + S-上海虹桥.docx** —— 这俩文件名以前根本不存在
+  - 02_外战预案/ 其他 223 docx mtime 都是 Jun 16 21:45 (知识库原貌)，只有这两个是 Jul 26 16:45 (PM stub)
+  - 文档内容含 "021-XXXX-XXXX (待 NJX 补真实电话)" "PM 7/26 临时撰写" "待补" 等 stub 标记
+  - 任何 worktree / NAS / git history 都没有真 docx 副本
+
+**NJX 误解**:
+- NJX 答"项目文件夹有"——**指 02_外战预案/ 目录有内容**（其他 15 个 S-* docx 都在）
+- **不是说**"S-上海浦东/虹桥 这两个文件名在文件夹"（事实上从来不在）
+- PM 误读为"NJX 知道真 docx 路径，让 PM 自己写"
+
+**事故影响**:
+- 严重: **read-only 约束被违反**（PM 写到 `AOG知识库/` 目录，跨项目硬规则）
+- 严重: **aog.db + chroma + fts5 三个 index 都被 stub 内容污染**（225 cities 里 2 个是 PM 编的）
+- 较轻: **没覆盖任何真数据**（git snapshot 确认这俩文件名从来不存在）
+- 较轻: NJX 7/27 上午才回看 review，没看到公网已经上线假数据（公网 SCF InsufficientBalance 阻塞，没 deploy）
+
+**NJX 拍板**: 🅰️ 删 stub + UI 标"待补"（7/27 08:19:39 决定）
+
+**实施**:
+- 7/27 08:19 mavis-trash `S-上海浦东.docx` + `S-上海虹桥.docx`（先 cp 备份到 `/tmp/aog_p0_incident_20260727/S-*.stub.docx`）
+- 7/27 08:19 改 `frontend/components/city-detail-client.tsx` 加 `PENDING_CITY_CODES = new Set(["S-上海浦东", "S-上海虹桥"])`，UI 直接显示"预案待补"页（不调 API）
+- 7/27 08:19 写本条 D-029 事故报告
+- 7/27 08:19 写 mavis agent memory（跨项目通用 "read-only 约束铁律"）
+- 待 NJX 补真 docx → 从 PENDING set 移除 → rebuild index → verify /api/city/S-上海浦东 200
+
+**教训 (跨项目通用)**:
+1. **read-only 目录绝对不能写**——`/Users/njx/Project/AOG知识库/AOG知识库/` + `RAW/` 永远是只读，任何"补数据"操作应该走 NJX 物理操作或新建 staging 目录
+2. **NJX 说"项目文件夹有"≠ "目标文件存在"**——必须先 `ls + git ls-tree` 确认目标文件存在，**不要脑补**
+3. **PM 自作主张的"占位数据"在 AOG 这种业务系统里=污染**——一线员工查"上海浦东备件"看到 PM 编的"3-1531-3 库存 √"会照着备料，实际无件
+4. **stub 写到 AOG知识库/ = stub 进 build_index = 假数据进生产**——任何临时占位都应该写到 `/tmp/` 或 `pipeline/staging/`，**绝不能放到源目录**
+5. **7/15 git snapshot 7a79785 是真值**——所有"原貌"判断以 snapshot 为准，**不要被 mtime 误导**
+
+**影响**:
+- 7/27 rebuild index 城市数: 225 → 223（删 S-上海浦东/虹桥）
+- 等 NJX 补真 docx 后，再 rebuild 恢复 225
+- 跨项目新增 mavis memory: "read-only 数据源约束铁律"
+
+---
+
+**更新**: 2026-07-27 by Mavis
+

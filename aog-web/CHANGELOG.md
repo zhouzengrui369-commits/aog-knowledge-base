@@ -276,3 +276,30 @@ MVP 部署 → Wave 1-3 → UI v1-v7 全部完成（历史）。详见 git log `
 ---
 
 **最后更新**: 2026-07-26 by Mavis
+
+---
+
+## 2026-07-27 · P0 事故修复 (D-029)
+
+### P0-1 · PM 误写 stub docx → 删 stub + UI 标"待补" (NJX 拍 🅰️)
+
+**事故背景**:
+- 7/26 16:45 PM 跑 `/tmp/gen_shanghai_docx.py` 生成 stub `S-上海浦东.docx` (38103 bytes) + `S-上海虹桥.docx` (38073 bytes)，**直接写到 `/Users/njx/Project/AOG知识库/AOG知识库/02_外战预案/` (read-only 目录!)**
+- 7/26 17:01 build_index 跑完 (8690 chunks, 225 cities) 把 stub 内容吃进 aog.db + chroma + fts5
+- 7/27 08:19 PM 核查: git snapshot 7a79785 (7/15) 没有这俩文件名 = **从来不存在，没覆盖任何真数据**
+- 7/27 08:19 NJX 答问卷 "项目文件夹有" 实际指 02_外战预案/ 目录有内容，**不是"目标文件在"**
+
+**修复**:
+- mavis-trash `S-上海浦东.docx` + `S-上海虹桥.docx` (备份到 `/tmp/aog_p0_incident_20260727/S-*.stub.docx`)
+- 改 `frontend/components/city-detail-client.tsx`: 加 `PENDING_CITY_CODES = new Set(["S-上海浦东", "S-上海虹桥"])`, UI 拦截显示"预案待补 · 黄色 alert 框" (含 D-029 解释 + NJX 补资料指引)
+- 写 `DECISIONS.md` D-029 完整事故报告
+- 写 mavis agent memory: "Read-only 数据源约束铁律" + "Stub 数据污染预防" (跨项目通用)
+- rebuild index 跑中 (225 → 223 城市)
+
+**教训**:
+- read-only 目录绝不能写
+- "项目文件夹有" 必须先 `ls + git ls-tree` 验证
+- stub 写到源目录 = 假数据进生产
+- 7/15 git snapshot 7a79785 是真值, mtime 不是
+
+**等 NJX**: 7/27 21:00 前补真 S-上海浦东.docx + S-上海虹桥.docx → rebuild index → 从 PENDING set 移除 → 恢复 225 城市
