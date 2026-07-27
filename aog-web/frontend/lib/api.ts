@@ -173,6 +173,100 @@ export async function chat(req: ChatRequest): Promise<ChatResponse | null> {
   return null;
 }
 
+/** 流式 chat (SSE) — NJX 7/27 15:44 反馈 AI 答案要打字机效果
+ *
+ *  后端 /api/chat/stream emit 3 类 SSE event:
+ *    1. event: refs    data: {references, model}            ← 立刻返, 不等 LLM
+ *    2. event: token   data: {content_delta}                 ← LLM 每 yield 一段就 emit
+ *    3. event: done    data: {latency_ms}                    ← 结束
+ *    4. event: error   data: {error}                         ← 异常
+ *
+ *  回调:
+ *    onRefs({references, model})   ← 第一次 event=refs 触发 (可立刻显示引用)
+ *    onToken(delta)                ← 每个 event=token 触发 (前端逐字渲染)
+ *    onDone(latency_ms)            ← event=done 触发
+ *    onError(message)              ← event=error 或 fetch 失败触发
+ */
+export interface ChatStreamCallbacks {
+  onRefs?: (refs: { references: ChatResponse["references"]; model: string }) => void;
+  onToken?: (delta: string) => void;
+  onDone?: (latencyMs: number) => void;
+  onError?: (message: string) => void;
+}
+
+export async function chatStream(req: ChatRequest, cbs: ChatStreamCallbacks): Promise<void> {
+  const ac = new AbortController();
+  const timeout = setTimeout(() => ac.abort(), 90000);  // 90s 总超时
+  try {
+    const res = await fetch(`${BASE}/api/chat/stream`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(req),
+      signal: ac.signal,
+    });
+    if (!res.ok || !res.body) {
+      cbs.onError?.(`HTTP ${res.status}`);
+      return;
+    }
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      // 按 \n\n 切 SSE event
+      let idx: number;
+      while ((idx = buffer.indexOf("\n\n")) !== -1) {
+        const raw = buffer.slice(0, idx);
+        buffer = buffer.slice(idx + 2);
+        // 解析 event: ... \ndata: ...
+        let event = "message";
+        let dataStr = "";
+        for (const line of raw.split("\n")) {
+          if (line.startsWith("event:")) {
+            event = line.slice(6).trim();
+          } else if (line.startsWith("data:")) {
+            dataStr += line.slice(5).trim();
+          }
+        }
+        if (!dataStr) continue;
+        if (event === "refs") {
+          try {
+            const payload = JSON.parse(dataStr);
+            cbs.onRefs?.({
+              references: payload.references || [],
+              model: payload.model || "unknown",
+            });
+          } catch (e) {
+            console.warn("[chatStream] refs parse failed:", e);
+          }
+        } else if (event === "token") {
+          cbs.onToken?.(dataStr);
+        } else if (event === "done") {
+          try {
+            const payload = JSON.parse(dataStr);
+            cbs.onDone?.(payload.latency_ms || 0);
+          } catch {
+            cbs.onDone?.(0);
+          }
+        } else if (event === "error") {
+          try {
+            const payload = JSON.parse(dataStr);
+            cbs.onError?.(payload.error || "unknown error");
+          } catch {
+            cbs.onError?.(dataStr);
+          }
+        }
+      }
+    }
+  } catch (err) {
+    cbs.onError?.(err instanceof Error ? err.message : String(err));
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
 /** 同步状态 (CONTRACT §2.9) */
 export async function getSyncStatus(): Promise<SyncStatus | null> {
   return safeFetch<SyncStatus>(`/api/sync/status`);

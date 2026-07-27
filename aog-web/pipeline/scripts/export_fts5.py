@@ -307,6 +307,70 @@ def _insert_cities_from_sqlite(con: sqlite3.Connection, sqlite_path: Path) -> in
     return len(rows)
 
 
+def _insert_wiki_from_staging(con: sqlite3.Connection, wiki_dir: Path) -> int:
+    """P1-1 治本 (NJX 7/27 14:43 拍 🅰️ 双轨方案): 读 pipeline/data/wiki/*.md 写 chunks_fts
+
+    目的: 让 RAG chat 5 段式 query 召到 wiki 页面 (P1-1 优先)
+    输入: pipeline/data/wiki/MOC-{code}-{topic}.md (frontmatter + markdown 内容)
+    输出: 1 个 wiki page = 1 个 chunk (整页 1 chunk, 不再切)
+          source_type='wiki' 让 fts5_client 的 where filter 命中
+          doc_id='MOC-{code}-{topic}' 用于 href /wiki/{code}
+    """
+    if not wiki_dir.exists():
+        logger.warning("wiki_dir not found: %s, skip wiki_fts", wiki_dir)
+        return 0
+    md_files = sorted(wiki_dir.glob("MOC-*.md"))
+    if not md_files:
+        logger.info("no wiki files in %s, skip wiki_fts", wiki_dir)
+        return 0
+    logger.info("loading %d wiki pages from %s ...", len(md_files), wiki_dir)
+
+    import frontmatter  # type: ignore  # python-frontmatter 包
+    fts_rows: List[Tuple] = []
+    meta_rows: List[Tuple] = []
+    for md in md_files:
+        try:
+            post = frontmatter.load(str(md))
+        except Exception:
+            # 兼容: 整页当 body
+            content = md.read_text(encoding="utf-8", errors="ignore")
+            front_matter: Dict = {}
+        else:
+            content = post.content
+            front_matter = dict(post.metadata or {})
+
+        code = front_matter.get("code") or md.stem.split("-", 2)[1]  # MOC-X-西安-故障树 → X-西安
+        name = front_matter.get("name") or code.split("-", 1)[-1] if "-" in code else code
+        topic = front_matter.get("topic") or (md.stem.split("-", 2)[2] if md.stem.count("-") >= 2 else "故障树")
+        source_path = front_matter.get("source") or f"pipeline/data/wiki/{md.name}"
+        chunk_id = f"wiki:MOC-{code}-{topic}:0"
+        fts_rows.append((
+            content, name, source_path, f"MOC-{code}-{topic}", "wiki", "", "", f"MOC-{code}-{topic}", 0,
+        ))
+        meta_rows.append((
+            chunk_id, f"MOC-{code}-{topic}", "wiki", source_path, name, "", "", f"MOC-{code}-{topic}", 0,
+        ))
+
+    if not fts_rows:
+        return 0
+    BATCH = 200
+    cur = con.cursor()
+    for i in range(0, len(fts_rows), BATCH):
+        cur.executemany(
+            "INSERT INTO chunks_fts(content, title, source_path, source_id, source_type, region, status, doc_id, chunk_index) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            fts_rows[i : i + BATCH],
+        )
+        cur.executemany(
+            "INSERT OR REPLACE INTO chunks_meta(id, source_id, source_type, source_path, title, region, status, doc_id, chunk_index) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            meta_rows[i : i + BATCH],
+        )
+    con.commit()
+    logger.info("inserted %d wiki pages into chunks_fts (source_type=wiki)", len(fts_rows))
+    return len(fts_rows)
+
+
 def _insert_core_plans_from_sqlite(con: sqlite3.Connection, sqlite_path: Path) -> int:
     """core plans 不做 FTS5 全文 (它们通常直接 by id 拿), 只建 meta 表"""
     if not sqlite_path.exists():
@@ -408,10 +472,13 @@ def main():
     # 3. 写 chunks
     n_chunks = _insert_chunks(con, ids, docs, metas)
 
-    # 4. 写 experiences / cities / core_plans
+    # 4. 写 experiences / cities / core_plans / wiki (P1-1)
     n_exp = _insert_experiences_from_sqlite(con, args.sqlite)
     n_cities = _insert_cities_from_sqlite(con, args.sqlite)
     n_core = _insert_core_plans_from_sqlite(con, args.sqlite)
+    # P1-1 治本 (NJX 7/27 14:43 拍 🅰️): wiki staging → fts5
+    wiki_dir = Path(__file__).resolve().parent.parent / "data" / "wiki"
+    n_wiki = _insert_wiki_from_staging(con, wiki_dir)
 
     # 5. 导出 chunks_meta.json
     _export_chunks_meta_json(args.out.parent, ids, metas)
@@ -443,6 +510,7 @@ def main():
     logger.info("  exp:      %d", n_exp)
     logger.info("  cities:   %d", n_cities)
     logger.info("  core:     %d", n_core)
+    logger.info("  wiki:     %d (P1-1: NJX 14:43 拍 🅰️ 双轨)", n_wiki)
     logger.info("  elapsed:  %.1fs", elapsed)
 
 
