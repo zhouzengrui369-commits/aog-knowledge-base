@@ -175,3 +175,45 @@
 6. 读 DECISIONS.md (重大决策，避免重复讨论)
 7. 跑 `pnpm dev --port 3004` + 打开 http://localhost:3004/
 8. 读代码: `frontend/components/world-map-leaflet.tsx` (核心 UI)
+
+---
+
+## 12:18 实测验证 (NJX 让我读 4 handoff + 答 4 P0 验证问题, 反馈评审 root mvs_adf2f57e...)
+
+### 测试环境 (12:18 实测)
+
+| URL | 状态 |
+|---|---|
+| `http://localhost:3004/` | **200 OK** (PID 27598, Next.js 15 dev) |
+| `http://localhost:8001/api/health` | **200 OK** (PID 63272, uptime 11034s, `llm_mode=live, rag_backend=fts5`) |
+| `http://localhost:8001/api/cities` | **200, 223 城市** (真数据, P0 修复 225→223) |
+| 公网 `https://aog.njx.com/api/health` | **400 Bad Request** ⚠️ InsufficientBalance 阻塞 |
+
+### 4 P0 验证问题 (v2/v4 LAUNCH 都问, 12:18 答)
+
+- **Q1 (lib/api.ts:16 BASE 拼接)**: ✅ **PASS** — commit `8c90ba6` `.replace(/\/api\/?$/, "")` 双兼容公网 + 局本
+- **Q2 (RAG 维度 mismatch 1024 vs 384)**: ✅ **PASS** — 根因比预期更深 (chroma 0 docs + fts5 path 错), 改 fts5 + sentence-transformers (commit `b963d94` + v3 rebuild `9e305cb`)
+- **Q3 (MINIMAX_API_KEY hardcode)**: ⚠️ **本地 PASS / 公网 PENDING** — 本地 .env mode 600, 公网 .env.cloudbase.example 用占位符, NJX 物理填
+- **Q4 (公网 SCF tcb fn deploy)**: ❌ **BLOCKED** — InsufficientBalance 余额耗尽, NJX 续费 + 物理 OAuth
+
+### 5 FOCUSED_RETEST 整改状态 (v3 handoff)
+
+- **P0-1 上海主基地**: 🟡 D-029 PENDING UI / 等 NJX 真 docx (UI "待补"页 + D-029 解释已上, git snapshot 7a79785 确认这俩文件名从来不存在)
+- **P0-2 公网 SCF 部署**: ❌ BLOCKED 余额
+- **P0-3 联系人权限分类**: ⏳ 未做 (半天)
+- **P1-1 RAG 召回 city.contacts**: ⏳ 未做 (2h, 依赖 P0-3 字段设计)
+- **P1-2 SyncService ollama**: ✅ PASS (RAG 切 fts5 隐含修, 7/27 12:18 backend log `sync poll: no changes`)
+
+### Playwright 5 张截图 (12:10 实拍, P0 修复完整 verify)
+
+- `/tmp/aog_p0_rebuild_20260727/01_home_default_zoom5.png` (273KB) — 223 城市 / 18 实战 / 8686 知识片段
+- `/tmp/aog_p0_rebuild_20260727/02_city_normal_beijing_daxing.png` (124KB) — B-北京大兴 8 parts + 5 contacts
+- `/tmp/aog_p0_rebuild_20260727/03_city_pending_shanghai_pudong.png` (94KB) — S-上海浦东 "预案待补" 黄字框 + D-029
+- `/tmp/aog_p0_rebuild_20260727/04_city_pending_shanghai_hongqiao.png` (94KB) — S-上海虹桥 "预案待补" 黄字框 + D-029
+- `/tmp/aog_p0_rebuild_20260727/05_chat_aog_query.png` (273KB) — chat 入口
+
+### Reply to 评审 root
+
+- scratchpad: `HANDOFF-REPLY-2026-07-27-1217.md` (7466 bytes)
+- 评审 root 收到后跑 FOCUSED_RETEST 5 项 (不重跑 8 旅程)
+- 期望 3.85 → 4.5+/5 升级 EXPERIENCE_READY (P0-1+3+P1-1+2 改完)
