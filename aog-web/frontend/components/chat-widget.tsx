@@ -25,28 +25,49 @@ const SUGGESTIONS = [
 /** 简单 markdown → HTML 转换（粗体 + 换行） */
 function formatAnswer(s: string): React.ReactNode {
   if (!s) return null;
-  const lines = s.split("\n");
-  return lines.map((line, i) => {
-    const parts: React.ReactNode[] = [];
-    const re = /\*\*(.+?)\*\*/g;
-    let last = 0;
-    let m: RegExpExecArray | null;
-    while ((m = re.exec(line)) !== null) {
-      if (m.index > last) parts.push(line.slice(last, m.index));
-      parts.push(
-        <strong key={`b-${i}-${m.index}`} className="font-semibold text-ink-900">
-          {m[1]}
-        </strong>
-      );
-      last = m.index + m[0].length;
-    }
-    if (last < line.length) parts.push(line.slice(last));
-    return (
-      <span key={i} className="block">
-        {parts}
-      </span>
-    );
-  });
+  // P0 治本 (NJX 14:43 反馈: AI 助手回答的思考过程和正文无法分辨清楚)
+  //   解析 <think>...</think> 段: 抽出 + 包到 <details> 折叠块, 默认折叠
+  //   正文 (think 之后) 走原有 bold + newline 渲染
+  const thinkMatch = s.match(/<think>([\s\S]*?)<\/think>/);
+  const thinkBlock = thinkMatch ? (
+    <details key="think" className="mb-2 rounded-md border border-ink-100 bg-ink-50/60 px-2.5 py-1.5 text-[11px] text-ink-500 open:bg-ink-50">
+      <summary className="cursor-pointer select-none font-medium text-ink-600 hover:text-primary">
+        💭 AI 思考过程 (点击展开)
+      </summary>
+      <div className="mt-1 whitespace-pre-wrap leading-relaxed text-ink-500">
+        {thinkMatch[1].trim()}
+      </div>
+    </details>
+  ) : null;
+  const body = thinkMatch ? s.slice(thinkMatch[0].length).trim() : s;
+
+  const lines = body.split("\n");
+  return (
+    <>
+      {thinkBlock}
+      {lines.map((line, i) => {
+        const parts: React.ReactNode[] = [];
+        const re = /\*\*(.+?)\*\*/g;
+        let last = 0;
+        let m: RegExpExecArray | null;
+        while ((m = re.exec(line)) !== null) {
+          if (m.index > last) parts.push(line.slice(last, m.index));
+          parts.push(
+            <strong key={`b-${i}-${m.index}`} className="font-semibold text-ink-900">
+              {m[1]}
+            </strong>
+          );
+          last = m.index + m[0].length;
+        }
+        if (last < line.length) parts.push(line.slice(last));
+        return (
+          <span key={i} className="block">
+            {parts}
+          </span>
+        );
+      })}
+    </>
+  );
 }
 
 interface ChatWidgetHandle {
@@ -178,7 +199,8 @@ export const ChatWidget = React.forwardRef<ChatWidgetHandle>((_, ref) => {
           type="button"
           aria-label="打开 AI 助手"
           onClick={() => setOpen(true)}
-          className="fixed bottom-5 left-5 z-40 grid h-14 w-14 place-items-center rounded-full bg-primary text-white shadow-pop transition hover:scale-105 hover:bg-primary-700 sm:bottom-6 sm:left-6"
+          className="fixed bottom-5 left-5 z-[1000] grid h-14 w-14 place-items-center rounded-full bg-primary text-white shadow-pop transition hover:scale-105 hover:bg-primary-700 sm:bottom-6 sm:left-6"
+          style={{ zIndex: 1000 }}
         >
           <Sparkles className="h-6 w-6" />
           <span className="absolute -top-1 -right-1 grid h-5 w-5 place-items-center rounded-full bg-warning text-[10px] font-bold text-white ring-2 ring-white">
@@ -187,16 +209,17 @@ export const ChatWidget = React.forwardRef<ChatWidgetHandle>((_, ref) => {
         </button>
       )}
 
-      {/* 面板 — 移动全屏 / 桌面左下抽屉 (P0 治本 NJX 13:48 反馈) */}
+      {/* 面板 — 移动全屏 / 桌面左下抽屉 (P0 治本 NJX 13:48 + 14:43 反馈) */}
       {open && (
         <div
           role="dialog"
           aria-label="AOG AI 助手"
           className={cn(
-            "fixed z-50 flex flex-col bg-white shadow-pop",
+            "fixed z-[1000] flex flex-col bg-white shadow-pop",
             "inset-0", // mobile fullscreen
             "sm:inset-auto sm:bottom-6 sm:left-6 sm:h-[640px] sm:max-h-[80vh] sm:w-[420px] sm:rounded-2xl sm:border sm:border-ink-100"
           )}
+          style={{ zIndex: 1000 }}
         >
           {/* header */}
           <div className="flex items-center justify-between border-b border-ink-100 bg-gradient-to-r from-primary to-primary-700 px-4 py-3 sm:rounded-t-2xl">
