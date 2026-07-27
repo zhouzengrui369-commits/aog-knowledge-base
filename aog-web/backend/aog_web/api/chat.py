@@ -202,24 +202,35 @@ async def chat(request: Request, body: ChatRequest) -> ChatResponse:
     if settings.rag_backend == "fts5":
         try:
             fts5 = get_fts5_client()
-            # D-030 (P1-1 FOCUSED_RETEST): city_contacts 短 chunk 在 BM25 排序里被 core_plan 长文档压住
-            # 优化: 两段式 query — 先查 city_contacts (top 3) 优先召回具体电话, 再查全量 (top 5) 续
+            # D-030 治本 (NJX 13:48 反馈: "西安" 召回汉中/陇南/固原 contacts, 没召 X-西安 city 主文档)
+            # 根因: BM25 文档长度归一化, 短 contacts chunk 含"西安"字 rank 反而高
+            # 修法: 3 段式 query
+            #   1) city 主文档 (source_type=city) top 5 — 治本, 优先召回完整城市预案
+            #   2) city_contacts top 3 — 具体电话号码
+            #   3) 全量 top 5 — 兜底 (experience + core_plan)
+            # + 显式 boost: city 主文档 score × 1.5 (治本 D-030)
+            city_hits = await fts5.query(
+                body.q, n_results=5, where={"source_type": "city"}
+            )
             contacts_hits = await fts5.query(
                 body.q, n_results=3, where={"source_type": "city_contacts"}
             )
             normal_hits = await fts5.query(body.q, n_results=5)
-            # 合并: contacts 优先 (业务相关), 然后 normal (不重复)
+            # city 主文档 boost 1.5x (治本 NJX 13:48 反馈)
+            for h in city_hits:
+                h["score"] = min(1.0, float(h.get("score", 0.0)) * 1.5)
+            # 合并: city 优先 (主文档), 然后 contacts (业务), 然后 normal (不重复)
             seen_ids: set = set()
             rag_hits = []
-            for h in contacts_hits + normal_hits:
+            for h in city_hits + contacts_hits + normal_hits:
                 if h.get("id") not in seen_ids:
                     seen_ids.add(h.get("id"))
                     rag_hits.append(h)
                 if len(rag_hits) >= 5:
                     break
             logger.info(
-                "fts5 hits: %d (contacts=%d normal=%d) for q=%r",
-                len(rag_hits), len(contacts_hits), len(normal_hits), body.q[:60],
+                "fts5 hits: %d (city=%d contacts=%d normal=%d) for q=%r",
+                len(rag_hits), len(city_hits), len(contacts_hits), len(normal_hits), body.q[:60],
             )
         except Exception as e:
             logger.warning("fts5 query failed, fallback to chroma: %s", e)

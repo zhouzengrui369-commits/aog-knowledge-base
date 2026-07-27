@@ -172,13 +172,13 @@ export const ChatWidget = React.forwardRef<ChatWidgetHandle>((_, ref) => {
 
   return (
     <>
-      {/* 浮动按钮 — 关闭时显示 */}
+      {/* 浮动按钮 — 关闭时显示 (P0 治本 NJX 13:48 反馈: 弹右下挡地图, 改左下) */}
       {!open && (
         <button
           type="button"
           aria-label="打开 AI 助手"
           onClick={() => setOpen(true)}
-          className="fixed bottom-5 right-5 z-40 grid h-14 w-14 place-items-center rounded-full bg-primary text-white shadow-pop transition hover:scale-105 hover:bg-primary-700 sm:bottom-6 sm:right-6"
+          className="fixed bottom-5 left-5 z-40 grid h-14 w-14 place-items-center rounded-full bg-primary text-white shadow-pop transition hover:scale-105 hover:bg-primary-700 sm:bottom-6 sm:left-6"
         >
           <Sparkles className="h-6 w-6" />
           <span className="absolute -top-1 -right-1 grid h-5 w-5 place-items-center rounded-full bg-warning text-[10px] font-bold text-white ring-2 ring-white">
@@ -187,7 +187,7 @@ export const ChatWidget = React.forwardRef<ChatWidgetHandle>((_, ref) => {
         </button>
       )}
 
-      {/* 面板 — 移动全屏 / 桌面右下抽屉 */}
+      {/* 面板 — 移动全屏 / 桌面左下抽屉 (P0 治本 NJX 13:48 反馈) */}
       {open && (
         <div
           role="dialog"
@@ -195,7 +195,7 @@ export const ChatWidget = React.forwardRef<ChatWidgetHandle>((_, ref) => {
           className={cn(
             "fixed z-50 flex flex-col bg-white shadow-pop",
             "inset-0", // mobile fullscreen
-            "sm:inset-auto sm:bottom-6 sm:right-6 sm:h-[640px] sm:max-h-[80vh] sm:w-[420px] sm:rounded-2xl sm:border sm:border-ink-100"
+            "sm:inset-auto sm:bottom-6 sm:left-6 sm:h-[640px] sm:max-h-[80vh] sm:w-[420px] sm:rounded-2xl sm:border sm:border-ink-100"
           )}
         >
           {/* header */}
