@@ -9,7 +9,54 @@
 
 ## [Unreleased]
 
-### 🔄 V29 计划 (待 NJX 拍板)
+### 🟡 V29 · 双轨方案 MVP (进行中)
+
+**Commit**: (pending, NJX 拍 🅰️ 双轨方案)
+**分支**: `integration/sprint-abc`
+**作者**: Mavis (PM)
+
+#### 改动
+
+1. **新增** `pipeline/scripts/wiki_curator.py` (12KB)
+   - LLM 周期整理 docx → MOC wiki 页 (故障树/决策表/备件清单)
+   - NSM-2 红线: 每页末尾"## 引用"段指向源 docx
+   - 输出 staging `pipeline/data/wiki/MOC-{code}-{topic}.md` 不污染 read-only 源
+   - 支持 `--codes X-西安 B-北京大兴 S-三亚` + `--dry-run` + `--topic`
+2. **修复** `frontend/components/chat-widget.tsx`
+   - panel z-index 1000 → 1100 (NJX 15:04 反馈 leaflet attribution 1000 同级)
+   - panel 容器 style zIndex + backgroundColor #ffffff 强制 opaque
+   - messages 容器 `bg-ink-50/50` (50% 透明) → `bg-slate-50` + style backgroundColor (NJX 15:04 反馈 地图视觉穿透)
+   - formatAnswer 加 splitThink() 鲁棒解析 (think / thinking / reasoning / THINK 多种结束符 + indexOf 兜底)
+3. **修复** `backend/aog_web/llm/minimax.py`
+   - httpx.Timeout 30s → 120s (wiki max_tokens 12000 兼容, chat API 27s 边界足够)
+
+#### 测试输出 (3 城市 MVP)
+
+| 城市 | 耗时 | chars | 互援/风险 |
+|------|------|-------|----------|
+| B-北京大兴 | 36.6s | 2594 | 东航/国航/南航/海航 + 4 ⚠️ 风险 |
+| S-三亚 | 51.7s | 2309 | 海航/南航/东航/川航 + 4 ⚠️ 风险 + [[S-上海浦东]]/[[S-海口]] 交叉链接 |
+| X-西安 | 52.8s | 2535 | 东航/春秋/海航/深航/川航/长龙/华夏 + 4 ⚠️ 风险 + [[X-成都]]/[[S-上海浦东]] 交叉链接 |
+
+#### Playwright 7 截图 verify
+
+- `/tmp/aog_widget_fix_20260727/01_home_mobile.png` (431KB) — mobile 633x900 home 状态
+- `/tmp/aog_widget_fix_20260727/02_panel_open_empty.png` (116KB) — panel 打开, 透明覆盖
+- `/tmp/aog_widget_fix_20260727/03_ai_answer_with_think_collapsed.png` (363KB) — 大阪回答, think 默认折叠 ✅
+- `/tmp/aog_widget_fix_20260727/04_ai_answer_with_think_expanded.png` (401KB) — 思考展开看 think 段 ✅
+- `/tmp/aog_widget_fix_20260727/05_desktop_home.png` (630KB) — desktop 1440x900 home
+- `/tmp/aog_widget_fix_20260727/06_desktop_panel_open.png` (603KB) — desktop panel 抽屉
+- `/tmp/aog_widget_fix_20260727/07_desktop_ai_xian.png` (766KB) — 西安回答 + 5 引用 (D-030 治本)
+
+#### 影响
+
+- **架构**: 引入第二轨道 (LLM 离线整理), 不破坏 RAG 实时查询
+- **性能**: LLM 整理一次 ~40-80s/城市, 220 城市 full pass 预计 2-3h
+- **NSM-2**: wiki 末尾强制"## 引用"段保证溯源
+
+---
+
+### 🔄 V29 UI 计划 (待 NJX 拍板)
 
 - V29 UI polish（颜色统一 / hub vs 普通视觉差异 / 选中态 label 样式）
 - 视口外 city dot 性能优化

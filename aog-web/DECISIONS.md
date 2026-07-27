@@ -3,7 +3,78 @@
 > **目的**: 记录重大决策的背景、选项、最终选择、影响，避免以后重复讨论。
 > **格式**: 按时间倒序，每条决策独立编号。
 > **维护**: 战略决策时更新。
-> **最后更新**: 2026-07-26 by Mavis (PM)
+> **最后更新**: 2026-07-27 15:30 by Mavis (PM)
+
+---
+
+## D-033 · 🅰️ 双轨方案 (RAG + LLM wiki 整理) (V29)
+
+**日期**: 2026-07-27
+**决策者**: NJX 拍板 🅰️
+**背景**:
+- NJX 14:43 问"为啥用 RAG，不用 LLM wiki 整理知识库?"
+- 单一轨道问题: RAG 实时查询覆盖 "问具体问题" 场景, 但 "浏览/概览新城市" 体验差 (LLM 直接读 docx 表格效果不连续)
+- 单一轨道问题: LLM 整理 wiki 适合"概览"但查 "电话号/件号" 又回 RAG 强
+
+**选项**:
+- 🅰️ **双轨并行**: RAG 实时查询 (chat 端) + LLM 周期整理 docx → MOC wiki 页 (后台 curator) — 两个独立轨道, RAG 顺便索引 wiki 当二次召回
+- 🅱️ 只跑 RAG, 投资 0 天, 但 NJX 反馈"工程师熟悉新城市效率低"
+- 🅲️ 只跑 LLM wiki 整理, 不接 RAG 实时查询, 投资 1 天 — 牺牲实时查电话/件号场景
+
+**最终选择**: 🅰️ 双轨并行
+- 投资 2-3 天
+- RAG 实时查询 (D-030 治本已上)
+- LLM 周期整理 (wiki_curator.py MVP 已上, 3 城市已跑: B-北京大兴 2594 / S-三亚 2309 / X-西安 2535 chars)
+- P1-1 (待做): chat.py 加 wiki 段 (5 段式 query: wiki > city > contacts > experience > core_plan + wiki score boost)
+
+**NSM-2 约束**:
+- wiki 页必须末尾"## 引用"段指向源 docx 路径
+- LLM 输出不确定信息必须打 "⚠️ 需 NJX 核实" 标记
+- 写 staging `pipeline/data/wiki/` 不污染 read-only `AOG知识库/`
+
+**适用场景**:
+- 工程师查具体问题 (电话号码/备件型号) → RAG
+- 工程师熟悉新城市 (信息地图/关系图) → wiki
+- wiki 还能被 RAG 召回 = 二次 RAG 增强 (P1-1 待做)
+
+**影响**:
+- 架构新增第 2 轨道 (LLM 离线整理), 不破坏 RAG
+- wiki 220 城市 full pass 预计 2-3h (40-80s/城市)
+- 后续可挂 cron weekly 03:00 自动跑
+
+---
+
+## D-034 · chat widget panel 治本 (NJX 13:48 / 14:43 / 15:04 三连击)
+
+**日期**: 2026-07-27
+**决策者**: NJX 三连击拍板
+**背景**:
+- 13:48 反馈"AI 助手弹右下挡地图 (东部城市)" → fix: 弹左下不挡
+- 14:43 反馈"思考过程和正文无法分辨" → fix: 折叠成 <details>
+- 15:04 反馈"两个 fix 没生效 — 地图还是遮挡 + think 还是没折叠"
+- 根因 (PM 复盘):
+  1. panel 内部 `bg-ink-50/50` 50% 透明 + 后面 home 地图 z-1000 = 视觉穿透 (z-index 1100 也救不了)
+  2. think 折叠逻辑在源码是对的, 但 `formatAnswer` 解析正则不够鲁棒 (只 match `<think>` 大小写敏感, 实际 minimax M3 返回大小写混用 + 偶尔 `<thinking>`)
+  3. Next.js 15 dev HMR 没真把 chat-widget bundle 重编译 (.next 没真重 build)
+
+**修法**:
+1. panel 容器 z-index 1000 → 1100 + `style zIndex 1100, backgroundColor #ffffff` 强制不透明
+2. messages 容器 `bg-ink-50/50` → `bg-slate-50` + `style backgroundColor #f8fafc` 强制不透明
+3. formatAnswer 加 `splitThink()` 鲁棒解析 (兼容 think / thinking / reasoning / THINK 多种结束符 + indexOf 兜底)
+4. **清 .next 缓存 + restart dev server** (shutil.rmtree .next + kill 47241 + nohup pnpm dev)
+
+**验证**:
+- Playwright 7 截图 (mobile 633x900 + desktop 1440x900)
+- 4 张关键截图:
+  - `03_ai_answer_with_think_collapsed.png` — think 默认折叠 (内容 hide) ✅
+  - `04_ai_answer_with_think_expanded.png` — 点 summary 展开看 think 段 ✅
+  - `07_desktop_ai_xian.png` — desktop 抽屉不透明 + 西安 4 段回答 + 5 引用 ✅
+- 关键: panel 完全 opaque white 覆盖 home 地图, 地图不再视觉穿透
+
+**教训**:
+- 任何"z-index 改 1000 没用"反馈, 第一查内部子容器透明度 (50% 透明让后面穿透)
+- Next.js dev HMR 不靠谱, 改 .tsx 后必须清 .next + restart dev server
+- LLM 输出的 think 段结束符可能是大小写混用 + 多种 tag, 解析必须鲁棒
 
 ---
 

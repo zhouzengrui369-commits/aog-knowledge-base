@@ -22,24 +22,45 @@ const SUGGESTIONS = [
   "BMS9-3 玻璃纤维布哪里备？",
 ];
 
-/** 简单 markdown → HTML 转换（粗体 + 换行） */
+/** 鲁棒解析 <think>...</think> 段 (兼容大小写 + 多种结束符) */
+function splitThink(s: string): { think: string | null; body: string } {
+  if (!s) return { think: null, body: "" };
+  // 兼容: <think>...</think> / <thinking>...</thinking> / <reasoning>...</reasoning> / <THINK>...</THINK>
+  const re = /<(think|thinking|reasoning|THINK|Thinking)>([\s\S]*?)<\/\1>/;
+  const m = s.match(re);
+  if (m) {
+    return { think: m[2].trim(), body: s.slice(m[0].length).trim() };
+  }
+  // 兜底: 找 </think> 位置, 之前都当 think
+  const closeIdx = s.indexOf("</think>");
+  if (closeIdx > 0) {
+    // 找最近的开始标记
+    const openIdx = s.lastIndexOf("<think>", closeIdx);
+    if (openIdx >= 0) {
+      return { think: s.slice(openIdx + 7, closeIdx).trim(), body: s.slice(closeIdx + 8).trim() };
+    }
+  }
+  return { think: null, body: s };
+}
+
+/** 简单 markdown → HTML 转换（粗体 + 换行） + 思考过程折叠 */
 function formatAnswer(s: string): React.ReactNode {
   if (!s) return null;
   // P0 治本 (NJX 14:43 反馈: AI 助手回答的思考过程和正文无法分辨清楚)
-  //   解析 <think>...</think> 段: 抽出 + 包到 <details> 折叠块, 默认折叠
+  //   鲁棒解析 <think>...</think> 段: 抽出 + 包到 <details> 折叠块, 默认折叠
   //   正文 (think 之后) 走原有 bold + newline 渲染
-  const thinkMatch = s.match(/<think>([\s\S]*?)<\/think>/);
-  const thinkBlock = thinkMatch ? (
-    <details key="think" className="mb-2 rounded-md border border-ink-100 bg-ink-50/60 px-2.5 py-1.5 text-[11px] text-ink-500 open:bg-ink-50">
+  // 兼容大小写 + 多种结束符 (think / thinking / reasoning / THINK)
+  const { think, body } = splitThink(s);
+  const thinkBlock = think ? (
+    <details key="think" className="mb-2 rounded-md border border-ink-100 bg-ink-50 px-2.5 py-1.5 text-[11px] text-ink-500">
       <summary className="cursor-pointer select-none font-medium text-ink-600 hover:text-primary">
         💭 AI 思考过程 (点击展开)
       </summary>
       <div className="mt-1 whitespace-pre-wrap leading-relaxed text-ink-500">
-        {thinkMatch[1].trim()}
+        {think}
       </div>
     </details>
   ) : null;
-  const body = thinkMatch ? s.slice(thinkMatch[0].length).trim() : s;
 
   const lines = body.split("\n");
   return (
@@ -209,17 +230,19 @@ export const ChatWidget = React.forwardRef<ChatWidgetHandle>((_, ref) => {
         </button>
       )}
 
-      {/* 面板 — 移动全屏 / 桌面左下抽屉 (P0 治本 NJX 13:48 + 14:43 反馈) */}
+      {/* 面板 — 移动全屏 / 桌面左下抽屉 (P0 治本 NJX 13:48 + 14:43 反馈)
+          z-[1100] 强制覆盖 leaflet attribution (z-1000) + messages 容器 bg-slate-50 不透明
+          (NJX 15:04 反馈: panel 内部 50% 透明让 home 地图视觉穿透) */}
       {open && (
         <div
           role="dialog"
           aria-label="AOG AI 助手"
           className={cn(
-            "fixed z-[1000] flex flex-col bg-white shadow-pop",
+            "fixed z-[1100] flex flex-col bg-white shadow-pop",
             "inset-0", // mobile fullscreen
             "sm:inset-auto sm:bottom-6 sm:left-6 sm:h-[640px] sm:max-h-[80vh] sm:w-[420px] sm:rounded-2xl sm:border sm:border-ink-100"
           )}
-          style={{ zIndex: 1000 }}
+          style={{ zIndex: 1100, backgroundColor: "#ffffff" }}
         >
           {/* header */}
           <div className="flex items-center justify-between border-b border-ink-100 bg-gradient-to-r from-primary to-primary-700 px-4 py-3 sm:rounded-t-2xl">
@@ -242,10 +265,11 @@ export const ChatWidget = React.forwardRef<ChatWidgetHandle>((_, ref) => {
             </button>
           </div>
 
-          {/* messages */}
+          {/* messages — P0 治本 NJX 15:04 反馈: bg-ink-50/50 50% 透明让 home 地图视觉穿透 panel, 改不透明 bg-slate-50 + 显式 style */}
           <div
             ref={scrollRef}
-            className="flex-1 space-y-3 overflow-y-auto bg-ink-50/50 px-4 py-4 sm:h-[440px]"
+            className="flex-1 space-y-3 overflow-y-auto bg-slate-50 px-4 py-4 sm:h-[440px]"
+            style={{ backgroundColor: "#f8fafc" }}
           >
             {msgs.map((m) => (
               <MessageBubble key={m.id} msg={m} />

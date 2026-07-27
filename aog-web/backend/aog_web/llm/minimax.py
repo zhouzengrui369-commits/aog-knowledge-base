@@ -28,13 +28,15 @@ class MiniMaxM3Client:
 
     async def _get_client(self) -> httpx.AsyncClient:
         if self._client is None or self._client.is_closed:
+            # P0 治本 (NJX 7/27 wiki_curator): max_tokens=8000 (wiki 整理) 比 chat 默认 1024 多 8x
+            # 30s 边界刚好够 chat 但 wiki 超时, 改 120s 让 wiki curator 能跑完
             self._client = httpx.AsyncClient(
                 base_url=self.base_url,
                 headers={
                     "Authorization": f"Bearer {self.api_key}",
                     "Content-Type": "application/json",
                 },
-                timeout=httpx.Timeout(30.0, connect=10.0),
+                timeout=httpx.Timeout(120.0, connect=10.0),
             )
         return self._client
 

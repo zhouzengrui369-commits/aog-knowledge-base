@@ -8,10 +8,10 @@
 
 ## 🎯 当前阶段
 
-**Phase 1 · 地图治本冲刺 (Wave UI v25→v28b 完成)**
+**Phase 1.5 · 🅰️ 双轨方案 (RAG + LLM wiki 整理) 启动**
 
-- **里程碑**: 218 AOG 城市可视性 + 颜色分层 + 标签 + 数字聚合 全部治本完成
-- **下一里程碑**: 公网 SCF 重新部署（含 /api/airlines + /api/auth/login）+ 微信小程序备案
+- **里程碑**: RAG 实时查询 (D-030 治本) + LLM wiki 整理 (3 城市 MVP) 全部就位
+- **下一里程碑**: chat.py 加 wiki 段 (5 段式 query) + rebuild index + 公网 SCF 重新部署
 
 ---
 
@@ -29,7 +29,8 @@
 
 | 版本 | 日期 | 内容 |
 |---|---|---|
-| **V28b** | 2026-07-24 | supercluster radius 50→80 (治本 "5.0 还是有点挤") |
+| **V29** | 2026-07-27 | 🅰️ 双轨方案: RAG (D-030 治本) + LLM wiki 整理 (3 城市 MVP) + chat widget panel 治本 + 思考过程鲁棒折叠 |
+| V28b | 2026-07-24 | supercluster radius 50→80 (治本 "5.0 还是有点挤") |
 | **V28** | 2026-07-24 | supercluster 数字聚合 218 AOG (zoom 5-7 治本标签重叠) |
 | **V27b** | 2026-07-24 | city-label 灰→蓝 (218 label 全部蓝色) |
 | **V27** | 2026-07-24 | 详细视图 zoom≥5 全部 218 城市常驻 label |
@@ -60,7 +61,10 @@
 
 ## 🔄 正在进行 (In Progress)
 
-无。当前 V28b 治本完成，等 NJX 拍板下一步。
+- **V29 wiki 扩量**: 3 城市 MVP 跑通, NJX 评审质量后扩 220 城市
+- **V29 chat 加 wiki 段**: 5 段式 query (wiki > city > contacts > experience > core_plan) + wiki score boost
+- **V29 rebuild index 含 wiki**: export_fts5 改读 `pipeline/data/wiki/*.md` 当 source_type=wiki
+- **V29 backend LLM timeout**: 30s → 120s (wiki max_tokens 12000 兼容)
 
 ---
 
@@ -114,6 +118,20 @@
 ---
 
 ## 📦 最近一次重要修改
+
+### 最近代码 (V29)
+- **Commit**: (pending, 2 modified + 1 new)
+- **分支**: `integration/sprint-abc`
+- **标题**: V29 feat(wiki_curator): 🅰️ 双轨方案 MVP (3 城市) + chat widget panel 治本
+- **内容**:
+  - `pipeline/scripts/wiki_curator.py` (新, 12KB) — LLM 整理 docx → MOC wiki 页 + 交叉链接 + NSM-2 引用段
+  - `frontend/components/chat-widget.tsx` — panel z-index 1100 + messages bg-slate-50 不透明 + formatAnswer 鲁棒 think 解析 (think/thinking/reasoning/THINK 多格式)
+  - `backend/aog_web/llm/minimax.py` — httpx.Timeout 30s → 120s (wiki max_tokens 12000 兼容)
+- **效果**:
+  - 3 wiki 页生成 (B-北京大兴 2594 / S-三亚 2309 / X-西安 2535 chars) 含 ⚠️ 风险标注 + 互援 [[code]] 交叉链接
+  - chat panel 完全不透明覆盖 home 地图
+  - <think> 思考过程默认折叠为 💭 AI 思考过程 (点击展开)
+- **本地 verify**: 7 Playwright 截图 (`/tmp/aog_widget_fix_20260727/0{1..7}_*.png`)
 
 ### 最近代码 (V28b)
 - **Commit**: `f86ab42`
