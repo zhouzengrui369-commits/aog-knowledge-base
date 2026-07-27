@@ -2,7 +2,7 @@
 
 > **目的**: 让任何新 AI 只看 README + STATUS + TODO + docs 目录就能 10 分钟内理解项目并继续开发。
 > **维护**: 每完成一个功能 / 阶段必更新本文件。
-> **最后更新**: 2026-07-26 by Mavis (PM)
+> **最后更新**: 2026-07-27 20:18 by Mavis (PM)
 
 ---
 
@@ -29,6 +29,8 @@
 
 | 版本 | 日期 | 内容 |
 |---|---|---|
+| **V29c** | 2026-07-27 | D-038 trigram 治本 CJK 召回: 3 张 FTS5 表改 trigram tokenizer + 应用层 3-gram + 短 CJK LIKE fallback (NJX 19:55 反馈"未找到赫尔辛基预案"根因) |
+| **V29b** | 2026-07-27 | 流式 SSE + 自写 markdown 渲染 + P1-1 chat 5 段式 (wiki > city > contacts > experience > core_plan) |
 | **V29** | 2026-07-27 | 🅰️ 双轨方案: RAG (D-030 治本) + LLM wiki 整理 (3 城市 MVP) + chat widget panel 治本 + 思考过程鲁棒折叠 |
 | V28b | 2026-07-24 | supercluster radius 50→80 (治本 "5.0 还是有点挤") |
 | **V28** | 2026-07-24 | supercluster 数字聚合 218 AOG (zoom 5-7 治本标签重叠) |

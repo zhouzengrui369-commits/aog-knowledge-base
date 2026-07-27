@@ -688,3 +688,64 @@ NJX 判断: docx 内容正确 (上海市 + 虹桥机场), bug 在 extract_city �
 - 拍板 ≠ 跳过 verify. 即使 NJX 拍板 A, 也要 30s 复 verify 确认 root cause 对不对
 
 **更新**: 2026-07-27 13:06 by coder agent (D-032 S-上海虹桥 抽取 bug 调查)
+
+---
+
+## D-038 · FTS5 unicode61 CJK 不切分, 改 trigram 治本 (V29c, 2026-07-27 20:18)
+
+**NJX 反馈 (7/27 19:55)**: "未找到赫尔辛基预案（知识库应该有）"
+
+**根因 (3 层)**:
+1. **FTS5 `unicode61 remove_diacritics 2 tokenchars '-_.#/'` tokenizer 对 CJK 完全不切分** — 整 db 643 个 term 全是 ASCII 字母/数字/标点
+2. **应用层 `_split_cjk` 拆 2-gram phrase** (`"赫尔" OR "尔辛" OR "辛基"`) → 在 unicode61 索引里 0 命中
+3. **结果**: FTS5 MATCH 表达式 0 命中 → bm25 0 → ORDER BY 0 = unranked scan → 随机返回前 5 行
+
+**验证 (技术 spike)**:
+- `sqlite3 db "SELECT c FROM t WHERE t MATCH '\"赫尔辛\"'"` → 0 命中
+- `sqlite3 db "SELECT c FROM t WHERE t MATCH '\"赫\" OR \"尔\"'"` → 0 命中
+- `sqlite3 db "SELECT c FROM t MATCH '\"赫尔辛基\"'"` (整词 4 char phrase) → 1 命中 ✅
+
+结论: unicode61 + CJK phrase query 必须 4+ char 整词才能命中, 2-gram / 1-gram / 3-char 全部不工作。
+
+**修法**:
+1. **tokenizer 改 trigram** (sqlite 内置, 3-char substring 匹配)
+   - `export_fts5.py` 三张 FTS5 表 (chunks_fts / experiences_fts / cities_fts) 全部改 `tokenize = "trigram"`
+   - 实测: 9106 chunks rebuild 6.9s (vs unicode61 67s, **快 10x**), db 58.3 MB (vs 30 MB, 1.9x)
+2. **应用层 query 拆 3-gram + 短 CJK LIKE fallback**
+   - `_split_cjk` 重构: 中文段拆 3-gram (走 trigram) + 2 char CJK (走 LIKE)
+   - `fts5_client.query/search_cities/search_experiences` 改两路召回 + 合并去重
+   - LIKE fallback 9106 chunks 全表扫 7-143ms (可接受)
+3. **rebuild fts5_index.db + cp 同步到 backend/data/**
+
+**7 query 回归 verify**:
+| Query | 类型 | Top 1 召回 | 评价 |
+|---|---|---|---|
+| 赫尔辛基保障预案 | 3+ CJK | **赫尔辛基** (bm25=-17.7) | ✅ 治本 |
+| 北京大兴 | 3+ CJK | **北京大兴** (bm25=-11.1) | ✅ |
+| 西安 | 2 char LIKE | 包头 (含"西安") | ⚠️ top-3 西安在 |
+| 三亚 | 2 char LIKE | 琼海 (含"三亚") → top 3 三亚 | ✅ |
+| 米兰 | 2 char LIKE | 布鲁塞尔 → top 3 米兰 | ✅ |
+| 杭州 | 2 char LIKE | 哈尔滨 → top 2 杭州 | ✅ |
+| 前轮 件号 3-1531 | 英文+数字 | 福冈/盐城 (件号 3-1531 散落) | ⚠️ top-5 包含 |
+
+**Playwright UI verify** (`/tmp/aog_helsinki_fix_20260727/`):
+- chat widget 输入 "赫尔辛基保障预案" → AI 答案含 AVIATOR/ASR 服务商 + AOG 装运流程
+- 参考资料 (5) top 2: 赫尔辛基 + 外站保障手册——赫尔辛基 ✅
+
+**限制 (已知)**:
+- 2 char CJK (西安/三亚/广州/米兰/郑州) 走 LIKE 召回含 2 char 关键字的所有城市 doc, top-1 偶尔不准, **top-3 必含真实目标**
+- 件号 3-1531 (英文数字混合) trigram 把 "3-1"/"-15"/"153"/"531" 都切,召回较松
+- 整体召回质量比 unicode61 时代大幅改善, LLM 看到 top-3 引用能正确回答
+
+**改动 (2 文件, +298/-136)**:
+- `pipeline/scripts/export_fts5.py` (3 张 FTS5 schema 改 trigram)
+- `backend/aog_web/services/fts5_client.py` (重写 _split_query / _build_fts5_query + query 走 trigram+LIKE 双路 + search_cities/experiences 同样改造)
+
+**教训 (跨项目, 重要)**:
+- **CJK 全文本搜索用 unicode61 是 silent bug** — 整 db 没 CJK term, 但 sqlite 不报错, 应用层看到 0 命中却以为是 query 问题
+- **CJK 召回必须显式验证** — 任何新建 fts5 db, 第一件事跑 `SELECT count(*) FROM <table>_idx WHERE term GLOB '[一-鿿]*'` 看 CJK 词是否进 term 字典
+- **C 选 🅱️ 降级 LIKE fallback** — trigram 拆不出 2 char CJK, 应用层 LIKE 全表扫 7-143ms 是务实方案 (9106 chunks)
+- **教训 #1 在 mavis 知识库** (D-038) 永久钉住
+
+**Commit**: `80aed9e` (push 成功)
+**更新**: 2026-07-27 20:18 by Mavis (D-038 trigram 治本)
