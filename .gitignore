@@ -29,6 +29,9 @@ aog-web/functions/*/vendor/
 aog-web/functions/*/aog_web/
 aog-web/functions/*/MANIFEST.json
 aog-web/functions/*/__pycache__/
+# NJX 7/29 严令: staging 函数包 build artifact (aog-api-staging/) 整个目录不进 git
+# prepare-scf-staging.sh 在 CI 跑时生成, 不应污染 git status
+aog-web/functions/aog-api-staging/
 .env
 .env.local
 .env.production

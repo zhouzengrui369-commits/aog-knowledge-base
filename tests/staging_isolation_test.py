@@ -503,11 +503,11 @@ def test_15_deploy_staging_execute_calls_tcb_with_correct_args():
         ).stdout.strip()
         env["MERGE_SHA"] = git_head
         env["APP_COMMIT_SHA"] = git_head
-        # git status clean
+        # git status clean (含 untracked files, 跟 deploy-staging.sh 4.4 一致)
         status_clean = subprocess.run(
-            ["git", "diff", "--quiet", "HEAD"],
-            capture_output=True, cwd=str(REPO_ROOT),
-        ).returncode == 0
+            ["git", "status", "--porcelain"],
+            capture_output=True, text=True, cwd=str(REPO_ROOT),
+        ).stdout.strip() == ""
         if not status_clean:
             # 当前 tree 不 clean, 跳过此测试 (或 commit 后跑)
             pytest.skip(f"git working tree 不 clean, 跳过 fake tcb 真实执行测试 (NJX 拍板后续跑)")
