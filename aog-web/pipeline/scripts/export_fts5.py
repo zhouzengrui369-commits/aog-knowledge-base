@@ -123,6 +123,141 @@ CREATE INDEX IF NOT EXISTS idx_chunks_meta_source_type ON chunks_meta(source_typ
 CREATE INDEX IF NOT EXISTS idx_chunks_meta_region ON chunks_meta(region);
 """
 
+# ★ P0-3: build_manifest 表 (Owner 7/29 授权 — 索引身份必须可核验)
+# 单行 id=1, 记录 RAG 索引的:
+#   - tokenizer (trigram / unicode61)
+#   - build_commit (本次 build 用的 git commit SHA)
+#   - build_branch (分支名)
+#   - build_time (ISO8601)
+#   - source_manifest_hash (aog.db 内容的 sha256, 源数据变更 → 索引必须重建)
+#   - chunks_count / exp_count / cities_count / core_count / wiki_count
+#   - db_size_bytes (索引文件实际字节数)
+#   - fts5_schema_version (V30 = "v30-d038", 未来升级改 v31-dXXX)
+#
+# 启动时 (fts5_client.validate_manifest) 校验:
+#   - tokenizer 与当前代码期望 (D-044-B trigram) 一致
+#   - build_commit 存在 (空 = 索引没经过 export_fts5 跑过, fail-closed)
+#   - db_size_bytes > 0 (空索引 fail-closed)
+#   - schema_version 与客户端期望版本匹配
+# 校验失败 → 抛 RuntimeError, lifespan 不启动, SCF 容器 fail-closed
+BUILD_MANIFEST_SCHEMA = """
+CREATE TABLE IF NOT EXISTS build_manifest (
+    id INTEGER PRIMARY KEY CHECK (id = 1),
+    tokenizer TEXT NOT NULL,
+    build_commit TEXT NOT NULL,
+    build_branch TEXT,
+    build_time TEXT NOT NULL,
+    source_manifest_hash TEXT NOT NULL,
+    chunks_count INTEGER NOT NULL,
+    exp_count INTEGER NOT NULL,
+    cities_count INTEGER NOT NULL,
+    core_count INTEGER NOT NULL,
+    wiki_count INTEGER NOT NULL,
+    db_size_bytes INTEGER NOT NULL,
+    fts5_schema_version TEXT NOT NULL
+);
+"""
+
+EXPECTED_TOKENIZER = "trigram"  # D-038 治本, D-044-B 锁定
+EXPECTED_SCHEMA_VERSION = "v30-d038-d043"  # 升级时改这里 + 触发 rebuild
+
+
+def _get_git_commit() -> str:
+    """读当前 git commit SHA (短) — 失败返 'unknown'"""
+    import subprocess
+    try:
+        r = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            capture_output=True, text=True, timeout=5,
+            cwd=str(Path(__file__).resolve().parent.parent.parent),
+        )
+        return r.stdout.strip() or "unknown"
+    except Exception as e:
+        logger.warning("git rev-parse failed: %s", e)
+        return "unknown"
+
+
+def _get_git_branch() -> str:
+    """读当前 git branch — 失败返 'unknown'"""
+    import subprocess
+    try:
+        r = subprocess.run(
+            ["git", "rev-parse", "--abbrev-ref", "HEAD"],
+            capture_output=True, text=True, timeout=5,
+            cwd=str(Path(__file__).resolve().parent.parent.parent),
+        )
+        return r.stdout.strip() or "unknown"
+    except Exception as e:
+        logger.warning("git branch failed: %s", e)
+        return "unknown"
+
+
+def _hash_sqlite_manifest(sqlite_path: Path) -> str:
+    """算 aog.db 内容的 sha256 hash (sqlite3 BLOB 序列化) — 源变更检测
+
+    改 aog.db (增删城市/经验/核心预案) → hash 变 → 索引必须重建
+    """
+    import hashlib
+    if not sqlite_path.exists():
+        return "missing"
+    h = hashlib.sha256()
+    try:
+        with open(sqlite_path, "rb") as f:
+            while chunk := f.read(8192):
+                h.update(chunk)
+        return h.hexdigest()
+    except Exception as e:
+        logger.warning("hash aog.db failed: %s", e)
+        return "error"
+
+
+def _write_build_manifest(
+    con: sqlite3.Connection,
+    *,
+    tokenizer: str,
+    build_commit: str,
+    build_branch: str,
+    source_manifest_hash: str,
+    chunks_count: int,
+    exp_count: int,
+    cities_count: int,
+    core_count: int,
+    wiki_count: int,
+    db_size_bytes: int,
+    schema_version: str,
+) -> None:
+    """★ P0-3: 写 build_manifest 单行 (id=1)"""
+    from datetime import datetime, timezone
+    build_time = datetime.now(timezone.utc).isoformat()
+    con.execute(
+        """
+        INSERT OR REPLACE INTO build_manifest (
+            id, tokenizer, build_commit, build_branch, build_time,
+            source_manifest_hash, chunks_count, exp_count, cities_count,
+            core_count, wiki_count, db_size_bytes, fts5_schema_version
+        ) VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            1,
+            tokenizer,
+            build_commit,
+            build_branch,
+            build_time,
+            source_manifest_hash,
+            chunks_count,
+            exp_count,
+            cities_count,
+            core_count,
+            wiki_count,
+            db_size_bytes,
+            schema_version,
+        ),
+    )
+    logger.info(
+        "build_manifest written: tokenizer=%s commit=%s schema=%s db_size=%d",
+        tokenizer, build_commit[:8], schema_version, db_size_bytes,
+    )
+
 
 def _read_chroma(chroma_path: Path) -> Tuple[List[str], List[str], List[Dict], List[Dict]]:
     """读 chroma collection 全部 documents + metadatas + ids
@@ -177,6 +312,7 @@ def _create_fts5_db(out_path: Path) -> sqlite3.Connection:
         CITIES_FTS_SCHEMA,
         CORE_PLANS_TABLE_SCHEMA,
         CHUNKS_META_SCHEMA,
+        BUILD_MANIFEST_SCHEMA,  # P0-3: build 身份表
     ):
         con.executescript(schema)
     con.commit()
@@ -504,6 +640,28 @@ def main():
     con.execute("INSERT INTO cities_fts(cities_fts) VALUES('optimize')")
     con.commit()
     con.execute("VACUUM")
+
+    # 7.5 ★ P0-3: 写 build_manifest (单行 id=1, 索引身份)
+    #    启动时 fts5_client.validate_manifest 校验, 不一致 fail-closed
+    build_commit = _get_git_commit()
+    build_branch = _get_git_branch()
+    source_manifest_hash = _hash_sqlite_manifest(args.sqlite)
+    db_size_bytes = args.out.stat().st_size
+    _write_build_manifest(
+        con,
+        tokenizer=EXPECTED_TOKENIZER,
+        build_commit=build_commit,
+        build_branch=build_branch,
+        source_manifest_hash=source_manifest_hash,
+        chunks_count=n_chunks,
+        exp_count=n_exp,
+        cities_count=n_cities,
+        core_count=n_core,
+        wiki_count=n_wiki,
+        db_size_bytes=db_size_bytes,
+        schema_version=EXPECTED_SCHEMA_VERSION,
+    )
+    con.commit()
     con.close()
 
     elapsed = time.time() - started
@@ -515,6 +673,9 @@ def main():
     logger.info("  cities:   %d", n_cities)
     logger.info("  core:     %d", n_core)
     logger.info("  wiki:     %d (P1-1: NJX 14:43 拍 🅰️ 双轨)", n_wiki)
+    logger.info("  build:    %s @ %s", build_branch, build_commit[:8])
+    logger.info("  src_hash: %s", source_manifest_hash[:12])
+    logger.info("  schema:   %s", EXPECTED_SCHEMA_VERSION)
     logger.info("  elapsed:  %.1fs", elapsed)
 
 

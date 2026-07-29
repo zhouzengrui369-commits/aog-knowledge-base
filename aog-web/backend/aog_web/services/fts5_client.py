@@ -589,6 +589,97 @@ class FTS5Client:
             })
         return out
 
+    # ============================================================
+    # ★ P0-3: build_manifest 读写 + 校验 (Owner 7/29 授权)
+    # ============================================================
+
+    EXPECTED_TOKENIZER = "trigram"  # D-038 治本, D-044-B 锁定
+    EXPECTED_SCHEMA_VERSION_MIN = "v30-d038-d043"  # 启动要求 ≥ 此版本
+
+    async def get_manifest(self) -> Optional[Dict[str, Any]]:
+        """读 build_manifest 单行, 不存在返 None"""
+        try:
+            db = await self._get_db()
+            async with db.execute(
+                """
+                SELECT tokenizer, build_commit, build_branch, build_time,
+                       source_manifest_hash, chunks_count, exp_count,
+                       cities_count, core_count, wiki_count, db_size_bytes,
+                       fts5_schema_version
+                FROM build_manifest WHERE id = 1
+                """
+            ) as cur:
+                row = await cur.fetchone()
+                if not row:
+                    return None
+                return {
+                    "tokenizer": row[0],
+                    "build_commit": row[1],
+                    "build_branch": row[2],
+                    "build_time": row[3],
+                    "source_manifest_hash": row[4],
+                    "chunks_count": row[5],
+                    "exp_count": row[6],
+                    "cities_count": row[7],
+                    "core_count": row[8],
+                    "wiki_count": row[9],
+                    "db_size_bytes": row[10],
+                    "fts5_schema_version": row[11],
+                }
+        except Exception as e:
+            logger.warning("get_manifest failed: %s", e)
+            return None
+
+    async def validate_manifest_or_fail(self) -> Dict[str, Any]:
+        """★ P0-3: 启动时校验 build_manifest, 不一致 fail-closed (抛 RuntimeError)
+
+        校验项:
+        1. manifest 存在 (不存在 = 索引没经过 export_fts5, fail)
+        2. tokenizer == EXPECTED_TOKENIZER (trigram, D-038)
+        3. fts5_schema_version >= EXPECTED_SCHEMA_VERSION_MIN (版本匹配)
+        4. build_commit 非空 (空 = 占位, fail)
+        5. db_size_bytes > 0 (空索引, fail)
+
+        任何一项不通过 → 抛 RuntimeError → lifespan 不启动 → SCF 容器重启
+        """
+        m = await self.get_manifest()
+        if m is None:
+            raise RuntimeError(
+                f"P0-3 fail-closed: build_manifest 不存在 in {self.db_path}. "
+                "请跑 pipeline/scripts/export_fts5.py 重建索引."
+            )
+        errors = []
+        if m["tokenizer"] != self.EXPECTED_TOKENIZER:
+            errors.append(
+                f"tokenizer={m['tokenizer']!r} 期望 {self.EXPECTED_TOKENIZER!r}. "
+                "D-038 治本要求 trigram. 老 unicode61 索引必须 rebuild."
+            )
+        if m["fts5_schema_version"] < self.EXPECTED_SCHEMA_VERSION_MIN:
+            errors.append(
+                f"fts5_schema_version={m['fts5_schema_version']!r} "
+                f"< 期望 {self.EXPECTED_SCHEMA_VERSION_MIN!r}. "
+                "schema 升级未生效, 必须 rebuild."
+            )
+        if not m["build_commit"] or m["build_commit"] == "unknown":
+            errors.append(
+                f"build_commit={m['build_commit']!r} 不可用. "
+                "export_fts5 跑时 git rev-parse 失败或非 git 仓库."
+            )
+        if m["db_size_bytes"] <= 0:
+            errors.append(
+                f"db_size_bytes={m['db_size_bytes']} 索引为空. 必须 rebuild."
+            )
+        if errors:
+            msg = "P0-3 fail-closed: build_manifest 校验失败:\n  - " + "\n  - ".join(errors)
+            logger.error(msg)
+            raise RuntimeError(msg)
+        logger.info(
+            "P0-3 manifest 校验通过: tokenizer=%s commit=%s schema=%s db_size=%d chunks=%d",
+            m["tokenizer"], m["build_commit"][:8], m["fts5_schema_version"],
+            m["db_size_bytes"], m["chunks_count"],
+        )
+        return m
+
 
 _client: Optional[FTS5Client] = None
 

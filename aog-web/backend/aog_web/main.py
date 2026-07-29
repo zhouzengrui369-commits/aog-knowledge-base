@@ -91,10 +91,18 @@ async def lifespan(app: FastAPI):
         # FTS5 客户端
         try:
             fts5 = get_fts5_client()
+            # ★ P0-3: 启动时校验 build_manifest, 不一致 fail-closed
+            # 失败抛 RuntimeError, lifespan 不启动, SCF 容器重启
+            manifest = await fts5.validate_manifest_or_fail()
             n = await fts5.count()
-            logger.info("FTS5 chunks_fts: %d docs", n)
+            logger.info(
+                "FTS5 chunks_fts: %d docs (manifest: tokenizer=%s commit=%s schema=%s)",
+                n, manifest["tokenizer"], manifest["build_commit"][:8], manifest["fts5_schema_version"],
+            )
         except Exception as e:
-            logger.warning("FTS5 init issue (will continue): %s", e)
+            logger.error("FTS5 init failed (P0-3 fail-closed): %s", e)
+            raise  # ★ P0-3: 失败必须让容器 fail, 不能降级到 chroma
+    else:
     else:
         # Chroma 客户端 (本地 dev 默认)
         try:
