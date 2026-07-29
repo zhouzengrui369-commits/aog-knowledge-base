@@ -52,11 +52,23 @@ pipeline_test_result:
   test_parsers_extractors_chunker: 23/23_PASS
   total: 79/79_PASS
 
-# ===== 索引/数据库 SHA =====
-manifest_sha256: pending_post_rebuild  # 9106 chunks manifest, 见 fts5_sha256
-aog_db_sha256: pending_compute
-fts5_sha256: pending_compute
-function_package_sha256: pending_post_prepare_scf  # 等 prepare-scf.sh 跑
+# ===== 索引/数据库 SHA (7/29 16:10 实测) =====
+manifest_sha256: 83f8ee0aa05394fb4f06400d78d9fcaa3824f9019815e7f08e90b9feba045480
+aog_db_sha256: 259779a923fefecb9d4eaf57066dda1844ec1d2b42cfb9f7d3f850c641a01d8b
+fts5_sha256: 4eec8310effc9a1493ac5a9fab08e7a231a8ece29107df3e138dedafa929dc16
+function_package_sha256: 418c832b3cb5e13f591cb51a149e1aeefd883db35ccf21ea95d2f96c59c74d9d
+manifest_manifest:
+  build_commit: e976e00be2124a9f2a3744d6d0aa18bbe977f3b7
+  build_time: 2026-07-29T08:10:15
+  build_branch: p0/integration-main-convergence
+  schema_version: v30-d038-d043
+  tokenizer: trigram
+  chunks_count: 9106
+  db_size_bytes: 61140992
+  cities_count: 225
+  exp_count: 15
+  core_count: 10
+  wiki_count: 208
 
 # ===== P0 现状 =====
 current_p0:
