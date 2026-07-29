@@ -9,7 +9,36 @@ export type CityRegion =
   | "华北" | "华东" | "华南" | "华中" | "西南" | "西北" | "东北"
   | "国际-欧洲" | "国际-亚洲" | "国际-美洲" | "国际-中东" | "国际-非洲" | "国际-大洋洲";
 
-// D-030: 联系人权限级别 (FOCUSED_RETEST P0-3)
+// ★ P0-5: 数据可信度 6 状态 (D-044-D, Owner 7/29 授权)
+export type ReviewStatus =
+  | "VERIFIED"      // 已人工或交叉验证
+  | "UNVERIFIED"    // 来源存在但未审核
+  | "STALE"         // 来源过期 (>30 天)
+  | "MISSING"       // 来源缺失, UI 显示"暂无已核验数据"
+  | "FIXTURE"       // 测试 fixture, UI 显著标识
+  | "REDACTED";     // 已脱敏, 仅显示 role 不显示具体值
+
+// ★ P0-5: PII 等级 (D-044-D)
+export type PiiClassification = "none" | "internal" | "confidential" | "restricted";
+
+// ★ P0-5: 适用环境
+export type Environment = "dev" | "staging" | "production" | "all";
+
+// ★ P0-5: 数据可信度 9 字段 (D-044-D)
+export interface DataTrust {
+  source_document?: string | null;     // 源文件路径
+  source_location?: string | null;     // 源在仓库的位置
+  source_version?: string | null;      // 源版本
+  updated_at?: string | null;          // 最后更新
+  reviewed_at?: string | null;         // 最后审核
+  reviewed_by?: string | null;         // 审核人
+  review_status: ReviewStatus;         // 审核状态
+  confidence?: number | null;          // 置信度 0.0-1.0
+  environment: Environment;            // 适用环境
+  pii_classification: PiiClassification; // PII 等级
+}
+
+// D-030: 联系人权限级别 (FOCUSED_RETEST P0-3) + P0-6 沿用
 export type ContactPermission = "public" | "internal" | "restricted";
 
 export interface City {
@@ -28,13 +57,16 @@ export interface City {
     phone: string[];
     email?: string;
     role: string;
-    permission?: ContactPermission;  // D-030
+    permission?: ContactPermission;  // D-030 + P0-6
+    redacted?: boolean;              // P0-6 NEW
   }>;
   warehouse?: { location: string; main: string[] };
   logistics?: { rail: string; air: string; road: string };
   content_md?: string;
   source_path?: string;
   updated_at?: string;
+  // ★ P0-5: 数据可信度 9 字段 (D-044-D, Owner 7/29 授权)
+  trust?: DataTrust;
   // 排序 & 地图字段（前端静态 fallback，SCF API 暂未返回）
   view_count?: number;
   lat?: number;

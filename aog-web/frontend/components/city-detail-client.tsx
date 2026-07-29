@@ -252,6 +252,75 @@ export function CityDetailClient({ code }: { code: string }) {
         </div>
       )}
 
+      {/* ★ P0-5: 数据可信度组件 (Owner 7/29 授权, D-044-D)
+          - 显示 9 字段 + 状态
+          - MISSING 状态 → "暂无已核验数据" 显式提示 (上海浦东/虹桥 7/29 现状)
+          - VERIFIED/UNVERIFIED/STALE 显式状态标
+          - 置信度可视化
+          - PII 等级提示 */}
+      {city.trust && (
+        <div className="mt-4 border-y border-ink-100 bg-ink-50/60">
+          <div className="mx-auto max-w-7xl px-4 py-3 text-xs sm:px-6 lg:px-8">
+            <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
+              <span className="font-semibold text-ink-700">数据可信度</span>
+              {city.trust.review_status === "VERIFIED" && (
+                <span className="inline-flex items-center gap-1 rounded-full bg-green-100 px-2 py-0.5 text-[11px] font-medium text-green-800">
+                  ✅ VERIFIED
+                </span>
+              )}
+              {city.trust.review_status === "UNVERIFIED" && (
+                <span className="inline-flex items-center gap-1 rounded-full bg-ink-100 px-2 py-0.5 text-[11px] font-medium text-ink-700">
+                  ⏳ UNVERIFIED · 待审核
+                </span>
+              )}
+              {city.trust.review_status === "STALE" && (
+                <span className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-medium text-amber-800">
+                  ⏰ STALE · 数据过期
+                </span>
+              )}
+              {city.trust.review_status === "MISSING" && (
+                <span className="inline-flex items-center gap-1 rounded-full bg-red-100 px-2 py-0.5 text-[11px] font-medium text-red-800">
+                  ❌ MISSING · 暂无已核验数据
+                </span>
+              )}
+              {city.trust.review_status === "FIXTURE" && (
+                <span className="inline-flex items-center gap-1 rounded-full bg-purple-100 px-2 py-0.5 text-[11px] font-medium text-purple-800">
+                  🧪 FIXTURE · 测试数据
+                </span>
+              )}
+              {city.trust.review_status === "REDACTED" && (
+                <span className="inline-flex items-center gap-1 rounded-full bg-red-100 px-2 py-0.5 text-[11px] font-medium text-red-800">
+                  🔒 REDACTED · 已脱敏
+                </span>
+              )}
+              {city.trust.confidence !== null && city.trust.confidence !== undefined && (
+                <span className="text-ink-600">
+                  置信度 {(city.trust.confidence * 100).toFixed(0)}%
+                </span>
+              )}
+              {city.trust.pii_classification && city.trust.pii_classification !== "none" && (
+                <span className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-medium text-amber-800">
+                  ⚠️ PII: {city.trust.pii_classification}
+                </span>
+              )}
+              {city.trust.source_document && (
+                <span className="text-ink-500">
+                  来源: <code className="text-[11px]">{city.trust.source_document}</code>
+                </span>
+              )}
+              {city.trust.reviewed_by && city.trust.reviewed_at && (
+                <span className="text-ink-500">
+                  审核: {city.trust.reviewed_by} @ {fmtDate(city.trust.reviewed_at)}
+                </span>
+              )}
+              {city.trust.updated_at && (
+                <span className="text-ink-500">最后更新: {fmtDate(city.trust.updated_at)}</span>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* City hero card */}
       <header className="mx-auto max-w-7xl px-4 pt-6 sm:px-6 lg:px-8">
         <div className="rounded-xl border border-ink-100 bg-white p-6 sm:p-8">

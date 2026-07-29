@@ -134,6 +134,10 @@ function ContactCard({
 }) {
   const perm: ContactPermission = (c?.permission as ContactPermission) || "public";
   const isRestricted = perm === "restricted" && !isAuthed;
+  // ★ P0-6: 脱敏显示 (Owner 7/29 授权, D-044-E)
+  // backend _decode_city 已把 restricted/redacted contact 的 phone/email 替换为 "REDACTED"
+  // 前端再 check: 如果 contact 显式标 redacted=true, 显 REDACTED 标
+  const isRedacted = !!c?.redacted;
 
   return (
     <div
@@ -142,6 +146,7 @@ function ContactCard({
         perm === "internal" && "border-ink-100 opacity-70",
         perm === "restricted" && "border-amber-200",
         isRestricted && "bg-amber-50/50",
+        isRedacted && "border-red-200 bg-red-50/40",
       )}
     >
       <div className="mb-2 flex items-center justify-between">
@@ -169,6 +174,13 @@ function ContactCard({
               受限
             </span>
           )}
+          {/* ★ P0-6: 脱敏标志 (Owner 7/29 授权) */}
+          {isRedacted && (
+            <span className="inline-flex items-center gap-0.5 rounded-full bg-red-100 px-2 py-0.5 text-[10px] font-medium text-red-800">
+              <ShieldAlert size={10} />
+              已脱敏
+            </span>
+          )}
         </div>
       </div>
       {c.scope && <p className="mb-2 text-xs text-ink-500">{c.scope}</p>}
@@ -178,7 +190,8 @@ function ContactCard({
           {c.contact}
         </div>
       )}
-      {c.phone && !isRestricted && (
+      {/* ★ P0-6: 脱敏或受限 → 不显示 phone/email */}
+      {c.phone && !isRestricted && !isRedacted && (
         <div className="mb-1 text-xs text-ink-700">
           <span className="text-ink-500">电话：</span>
           <a href={`tel:${c.phone}`} className="text-primary hover:underline">
@@ -186,12 +199,18 @@ function ContactCard({
           </a>
         </div>
       )}
-      {c.email && !isRestricted && (
+      {c.email && !isRestricted && !isRedacted && (
         <div className="text-xs text-ink-700">
           <span className="text-ink-500">邮箱：</span>
           <a href={`mailto:${c.email}`} className="text-primary hover:underline">
             {c.email}
           </a>
+        </div>
+      )}
+      {/* ★ P0-6: 脱敏/受限 → 占位提示 */}
+      {(isRedacted || isRestricted) && (
+        <div className="mt-1 text-xs text-ink-400 italic">
+          联系方式已脱敏 / 需登录后查看
         </div>
       )}
       {isRestricted && (
