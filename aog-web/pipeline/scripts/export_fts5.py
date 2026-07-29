@@ -641,7 +641,10 @@ def main():
     con.commit()
     con.execute("VACUUM")
 
-    # 7.5 ★ P0-3: 写 build_manifest (单行 id=1, 索引身份)
+    # 7.5 ★ P0-3 + P0-7: 写 build_manifest (单行 id=1, 索引身份)
+    # chunks_count 必须是 chunks_fts 表的真实行数 (含 wiki/exp/cities source_type 行)
+    # 不只是 _insert_chunks 的 n_chunks (那是纯 chunks 写入数)
+    actual_chunks_total = con.execute("SELECT count(*) FROM chunks_fts").fetchone()[0]
     #    启动时 fts5_client.validate_manifest 校验, 不一致 fail-closed
     build_commit = _get_git_commit()
     build_branch = _get_git_branch()
@@ -653,7 +656,7 @@ def main():
         build_commit=build_commit,
         build_branch=build_branch,
         source_manifest_hash=source_manifest_hash,
-        chunks_count=n_chunks,
+        chunks_count=actual_chunks_total,  # ★ P0-7: 真实表行数, 不仅是 _insert_chunks 的 n
         exp_count=n_exp,
         cities_count=n_cities,
         core_count=n_core,

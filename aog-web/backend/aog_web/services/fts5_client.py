@@ -239,17 +239,17 @@ class FTS5Client:
             }
             specific_kws = [kw for kw in short_cjk if kw not in _GENERIC_AOG_WORDS_LIKE]
             # 构造 LIKE: 多个 short_cjk OR
-            like_clauses = " OR ".join(["cc.c0 LIKE ?"] * len(short_cjk))
-            # ORDER BY: 优先 source_id 含 specific_kw (是该城市 doc), 然后 content 含 specific_kw (提到该城市)
+            # 全部 CAST AS TEXT (D-043: c.doc_id UNINDEXED 是 INTEGER affinity, 直接 LIKE 报 datatype mismatch in aiosqlite)
+            like_clauses = " OR ".join(["CAST(cc.c0 AS TEXT) LIKE ?"] * len(short_cjk))
+            # ORDER BY: 优先 doc_id 含 specific_kw (是该城市 doc), 然后 content 含 specific_kw (提到该城市)
             #            最后 rowid 自然顺序
             if specific_kws:
-                # source_id 包含 city name (e.g. source_id 'N-南宁' 含 "南宁") → 排前
-                # 用 GROUP_CONCAT OR 多个 specific_kw
-                specific_id_clauses = " OR ".join(["c.source_id LIKE ?"] * len(specific_kws))
-                specific_content_clauses = " OR ".join(["cc.c0 LIKE ?"] * len(specific_kws))
+                specific_doc_id_clauses = " OR ".join(["CAST(c.doc_id AS TEXT) LIKE ?"] * len(specific_kws))
+                specific_content_clauses = " OR ".join(["CAST(cc.c0 AS TEXT) LIKE ?"] * len(specific_kws))
                 order_by_specificity = f"""
-                    ORDER BY (CASE WHEN ({specific_id_clauses}) THEN 0 ELSE 1 END) ASC,
-                             (CASE WHEN ({specific_content_clauses}) THEN 0 ELSE 1 END) ASC,
+                    ORDER BY (CASE WHEN ({specific_doc_id_clauses}) THEN 0
+                                    WHEN ({specific_content_clauses}) THEN 1
+                                    ELSE 2 END) ASC,
                              c.rowid ASC
                 """
             else:
@@ -281,26 +281,19 @@ class FTS5Client:
                 sql2 += " AND c.status = ?"
                 params2.append(status)
             sql2 += order_by_specificity + " LIMIT ?"
-            params2.append(n_results * 4)  # D-043: 4x 让 specificity 排前的能进
             if specific_kws:
-                # ORDER BY specificity 参数: source_id LIKE + content LIKE
+                # ORDER BY specificity 参数: doc_id LIKE + content LIKE (在 LIMIT 之前, 占位符顺序)
                 for kw in specific_kws:
-                    params2.append(f"%{kw}%")  # source_id
+                    params2.append(f"%{kw}%")  # doc_id
                 for kw in specific_kws:
                     params2.append(f"%{kw}%")  # content
+            params2.append(n_results * 4)  # D-043: 4x, 必须在 specific_kws 之后 (SQL 末尾)
             try:
                 db = await self._get_db()
                 async with db.execute(sql2, params2) as cur:
                     like_rows = await cur.fetchall()
             except Exception as e:
-                logger.warning("fts5 LIKE fallback failed: q=%r err=%s", q[:50], e)
-                like_rows = []
-            try:
-                db = await self._get_db()
-                async with db.execute(sql2, params2) as cur:
-                    like_rows = await cur.fetchall()
-            except Exception as e:
-                logger.warning("fts5 LIKE fallback failed: q=%r err=%s", q[:50], e)
+                logger.warning("fts5 LIKE fallback failed: q=%r err=%s sql=%r params=%r", q[:50], e, sql2, params2)
                 like_rows = []
 
         # 3) 合并去重 + specificity-aware 排序 (D-043 治本: Y-雅典 LIKE 命中排前)
@@ -358,12 +351,14 @@ class FTS5Client:
                 bm25_f = float(bm25) if bm25 not in (None, 0, 0.0) else 0.0
             except (TypeError, ValueError):
                 bm25_f = 0.0
-            # 排序优先级: kind (fts5 < like) > specificity (2/1/0) > bm25
-            # kind: 0=fts5 命中, 1=LIKE 命中
+            # 排序优先级: specificity (2/1/0) > kind (fts5 < like) > bm25
+            # D-043: 之前 kind > spec, 导致 fts5 命中的"通用 wiki" 顶掉 LIKE 命中的 city-specific chunk
+            #   现在 spec > kind, N-南宁 + Y-雅典 排前
             # specificity: 2=doc 是该城市, 1=提到该城市, 0=无关
+            # kind: 0=fts5 命中, 1=LIKE 命中
             # bm25: 越负越相关 (fts5 内部排)
             kind = 0 if in_fts else 1
-            return (kind, -spec, -bm25_f)
+            return (-spec, kind, -bm25_f)
 
         merged.sort(key=_sort_key)
 
