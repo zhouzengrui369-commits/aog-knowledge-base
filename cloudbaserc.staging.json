@@ -1,0 +1,23 @@
+{
+  "version": "1.0.0",
+  "envId": "njx-copilot-staging-XXXXXXXX",
+  "function": {
+    "name": "aog-api-staging",
+    "runtime": "Python3.11",
+    "memorySize": 256,
+    "timeout": 30,
+    "environmentVariables": {
+      "ENVIRONMENT": "staging",
+      "ALLOW_MOCK": "false",
+      "STRICT_LLM": "true",
+      "SYNC_ENABLED": "false"
+    }
+  },
+  "hosting": {
+    "domain": "aog-staging.njx.com"
+  },
+  "storage": {
+    "region": "ap-shanghai",
+    "bucket": "aog-staging-data-XXXXXXXX"
+  }
+}

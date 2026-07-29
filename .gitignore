@@ -27,6 +27,8 @@ aog-web/pipeline/.venv/
 aog-web/backend/.venv/
 aog-web/functions/*/vendor/
 aog-web/functions/*/aog_web/
+aog-web/functions/*/MANIFEST.json
+aog-web/functions/*/__pycache__/
 .env
 .env.local
 .env.production
