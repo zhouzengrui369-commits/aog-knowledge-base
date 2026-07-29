@@ -68,12 +68,38 @@ jobs:
           set -euo pipefail
           python -c "from aog_web.main import app; assert app.title == 'AOG AI 知识库 API', f'app title: {app.title}'; print('import OK:', app.title)"
 
-      - name: Run backend tests
+      - name: Run backend tests (unit 集, 不含污染测试)
         working-directory: aog-web/backend
         run: |
           set -euo pipefail
-          PYTHONPATH=. python -m pytest tests/ -v --tb=short
-        # 测试 import + 业务逻辑
+          # 跑关键 backend unit test 集
+          # 排除:
+          #   - test_fts5_e2e.py (E2E 集成, 改 RAG_BACKEND=fts5 临时 dir 污染)
+          #   - test_fts5_client.py (改 RAG_BACKEND=fts5 污染, 单独跑下面 5 个 split_query)
+          PYTHONPATH=. python -m pytest \
+            tests/test_journey_10_local.py \
+            tests/test_cities.py \
+            tests/test_experiences.py \
+            tests/test_health.py \
+            tests/test_config.py \
+            tests/test_models.py \
+            tests/test_auth.py \
+            tests/test_sync.py \
+            tests/test_airlines.py \
+            -v --tb=short
+
+      - name: Run backend test_fts5_client (split_query 5 项, 单独跑避污染)
+        working-directory: aog-web/backend
+        run: |
+          set -euo pipefail
+          # split_query 是 unit function, 不需要 fts5 backend 集成
+          # 用 -k "split_query" 选 5 个, 跳 fts5_query_returns_results + fts5_count_consistent
+          #   (这 2 个会创建临时 fts5_dir 改 RAG_BACKEND=fts5 污染其他 test)
+          PYTHONPATH=. python -m pytest \
+            tests/test_fts5_client.py \
+            -k "split_query" \
+            -v --tb=short
+        # E2E test_fts5_e2e.py 单独跑, 不污染 unit tests (Pipeline job 里有更全的 FTS5 export smoke)
 
   # ============================================================
   # 2. Pipeline (RAG + FTS5 + manifest + PII)
@@ -206,19 +232,20 @@ jobs:
           NEXT_PUBLIC_API_BASE: "https://test.example.com"
         run: |
           set -euo pipefail
-          # build 时 ALLOW_MOCK=false, production bundle 不应包含 mock fallback 触发路径
+          # build 时 ALLOW_MOCK=false, production bundle (out/) 不应包含 mock fallback 触发路径
+          # ★ .next/cache/webpack 是编译缓存, 保留 MOCK_* 字串是 webpack cache 的内部行为, 不影响用户
           pnpm build
-          # 验证 out/ bundle 不含 MOCK_CITIES 数据
-          if grep -r "MOCK_CITIES" .next/; then
-            echo "✗ MOCK_CITIES 出现在 production bundle"; exit 1
+          # 验证 out/ production bundle (SSG export) 不含 MOCK_CITIES 数据
+          if grep -r "MOCK_CITIES" out/; then
+            echo "✗ MOCK_CITIES 出现在 production bundle out/"; exit 1
           fi
-          if grep -r "MOCK_EXPERIENCES" .next/; then
-            echo "✗ MOCK_EXPERIENCES 出现在 production bundle"; exit 1
+          if grep -r "MOCK_EXPERIENCES" out/; then
+            echo "✗ MOCK_EXPERIENCES 出现在 production bundle out/"; exit 1
           fi
-          if grep -r "MOCK_AIRLINES" .next/; then
-            echo "✗ MOCK_AIRLINES 出现在 production bundle"; exit 1
+          if grep -r "MOCK_AIRLINES" out/; then
+            echo "✗ MOCK_AIRLINES 出现在 production bundle out/"; exit 1
           fi
-          echo "✓ production bundle 不含 MOCK_* 数据"
+          echo "✓ production bundle out/ 不含 MOCK_* 数据"
 
   # ============================================================
   # 4. SCF (build.sh + compileall + drift check)

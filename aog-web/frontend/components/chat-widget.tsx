@@ -623,7 +623,7 @@ function parseInlineTable(s: string): { header: string[]; rows: string[][]; rest
  *  修法: 检测 markdown 标记前自动插 \n, 让 renderMarkdown 正常解析
  *
  *  V29d 升级 (NJX 7/27 20:34 反馈"AI 文本输出依然不便于阅读"):
- *    1) heading 允许紧贴前字符 (无空白也拆): `([^\s\n])(#{1,3}\s+...)` 
+ *    1) heading 允许紧贴前字符 (无空白也拆): `([^\s\n])(#{1,3}\s+...)`
  *       v2c 旧规则要求前有空白, LLM 输出 `--###` 紧贴, 完全不触发
  *    2) hr `---` 整行规整 (用 anchor 排除前 -, 但仍然处理行中的 \n---\n)
  *    3) list `-`/`*` 加 context guard: 排除 `数字-数字` (3-1531) / 排除 `**bold**` 中间 `*`
