@@ -7,5 +7,7 @@ httpx>=0.27.0
 sqlalchemy[asyncio]>=2.0.30
 aiosqlite>=0.20.0
 markdown-it-py>=3.0.0
+# Sprint A · Auth (密码 + JWT 24h token)
+pyjwt>=2.8.0
 # cos-python-sdk-v5 故意不在 SCF requirements: 没 Linux wheel, SCF 启动会
 # try/except ImportError 跳过 (data 走环境变量预热, 不需要 cos sdk 在 SCF 里)

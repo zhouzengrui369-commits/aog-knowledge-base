@@ -42,10 +42,14 @@ logger = logging.getLogger("export_fts5")
 
 
 # ====== FTS5 schema ======
-# chunks_fts 用 unicode61 + tokenchars (CJK 单字 token, English/数字/dash 完整)
-# unicode61 把 CJK 当单字 token, "风挡" 命中; "风挡维修" 不命中 (4+ char 中文 phrase)
-# 应用层: 长中文 query 拆 "A AND B" OR 多个 token, 详见 aog_web/services/fts5_client.py
-# 决定不用 trigram: 55MB 太大, 下载慢. 改 unicode61 27MB
+# D-038 治本 (NJX 7/27 19:55 反馈"未找到赫尔辛基预案"):
+#   unicode61 不切 CJK 字符, 整 db 643 个 term 全 ASCII, 中文 query 召回 0
+#   trigram 是 sqlite 内置, 3-char substring 匹配, CJK 召回正常
+#   短 CJK (2 char, e.g. 西安/三亚) trigram 也拆不出 → 应用层 fts5_client._split_cjk
+#     拆 3-gram OR (1-2 char CJK) LIKE fallback
+# 索引大小影响: 30MB (unicode61) → ~50-100MB (trigram), SCF /tmp 100MB 限制边缘
+#   实测 100 wiki = 1.5MB, 估算 9106 chunks = ~130MB (worst case 4-5x text)
+#   决定先试 50MB 重建, 超 100MB 再考虑其他方案
 CHUNKS_FTS_SCHEMA = """
 CREATE VIRTUAL TABLE IF NOT EXISTS chunks_fts USING fts5(
     content,
@@ -57,7 +61,7 @@ CREATE VIRTUAL TABLE IF NOT EXISTS chunks_fts USING fts5(
     status UNINDEXED,
     doc_id UNINDEXED,
     chunk_index UNINDEXED,
-    tokenize = "unicode61 remove_diacritics 2 tokenchars '-_.#/'"
+    tokenize = "trigram"
 );
 """
 
@@ -70,7 +74,7 @@ CREATE VIRTUAL TABLE IF NOT EXISTS experiences_fts USING fts5(
     category UNINDEXED,
     status UNINDEXED,
     tags UNINDEXED,
-    tokenize = "unicode61 remove_diacritics 2 tokenchars '-_.#/'"
+    tokenize = "trigram"
 );
 """
 
@@ -86,7 +90,7 @@ CREATE VIRTUAL TABLE IF NOT EXISTS cities_fts USING fts5(
     region UNINDEXED,
     status UNINDEXED,
     tags UNINDEXED,
-    tokenize = "unicode61 remove_diacritics 2 tokenchars '-_.#/'"
+    tokenize = "trigram"
 );
 """
 
@@ -118,6 +122,141 @@ CREATE INDEX IF NOT EXISTS idx_chunks_meta_source_id ON chunks_meta(source_id);
 CREATE INDEX IF NOT EXISTS idx_chunks_meta_source_type ON chunks_meta(source_type);
 CREATE INDEX IF NOT EXISTS idx_chunks_meta_region ON chunks_meta(region);
 """
+
+# ★ P0-3: build_manifest 表 (Owner 7/29 授权 — 索引身份必须可核验)
+# 单行 id=1, 记录 RAG 索引的:
+#   - tokenizer (trigram / unicode61)
+#   - build_commit (本次 build 用的 git commit SHA)
+#   - build_branch (分支名)
+#   - build_time (ISO8601)
+#   - source_manifest_hash (aog.db 内容的 sha256, 源数据变更 → 索引必须重建)
+#   - chunks_count / exp_count / cities_count / core_count / wiki_count
+#   - db_size_bytes (索引文件实际字节数)
+#   - fts5_schema_version (V30 = "v30-d038", 未来升级改 v31-dXXX)
+#
+# 启动时 (fts5_client.validate_manifest) 校验:
+#   - tokenizer 与当前代码期望 (D-044-B trigram) 一致
+#   - build_commit 存在 (空 = 索引没经过 export_fts5 跑过, fail-closed)
+#   - db_size_bytes > 0 (空索引 fail-closed)
+#   - schema_version 与客户端期望版本匹配
+# 校验失败 → 抛 RuntimeError, lifespan 不启动, SCF 容器 fail-closed
+BUILD_MANIFEST_SCHEMA = """
+CREATE TABLE IF NOT EXISTS build_manifest (
+    id INTEGER PRIMARY KEY CHECK (id = 1),
+    tokenizer TEXT NOT NULL,
+    build_commit TEXT NOT NULL,
+    build_branch TEXT,
+    build_time TEXT NOT NULL,
+    source_manifest_hash TEXT NOT NULL,
+    chunks_count INTEGER NOT NULL,
+    exp_count INTEGER NOT NULL,
+    cities_count INTEGER NOT NULL,
+    core_count INTEGER NOT NULL,
+    wiki_count INTEGER NOT NULL,
+    db_size_bytes INTEGER NOT NULL,
+    fts5_schema_version TEXT NOT NULL
+);
+"""
+
+EXPECTED_TOKENIZER = "trigram"  # D-038 治本, D-044-B 锁定
+EXPECTED_SCHEMA_VERSION = "v30-d038-d043"  # 升级时改这里 + 触发 rebuild
+
+
+def _get_git_commit() -> str:
+    """读当前 git commit SHA (短) — 失败返 'unknown'"""
+    import subprocess
+    try:
+        r = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            capture_output=True, text=True, timeout=5,
+            cwd=str(Path(__file__).resolve().parent.parent.parent),
+        )
+        return r.stdout.strip() or "unknown"
+    except Exception as e:
+        logger.warning("git rev-parse failed: %s", e)
+        return "unknown"
+
+
+def _get_git_branch() -> str:
+    """读当前 git branch — 失败返 'unknown'"""
+    import subprocess
+    try:
+        r = subprocess.run(
+            ["git", "rev-parse", "--abbrev-ref", "HEAD"],
+            capture_output=True, text=True, timeout=5,
+            cwd=str(Path(__file__).resolve().parent.parent.parent),
+        )
+        return r.stdout.strip() or "unknown"
+    except Exception as e:
+        logger.warning("git branch failed: %s", e)
+        return "unknown"
+
+
+def _hash_sqlite_manifest(sqlite_path: Path) -> str:
+    """算 aog.db 内容的 sha256 hash (sqlite3 BLOB 序列化) — 源变更检测
+
+    改 aog.db (增删城市/经验/核心预案) → hash 变 → 索引必须重建
+    """
+    import hashlib
+    if not sqlite_path.exists():
+        return "missing"
+    h = hashlib.sha256()
+    try:
+        with open(sqlite_path, "rb") as f:
+            while chunk := f.read(8192):
+                h.update(chunk)
+        return h.hexdigest()
+    except Exception as e:
+        logger.warning("hash aog.db failed: %s", e)
+        return "error"
+
+
+def _write_build_manifest(
+    con: sqlite3.Connection,
+    *,
+    tokenizer: str,
+    build_commit: str,
+    build_branch: str,
+    source_manifest_hash: str,
+    chunks_count: int,
+    exp_count: int,
+    cities_count: int,
+    core_count: int,
+    wiki_count: int,
+    db_size_bytes: int,
+    schema_version: str,
+) -> None:
+    """★ P0-3: 写 build_manifest 单行 (id=1)"""
+    from datetime import datetime, timezone
+    build_time = datetime.now(timezone.utc).isoformat()
+    con.execute(
+        """
+        INSERT OR REPLACE INTO build_manifest (
+            id, tokenizer, build_commit, build_branch, build_time,
+            source_manifest_hash, chunks_count, exp_count, cities_count,
+            core_count, wiki_count, db_size_bytes, fts5_schema_version
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            1,
+            tokenizer,
+            build_commit,
+            build_branch,
+            build_time,
+            source_manifest_hash,
+            chunks_count,
+            exp_count,
+            cities_count,
+            core_count,
+            wiki_count,
+            db_size_bytes,
+            schema_version,
+        ),
+    )
+    logger.info(
+        "build_manifest written: tokenizer=%s commit=%s schema=%s db_size=%d",
+        tokenizer, build_commit[:8], schema_version, db_size_bytes,
+    )
 
 
 def _read_chroma(chroma_path: Path) -> Tuple[List[str], List[str], List[Dict], List[Dict]]:
@@ -173,6 +312,7 @@ def _create_fts5_db(out_path: Path) -> sqlite3.Connection:
         CITIES_FTS_SCHEMA,
         CORE_PLANS_TABLE_SCHEMA,
         CHUNKS_META_SCHEMA,
+        BUILD_MANIFEST_SCHEMA,  # P0-3: build 身份表
     ):
         con.executescript(schema)
     con.commit()
@@ -307,6 +447,70 @@ def _insert_cities_from_sqlite(con: sqlite3.Connection, sqlite_path: Path) -> in
     return len(rows)
 
 
+def _insert_wiki_from_staging(con: sqlite3.Connection, wiki_dir: Path) -> int:
+    """P1-1 治本 (NJX 7/27 14:43 拍 🅰️ 双轨方案): 读 pipeline/data/wiki/*.md 写 chunks_fts
+
+    目的: 让 RAG chat 5 段式 query 召到 wiki 页面 (P1-1 优先)
+    输入: pipeline/data/wiki/MOC-{code}-{topic}.md (frontmatter + markdown 内容)
+    输出: 1 个 wiki page = 1 个 chunk (整页 1 chunk, 不再切)
+          source_type='wiki' 让 fts5_client 的 where filter 命中
+          doc_id='MOC-{code}-{topic}' 用于 href /wiki/{code}
+    """
+    if not wiki_dir.exists():
+        logger.warning("wiki_dir not found: %s, skip wiki_fts", wiki_dir)
+        return 0
+    md_files = sorted(wiki_dir.glob("MOC-*.md"))
+    if not md_files:
+        logger.info("no wiki files in %s, skip wiki_fts", wiki_dir)
+        return 0
+    logger.info("loading %d wiki pages from %s ...", len(md_files), wiki_dir)
+
+    import frontmatter  # type: ignore  # python-frontmatter 包
+    fts_rows: List[Tuple] = []
+    meta_rows: List[Tuple] = []
+    for md in md_files:
+        try:
+            post = frontmatter.load(str(md))
+        except Exception:
+            # 兼容: 整页当 body
+            content = md.read_text(encoding="utf-8", errors="ignore")
+            front_matter: Dict = {}
+        else:
+            content = post.content
+            front_matter = dict(post.metadata or {})
+
+        code = front_matter.get("code") or md.stem.split("-", 2)[1]  # MOC-X-西安-故障树 → X-西安
+        name = front_matter.get("name") or code.split("-", 1)[-1] if "-" in code else code
+        topic = front_matter.get("topic") or (md.stem.split("-", 2)[2] if md.stem.count("-") >= 2 else "故障树")
+        source_path = front_matter.get("source") or f"pipeline/data/wiki/{md.name}"
+        chunk_id = f"wiki:MOC-{code}-{topic}:0"
+        fts_rows.append((
+            content, name, source_path, f"MOC-{code}-{topic}", "wiki", "", "", f"MOC-{code}-{topic}", 0,
+        ))
+        meta_rows.append((
+            chunk_id, f"MOC-{code}-{topic}", "wiki", source_path, name, "", "", f"MOC-{code}-{topic}", 0,
+        ))
+
+    if not fts_rows:
+        return 0
+    BATCH = 200
+    cur = con.cursor()
+    for i in range(0, len(fts_rows), BATCH):
+        cur.executemany(
+            "INSERT INTO chunks_fts(content, title, source_path, source_id, source_type, region, status, doc_id, chunk_index) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            fts_rows[i : i + BATCH],
+        )
+        cur.executemany(
+            "INSERT OR REPLACE INTO chunks_meta(id, source_id, source_type, source_path, title, region, status, doc_id, chunk_index) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            meta_rows[i : i + BATCH],
+        )
+    con.commit()
+    logger.info("inserted %d wiki pages into chunks_fts (source_type=wiki)", len(fts_rows))
+    return len(fts_rows)
+
+
 def _insert_core_plans_from_sqlite(con: sqlite3.Connection, sqlite_path: Path) -> int:
     """core plans 不做 FTS5 全文 (它们通常直接 by id 拿), 只建 meta 表"""
     if not sqlite_path.exists():
@@ -408,10 +612,13 @@ def main():
     # 3. 写 chunks
     n_chunks = _insert_chunks(con, ids, docs, metas)
 
-    # 4. 写 experiences / cities / core_plans
+    # 4. 写 experiences / cities / core_plans / wiki (P1-1)
     n_exp = _insert_experiences_from_sqlite(con, args.sqlite)
     n_cities = _insert_cities_from_sqlite(con, args.sqlite)
     n_core = _insert_core_plans_from_sqlite(con, args.sqlite)
+    # P1-1 治本 (NJX 7/27 14:43 拍 🅰️): wiki staging → fts5
+    wiki_dir = Path(__file__).resolve().parent.parent / "data" / "wiki"
+    n_wiki = _insert_wiki_from_staging(con, wiki_dir)
 
     # 5. 导出 chunks_meta.json
     _export_chunks_meta_json(args.out.parent, ids, metas)
@@ -433,6 +640,31 @@ def main():
     con.execute("INSERT INTO cities_fts(cities_fts) VALUES('optimize')")
     con.commit()
     con.execute("VACUUM")
+
+    # 7.5 ★ P0-3 + P0-7: 写 build_manifest (单行 id=1, 索引身份)
+    # chunks_count 必须是 chunks_fts 表的真实行数 (含 wiki/exp/cities source_type 行)
+    # 不只是 _insert_chunks 的 n_chunks (那是纯 chunks 写入数)
+    actual_chunks_total = con.execute("SELECT count(*) FROM chunks_fts").fetchone()[0]
+    #    启动时 fts5_client.validate_manifest 校验, 不一致 fail-closed
+    build_commit = _get_git_commit()
+    build_branch = _get_git_branch()
+    source_manifest_hash = _hash_sqlite_manifest(args.sqlite)
+    db_size_bytes = args.out.stat().st_size
+    _write_build_manifest(
+        con,
+        tokenizer=EXPECTED_TOKENIZER,
+        build_commit=build_commit,
+        build_branch=build_branch,
+        source_manifest_hash=source_manifest_hash,
+        chunks_count=actual_chunks_total,  # ★ P0-7: 真实表行数, 不仅是 _insert_chunks 的 n
+        exp_count=n_exp,
+        cities_count=n_cities,
+        core_count=n_core,
+        wiki_count=n_wiki,
+        db_size_bytes=db_size_bytes,
+        schema_version=EXPECTED_SCHEMA_VERSION,
+    )
+    con.commit()
     con.close()
 
     elapsed = time.time() - started
@@ -443,6 +675,10 @@ def main():
     logger.info("  exp:      %d", n_exp)
     logger.info("  cities:   %d", n_cities)
     logger.info("  core:     %d", n_core)
+    logger.info("  wiki:     %d (P1-1: NJX 14:43 拍 🅰️ 双轨)", n_wiki)
+    logger.info("  build:    %s @ %s", build_branch, build_commit[:8])
+    logger.info("  src_hash: %s", source_manifest_hash[:12])
+    logger.info("  schema:   %s", EXPECTED_SCHEMA_VERSION)
     logger.info("  elapsed:  %.1fs", elapsed)
 
 

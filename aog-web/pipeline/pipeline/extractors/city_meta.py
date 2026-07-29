@@ -119,6 +119,35 @@ def region_from_name(country_or_province: str) -> str:
     return "国际-亚洲"
 
 
+# D-030 国内主要城市 → 大区 兜底 (D-030.c 配合 _extract_region 找 cell 失败时回退)
+# 当 docx 模板缺 "国家/地区" cell 时, 之前 region fallback "国际-亚洲" 错; 加这个兜底
+CITY_REGION_FALLBACK: dict[str, str] = {
+    "上海": "华东", "上海浦东": "华东", "上海虹桥": "华东",
+    "北京": "华北", "北京大兴": "华北", "北京首都": "华北",
+    "广州": "华南", "深圳": "华南", "珠海": "华南", "厦门": "华南",
+    "杭州": "华东", "南京": "华东", "苏州": "华东", "宁波": "华东",
+    "成都": "西南", "重庆": "西南", "昆明": "西南", "贵阳": "西南",
+    "西安": "西北", "兰州": "西北", "乌鲁木齐": "西北", "银川": "西北",
+    "武汉": "华中", "长沙": "华中", "郑州": "华中",
+    "沈阳": "东北", "大连": "东北", "哈尔滨": "东北", "长春": "东北",
+    "青岛": "华东", "济南": "华东", "烟台": "华东", "天津": "华北",
+}
+
+
+def region_from_city_name(city_name: str) -> str | None:
+    """D-030: 用 city 名称兜底大区。docx 抽不到 region 时调用。
+    返回 None 表示 city 不在国内主要城市, 走原 fallback '国际-亚洲'。"""
+    if not city_name:
+        return None
+    n = city_name.strip()
+    if n in CITY_REGION_FALLBACK:
+        return CITY_REGION_FALLBACK[n]
+    for k, v in CITY_REGION_FALLBACK.items():
+        if k in n or n in k:
+            return v
+    return None
+
+
 def parse_code_and_status(filename: str) -> tuple[str, str, str, str]:
     """从文件名解析 (code, name, status, raw_label)。
 
@@ -186,6 +215,18 @@ class City:
     source_path: str
     updated_at: str
 
+    # ★ P0-5: 数据可信度 10 字段 (D-044-D, Owner 7/29 授权)
+    # 旧 docx 无 YAML frontmatter 时由 extract_city() 保守填默认
+    source_document: str | None = None      # 源文件相对路径
+    source_location: str | None = None      # 源在仓库的位置 (e.g. 'filesystem:02_外战预案')
+    source_version: str | None = None       # 源版本
+    reviewed_at: str | None = None          # 最后审核时间 ISO8601
+    reviewed_by: str | None = None          # 审核人
+    review_status: str = "UNVERIFIED"       # VERIFIED/UNVERIFIED/STALE/MISSING/FIXTURE/REDACTED
+    confidence: float | None = None         # 0.0-1.0
+    environment: str = "all"                # dev/staging/production/all
+    pii_classification: str = "none"         # none/internal/confidential/restricted
+
     def to_dict(self) -> dict:
         return asdict(self)
 
@@ -252,11 +293,13 @@ def _extract_iata(dt: DocxTable, fallback_name: str = "") -> str:
     return ""
 
 
-def _extract_region(dt: DocxTable) -> str:
+def _extract_region(dt: DocxTable, city_name: str = "") -> str:
     """找"省份/地区"或"国家/地区"行, 取国家/省份映射大区。
 
     表格布局: cell[0]='机场信息'(section 标签), cell[1]='国家/地区'(key),
     cell[2]='荷兰/阿姆斯特丹'(value), cell[3]='四字代码'(key), cell[4]='EHAM'(value)
+
+    D-030: docx 缺 cell 时用 city_name 兜底国内大区 (CITY_REGION_FALLBACK)。
     """
     for sec in dt.sections:
         for row in sec.rows:
@@ -271,6 +314,10 @@ def _extract_region(dt: DocxTable) -> str:
                                 head = v.split("/")[0].strip()
                                 return region_from_name(head)
                             return region_from_name(v)
+    # D-030: docx 缺 cell 时, 用 city_name 兜底
+    fb = region_from_city_name(city_name)
+    if fb:
+        return fb
     return "国际-亚洲"
 
 
@@ -334,10 +381,48 @@ def _extract_parts(dt: DocxTable) -> list[dict]:
     return parts
 
 
+# D-030: org 名称 → permission 启发式关键词
+#  - restricted: 供应商商务联系人 (空客/Satair/波音/罗罗/普惠/...)
+#  - internal:  库房/负责人/商务 + 手机/内部标记
+#  - public:    其他航司公开 desk
+RESTRICTED_ORG_KEYWORDS = [
+    "空客", "Satair", "波音", "罗罗", "Rolls", "普惠", "Pratt",
+    "霍尼韦尔", "Honeywell", "汉莎技术", "Lufthansa Technik",
+    "AFI KLM", "新航", "SIA", "Aviall", "Wheels",
+]
+
+
+def _is_chinese_mobile(phone: str) -> bool:
+    """判断是否中国 11 位手机号 (1[3-9] 开头)。"""
+    digits = re.sub(r"\D", "", phone)
+    return len(digits) == 11 and digits.startswith("1") and digits[1] in "3456789"
+
+
+def _classify_contact_permission(org: str, phones: list[str], role: str, email: str | None) -> str:
+    """D-030: 给 contact 打 permission 标签 (public / internal / restricted)。
+
+    启发式规则 (按优先级):
+      1. org 含供应商关键词 → restricted
+      2. 任一 phone 是中国 11 位手机号 → internal
+      3. role 含 "内部" "库房" "负责人" "商务" → internal
+      4. 其他 → public
+    """
+    if any(kw in (org or "") for kw in RESTRICTED_ORG_KEYWORDS):
+        return "restricted"
+    if any(_is_chinese_mobile(p) for p in phones):
+        return "internal"
+    rl = role or ""
+    if any(kw in rl for kw in ["内部", "库房", "负责人", "商务"]):
+        return "internal"
+    return "public"
+
+
 def _extract_contacts(dt: DocxTable) -> list[dict]:
     """联系人: 找 '当地及周边资源' section。
 
     行格式: ['东航', '东航上海总部 AOG', '东航上海总部 AOG', '互援', '021-22379771...']
+
+    D-030: 给每条 contact 加 permission 字段 (public/internal/restricted)
     """
     sec = _find_section(dt, "当地及周边资源", "联系人", "周边资源")
     if not sec:
@@ -358,10 +443,13 @@ def _extract_contacts(dt: DocxTable) -> list[dict]:
         # email
         email_match = re.search(r"[\w\.\-]+@[\w\.\-]+\.[a-zA-Z]{2,}", phone_str)
         email = email_match.group(0) if email_match else None
+        # D-030: 启发式 permission
+        perm = _classify_contact_permission(org, phones, method or "7×24", email)
         contact: dict = {
             "org": org,
             "phone": phones[:3] if phones else [],
             "role": method or "7×24",
+            "permission": perm,
         }
         if email:
             contact["email"] = email
@@ -370,21 +458,41 @@ def _extract_contacts(dt: DocxTable) -> list[dict]:
 
 
 def _extract_warehouse(dt: DocxTable) -> dict:
-    """仓储单位 / 营业部 section。"""
+    """仓储单位 / 营业部 section。
+
+    D-030: 从 "联系方式" cell 抽 11 位手机号 → internal contact (库房负责人手机)
+    返回 dict 包含: location, main[], internal_contacts[] (去重)
+    """
     sec = _find_section(dt, "仓储单位", "营业部", "仓储")
     if not sec or not sec.rows:
-        return {"location": "", "main": []}
+        return {"location": "", "main": [], "internal_contacts": []}
     location = ""
     mains: list[str] = []
+    internal_phones: set[str] = set()  # D-030: 用 phone 去重, 避免同 row 重复抽
     for row in sec.rows[1:]:
         cells = [c for c in row[1:] if c]
         if not cells:
             continue
-        if "地址" in row[0] or "地址" in row[1] if len(row) > 1 else False:
+        if "地址" in row[0] or ("地址" in row[1] if len(row) > 1 else False):
             location = cells[1] if len(cells) > 1 else cells[0]
         else:
             mains.extend(cells)
-    return {"location": location, "main": mains[:5]}
+            # D-030: 仅从含 "联系方式" / "联系人" / "手机" 关键词的 cell 抽, 且按 phone 去重
+            for c in cells:
+                if any(kw in c for kw in ["联系方式", "联系人", "库房电话", "手机", "现场"]):
+                    phones = re.findall(r"1[3-9]\d{9}", c)
+                    for ph in phones[:3]:
+                        internal_phones.add(ph)
+    internal_contacts = [
+        {
+            "org": "库房/现场负责人",
+            "phone": [ph],
+            "role": "现场内部",
+            "permission": "internal",
+        }
+        for ph in sorted(internal_phones)
+    ]
+    return {"location": location, "main": mains[:5], "internal_contacts": internal_contacts}
 
 
 def _extract_logistics(dt: DocxTable) -> dict:
@@ -414,9 +522,20 @@ def _extract_logistics(dt: DocxTable) -> dict:
 # ---------- Main extract ----------
 
 def extract_city(path: PathLike, knowledge_base_root: PathLike | None = None) -> City:
-    """从 docx 抽 City 完整字段。
+    """从 docx 抽 City 完整字段 + P0-5 数据可信度 10 字段。
 
     knowledge_base_root: 用于算 source_path 相对路径。如果不传, 用 path 自身的相对部分。
+
+    ★ P0-5 保守默认 (Owner 7/29 严令):
+      - source_document: 真实相对路径 (有)
+      - source_location: 真实源目录 (有)
+      - source_version: null (旧 docx 无 YAML frontmatter)
+      - updated_at: 文件真实 mtime, ISO8601 (有)
+      - reviewed_at / reviewed_by: null
+      - review_status: UNVERIFIED (默认)
+      - confidence: null
+      - environment: all
+      - pii_classification: 保守判断 (有 phone/email → confidential, 否则 none)
     """
     p = Path(path)
     if p.suffix.lower() != ".docx":
@@ -428,12 +547,17 @@ def extract_city(path: PathLike, knowledge_base_root: PathLike | None = None) ->
 
     airport = _extract_airport(dt)
     iata = _extract_iata(dt, fallback_name=name)
-    region = _extract_region(dt)
+    region = _extract_region(dt, city_name=name)  # D-030: 传 city_name 兜底
     fleet = _extract_fleet(dt)
     parts = _extract_parts(dt)
     contacts = _extract_contacts(dt)
     warehouse = _extract_warehouse(dt)
     logistics = _extract_logistics(dt)
+
+    # D-030: 把 warehouse 抽出的 internal contact 合并进 contacts (库房负责人手机)
+    internal_contacts = warehouse.get("internal_contacts", [])
+    if internal_contacts:
+        contacts = contacts + internal_contacts
 
     # source_path
     if knowledge_base_root:
@@ -455,6 +579,35 @@ def extract_city(path: PathLike, knowledge_base_root: PathLike | None = None) ->
     if status == "现行":
         tags.append("24h响应")
 
+    # ★ P0-5: 10 字段保守默认填值
+    # source_document: 真实相对路径 (有)
+    source_document = source_path
+    # source_location: 真实源目录 (e.g. 'filesystem:02_外战预案')
+    source_location = "filesystem:" + str(Path(source_path).parent) if source_path else None
+    # source_version: null (旧 docx 无 YAML frontmatter)
+    source_version = None
+    # updated_at: 文件真实 mtime, ISO8601
+    try:
+        mtime = p.stat().st_mtime
+        updated_at = datetime.fromtimestamp(mtime, tz=timezone.utc).isoformat()
+    except OSError:
+        # fallback: 现在
+        updated_at = datetime.now(timezone.utc).isoformat()
+    # reviewed_at / reviewed_by / confidence: null
+    reviewed_at = None
+    reviewed_by = None
+    confidence = None
+    # review_status: UNVERIFIED (默认, 不因 "有数据" 就 VERIFIED)
+    review_status = "UNVERIFIED"
+    # environment: all
+    environment = "all"
+    # pii_classification: 保守判断
+    # 含 phone 或 email → confidential (默认)
+    has_contact_with_pii = any(
+        c.get("phone") or c.get("email") for c in contacts
+    )
+    pii_classification = "confidential" if has_contact_with_pii else "none"
+
     return City(
         code=code,
         name=name,
@@ -471,5 +624,15 @@ def extract_city(path: PathLike, knowledge_base_root: PathLike | None = None) ->
         logistics=logistics,
         content_md=md_text,
         source_path=source_path,
-        updated_at=datetime.now(timezone.utc).isoformat(),
+        updated_at=updated_at,
+        # ★ P0-5: 10 字段
+        source_document=source_document,
+        source_location=source_location,
+        source_version=source_version,
+        reviewed_at=reviewed_at,
+        reviewed_by=reviewed_by,
+        review_status=review_status,
+        confidence=confidence,
+        environment=environment,
+        pii_classification=pii_classification,
     )

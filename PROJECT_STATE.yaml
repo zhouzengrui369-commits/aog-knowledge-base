@@ -1,0 +1,194 @@
+# AOG Knowledge Base - 工程版本真相 (Engineering Truth of Versions)
+# Owner: NJX (OPC, 航空维修 + 航材供应链数智化)
+# PM: Mavis
+# Last Verified: 2026-07-29 16:45 GMT+8
+# Authority: 此文件是 4 套版本对照的 single source of truth
+# 不得默认 main / integration / 公网 / 本地 任何一个天然代表最新真相
+#
+# ★ Owner 7/29 严令 schema (不要在同一个 commit 内让文件自引用"当前 commit SHA"):
+#   - candidate_code_commit:        最后一个修改产品代码/测试/构建配置的 commit
+#   - state_document_parent_commit:  本次状态文件提交的父 commit (用 git rev-parse HEAD~1 填)
+#   - observed_pr_head:              git rev-parse HEAD (生成状态报告时观察到)
+#   - last_completed_ci_run_id:      GitHub Actions 最近一次 run ID
+#   - last_completed_ci_conclusion:  那个 run 的结论 (success/failure)
+#   - deploy_app_commit_sha:         ★ 不在 merge 前硬编码, 见 staging_deploy_commit 留空
+
+repository: github.com/zhouzengrui369-commits/aog-knowledge-base
+pr_url: https://github.com/zhouzengrui369-commits/aog-knowledge-base/pull/1
+pr_number: 1
+pr_branch: p0/integration-main-convergence
+
+# ===== 12+ 字段 schema (Owner 严令) =====
+main_head: 80330ddec8188c8bf3319a35e82ea62f065cca86
+pr_head: 4fdc56167ef5bac7bb8285a8e606ff84810a8c52   # Stage 12+ 修复后 PR head
+integration_head: 9c29b89525b4c72dbafb46c3412a60c2f8956812
+candidate_code_commit: 4fdc56167ef5bac7bb8285a8e606ff84810a8c52
+state_document_parent_commit: 6f34406b2c95c1bf14b5a59f5e8c9b3c8c7d9e1a
+observed_pr_head: 4fdc56167ef5bac7bb8285a8e606ff84810a8c52
+observed_at: 2026-07-29T17:10:00+08:00
+ci_run_id: "30438222057"
+last_completed_ci_run_id: "30438222057"
+last_completed_ci_conclusion: "success"
+last_completed_ci_url: "https://github.com/zhouzengrui369-commits/aog-knowledge-base/actions/runs/30438222057"
+
+# ===== 测试结果 (本 PR head) =====
+backend_test_result:
+  test_journey_10_local: 10/10_PASS_1.66s
+  test_cities: 11/11_PASS_9.54s
+  test_fts5_e2e: 3/3_PASS_1.25s
+  test_phone_email_scanner: 8/8_PASS_0.86s
+  total: 32/32_PASS
+frontend_test_result:
+  api_mock_isolation: 17/17_PASS_4.2s
+  total: 17/17_PASS
+pipeline_test_result:
+  test_rag_8query_regression: 8/8_PASS_0.68s
+  test_pii_isolation: 17/17_PASS
+  test_p05_trust_pipeline: 10/10_PASS
+  test_export_fts5_manifest: 21/21_PASS
+  test_parsers_extractors_chunker: 23/23_PASS
+  total: 79/79_PASS
+
+# ===== 索引/数据库 SHA (7/29 16:10 实测) =====
+manifest_sha256: 83f8ee0aa05394fb4f06400d78d9fcaa3824f9019815e7f08e90b9feba045480
+aog_db_sha256: 259779a923fefecb9d4eaf57066dda1844ec1d2b42cfb9f7d3f850c641a01d8b
+fts5_sha256: 4eec8310effc9a1493ac5a9fab08e7a231a8ece29107df3e138dedafa929dc16
+function_package_sha256: 418c832b3cb5e13f591cb51a149e1aeefd883db35ccf21ea95d2f96c59c74d9d
+manifest_manifest:
+  build_commit: e976e00be2124a9f2a3744d6d0aa18bbe977f3b7
+  build_time: 2026-07-29T08:10:15
+  build_branch: p0/integration-main-convergence
+  schema_version: v30-d038-d043
+  tokenizer: trigram
+  chunks_count: 9106
+  db_size_bytes: 61140992
+  cities_count: 225
+  exp_count: 15
+  core_count: 10
+  wiki_count: 208
+
+# ===== Staging 部署 SHA (merge 后才能确定, 不在 merge 前硬编码) =====
+staging_deploy_commit: null    # merge 后由 git rev-parse main 填
+staging_deploy_command: |
+  gh pr merge 1 --merge  # Owner 严令: 不用 squash, 保留历史
+  git checkout main
+  git pull --ff-only
+  APP_COMMIT_SHA=$(git rev-parse main)
+  cd aog-web && bash scripts/prepare-scf.sh
+  tcb fn deploy aog-api -e APP_COMMIT_SHA=$APP_COMMIT_SHA
+staging_status: CI_GREEN_CLOUDBASE_INSUFFICIENT_BALANCE_BLOCK_DEPLOY
+staging_blocker: |
+  1. CloudBase 账户 njx-copilot-d6gs7642f8fa17122 InsufficientBalance (NJX 充值才能 deploy)
+  2. PR 未 merge (NJX 拍板 merge 才能 deploy)
+
+# ===== P0 现状 =====
+current_p0:
+  P0_1_branch_convergence:
+    status: IN_PROGRESS
+    evidence: PR head 718319c, 65 commits ahead of main 80330dd
+    blocked_by: NJX merge (PR 1 等待) + GitHub CI 全绿
+  P0_2_api_path:
+    status: CLOSED_LOCAL
+    evidence: f89e4cd + test_get_city_ok PASS + J1 PASS
+  P0_3_rag_dimension:
+    status: CLOSED_LOCAL
+    evidence: 5cecf31 + 8/8 RAG 回归 + fts5 manifest 4 项校验 PASS
+    chunks_total: 9106
+    tokenizer: trigram
+    schema_version: v30-d038-d043
+  P0_4_provider_mock:
+    status: CLOSED_LOCAL
+    evidence: ead11b2 + c290d75 (D-044-G get_llm fail-closed 治本) + J6/J7 PASS
+  P0_5_trust_contract:
+    status: CLOSED_LOCAL
+    evidence: eef8b0e + 1c7c7a4 + 10/10 P0-5 pipeline test PASS
+    fields: 10
+    statuses: [VERIFIED, UNVERIFIED, STALE, MISSING, FIXTURE, REDACTED]
+  P0_6_pii:
+    status: CLOSED_LOCAL
+    evidence: 1c7c7a4 + 17/17 PII 4 层 negative test + J8 PASS
+    layers: [RAG_chunk, FTS5_index, chat_context, city_api, frontend_bundle]
+  P0_7_staging_journey:
+    status: BLOCKED
+    evidence: 10/10 本地旅程 PASS in 1.66s, 公网 staging 等 NJX 物理操作
+    blocked_by: CloudBase InsufficientBalance + NJX merge + tcb fn deploy + GitHub CI all green
+
+# ===== P1 现状 =====
+current_p1:
+  P1_1_rag_city_contacts: CLOSED
+  P1_2_mock_fallback_ui_red: CLOSED
+  P1_3_shanghai_pudong_docx: BLOCKED_PHYSICAL
+  P1_4_airline_99pct_dup: TODO
+  P1_5_api_401: CLOSED
+
+# ===== 唯一 NJX 下一步动作 =====
+next_single_action: |
+  ✅ GitHub Actions run 30438222057 conclusion=success (5/5 jobs + all-pass 全绿)
+     时间: 2026-07-29 17:08 GMT+8
+     URL:  https://github.com/zhouzengrui369-commits/aog-knowledge-base/actions/runs/30438222057
+
+  PR head 4fdc561 (Stage 12+ CI Green Closure 完成), 67 commits ahead of main.
+
+  NJX 下一步:
+    1. gh pr merge 1 --merge   # Owner 严令: merge commit 保留历史, 不用 --squash
+    2. 充值 CloudBase 账户 njx-copilot-d6gs7642f8fa17122 (解除 InsufficientBalance)
+    3. APP_COMMIT_SHA=$(git rev-parse main)
+    4. cd aog-web && bash scripts/prepare-scf.sh
+    5. tcb fn deploy aog-api -e APP_COMMIT_SHA=$APP_COMMIT_SHA
+    6. staging URL 上跑 10 旅程 (test_journey_10_local.py 验证真实部署)
+    7. 通知独立产品体验评审官基于 staging 重新评审
+
+  在此之前, 不需要 Owner 执行任何其他动作.
+
+# ===== 时间戳 =====
+updated_at: 2026-07-29T17:10:00+08:00
+
+# ===== 旧字段保留向后兼容 (但用 new 20 字段为主) =====
+branches:
+  main:
+    head: 80330ddec8188c8bf3319a35e82ea62f065cca86
+    label: V14 (Wave 3 部署, 2026-07-15)
+    status: SEVERELY_STALE
+    behind_candidate: 65
+  integration/sprint-abc:
+    head: 9c29b89525b4c72dbafb46c3412a60c2f8956812
+    label: V30 (LLM JSON + V29d markdown + V29c trigram + V29b 流式)
+    status: AUTHORITATIVE_BUT_NOT_DEPLOYED
+    behind_candidate: 16
+  review/aog-product-experience-baseline:
+    head: 5d39967ec985bb2da542982f3460de34773cf5e6
+    label: V28b (7/27 评审基线)
+    status: REVIEW_BASELINE_ONLY
+  p0/integration-main-convergence:
+    head: 4fdc56167ef5bac7bb8285a8e606ff84810a8c52
+    label: PR head (observed at 2026-07-29T17:10)
+    status: AWAITING_NJX_MERGE_CI_GREEN
+    ahead_of_main: 67
+    ahead_of_integration: 18
+
+# ===== 测试总览 =====
+tests_summary:
+  total: 128
+  pipeline: 79
+  backend: 32
+  frontend: 17
+  scanner: 8 (CI 上仅主程序, 测试在本地 regression suite)
+  all_pass: true
+
+# ===== 三个样板 (Stage 9.2) =====
+samples:
+  s1_beijing_daxing:
+    code: B-北京大兴
+    review_status: VERIFIED
+    verified_at: 2026-01-15
+    reviewed_by: NJX
+  s2_shanghai_pudong:
+    code: S-上海浦东
+    review_status: MISSING
+    blocked_by: NJX 物理 cp docx 到 AOG知识库/02_外战预案/
+  s3_helsinki:
+    code: H-赫尔辛基
+    review_status: UNVERIFIED
+    selection_score: 23.80/31
+    selection_method: select_third_sample.py 5 维评分 (auto)
+    source_docx: AOG知识库/02_外战预案/H-赫尔辛基.docx (59178 bytes, mtime 2026-01-20)

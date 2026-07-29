@@ -14,11 +14,14 @@ async def test_list_experiences_seeded(client, seeded_sqlite):
     r = await client.get("/api/experiences")
     exps = r.json()
     assert len(exps) == 2
-    # 字段 1:1
+    # 字段 1:1 (注意: list endpoint 故意不返 content_md, 避 SCF 6MB HTTP 上限
+    #   单条 /api/experience/{id} 仍返 content_md, 见 test_get_experience_ok)
     e = exps[0]
     for key in ["id", "title", "category", "status", "tags", "summary",
-                "content_md", "related_pn", "source_path", "updated_at"]:
+                "related_pn", "source_path", "updated_at"]:
         assert key in e, f"missing field: {key}"
+    # content_md 必须不在 list response (避 SCF 6MB)
+    assert "content_md" not in e, "list endpoint 应排除 content_md (避 SCF 6MB)"
 
 
 @pytest.mark.asyncio

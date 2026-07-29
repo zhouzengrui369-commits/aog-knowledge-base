@@ -27,20 +27,20 @@
 
 请先回答 4 个问题:
 
-1. **API base 拼接 bug** 修了吗？  
-   检查 `lib/api.ts:16` 是不是 `BASE = process.env.NEXT_PUBLIC_API_BASE?.replace(/\/api$/, "")`  
+1. **API base 拼接 bug** 修了吗？
+   检查 `lib/api.ts:16` 是不是 `BASE = process.env.NEXT_PUBLIC_API_BASE?.replace(/\/api$/, "")`
    或 build 时 `next.config.ts` 正确处理
 
-2. **RAG 维度 mismatch** 修了吗？  
-   检查 `pipeline/embedder.py` 和 `chroma_client.py`  
+2. **RAG 维度 mismatch** 修了吗？
+   检查 `pipeline/embedder.py` 和 `chroma_client.py`
    1024 维 vs 384 维的 query 还能跑吗？
 
-3. **MINIMAX_API_KEY 接入** 修了吗？  
-   `.env.cloudbase.example` 是不是 hardcode 了真 key？  
+3. **MINIMAX_API_KEY 接入** 修了吗？
+   `.env.cloudbase.example` 是不是 hardcode 了真 key？
    部署后 `llm_mode` 是不是 `minimax` 而不是 `mock`？
 
-4. **公网 SCF 重新部署** 做了吗？  
-   旧 SCF `76cca2c` (Jul 17) 缺 `/api/airlines` / `/api/auth/login`  
+4. **公网 SCF 重新部署** 做了吗？
+   旧 SCF `76cca2c` (Jul 17) 缺 `/api/airlines` / `/api/auth/login`
    重新 `tcb fn deploy` 了吗？
 
 **这 4 个问题答完再决定下一步**。如果都修了 → 重做完整评审 (基于 V28b 集成版);还有 broken → 进入 P1 整改。

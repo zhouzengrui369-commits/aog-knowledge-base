@@ -17,9 +17,9 @@ import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Sequence
 
-DEFAULT_MODEL = "bge-m3"
+DEFAULT_MODEL = "sentence-transformers/all-MiniLM-L6-v2"  # V26 NJX 严禁 ollama + bge-m3 401, 改用公开免 auth 的 384 维 model (HF 无 gating)
 DEFAULT_BATCH = 8
-DEFAULT_BACKEND = "ollama"  # 'ollama' | 'sentence-transformers'
+DEFAULT_BACKEND = "sentence-transformers"  # V26 NJX 严禁依赖 ollama (持续 timeout) — 改默认 sentence-transformers 本地算
 DEFAULT_OLLAMA_URL = "http://localhost:11434"
 
 

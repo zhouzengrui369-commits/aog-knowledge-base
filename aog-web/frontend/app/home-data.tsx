@@ -3,11 +3,17 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { FeaturedCities } from "@/components/featured-cities";
 import { AlphabetNav } from "@/components/alphabet-nav";
-import { WorldMapView } from "@/components/world-map";
-import { getCities } from "@/lib/api";
+import dynamic from "next/dynamic";
+import { getCities, getAirlines, getAirports, getMockFallbackPaths, resetMockFallbackCount } from "@/lib/api";
 import { enrichCities, topByViewCount } from "@/lib/city-stats";
-import { FileText, BookOpen, ArrowUpRight, MapPin } from "lucide-react";
-import type { City } from "@/lib/types";
+import { FileText, BookOpen, ArrowUpRight, MapPin, Plane } from "lucide-react";
+import type { City, Airline, Airport } from "@/lib/types";
+
+// V18: 解决 SSR window 报错 — leaflet 内部用 window, 客户端动态 import
+const WorldMapLeaflet = dynamic(
+  () => import("@/components/world-map-leaflet").then(m => m.WorldMapLeaflet),
+  { ssr: false, loading: () => <div className="grid h-full place-items-center text-sm text-ink-500">地图加载中…</div> }
+);
 
 const QUICK_LINKS = [
   {
@@ -28,6 +34,12 @@ const QUICK_LINKS = [
     title: "航材保障规范",
     desc: "标准操作流程、合规要求、应急手册",
   },
+  {
+    href: "/airlines",
+    icon: Plane,
+    title: "航司互援资源",
+    desc: "25 家中国主要航司 · 基地 / 机队 / 联盟 / AOG 联系方式",
+  },
 ];
 
 /**
@@ -38,16 +50,38 @@ const QUICK_LINKS = [
  */
 export function HomeData() {
   const [cities, setCities] = useState<City[]>([]);
+  const [airlines, setAirlines] = useState<Airline[]>([]);
+  const [airports, setAirports] = useState<Airport[]>([]);
   const [loading, setLoading] = useState(true);
   const [hoveredLetter, setHoveredLetter] = useState<string | null>(null);
   const [selectedCity, setSelectedCity] = useState<City | null>(null);
+  // V24: 航司 tab 选中状态 — 列表点航司行 → 地图高亮 base + 顶部 chip
+  const [selectedAirline, setSelectedAirline] = useState<Airline | null>(null);
+  // V25: 当前 sidebar tab (受控, 传给 WorldMapLeaflet 决定航司 layer 是否渲染)
+  const [activeTab, setActiveTab] = useState<"city" | "airline">("city");
+  // ★ P1-2 治本: mock fallback 检测 — 后端不可用时 fallback MOCK, 显红框"演示数据"
+  const [mockFallbackPaths, setMockFallbackPaths] = useState<string[]>([]);
+  useEffect(() => {
+    // 周期 poll mock fallback 状态 (api.ts 写 window.__aogMockFallback)
+    const id = setInterval(() => {
+      const paths = getMockFallbackPaths();
+      if (paths.length !== mockFallbackPaths.length) setMockFallbackPaths(paths);
+    }, 1000);
+    return () => clearInterval(id);
+  }, [mockFallbackPaths.length]);
 
   useEffect(() => {
     let cancelled = false;
     (async () => {
-      const data = await getCities();
+      const [citiesData, airlinesData, airportsData] = await Promise.all([
+        getCities(),
+        getAirlines(),
+        getAirports(),
+      ]);
       if (cancelled) return;
-      setCities(enrichCities(data ?? []));
+      setCities(enrichCities(citiesData ?? []));
+      setAirlines(airlinesData ?? []);
+      setAirports(airportsData ?? []);
       setLoading(false);
     })();
     return () => {
@@ -59,6 +93,37 @@ export function HomeData() {
 
   return (
     <>
+      {/* ★ P1-2 治本: mock fallback 红框"演示数据" 提示 (治本 NJX 7/26 评审"用户被蒙骗")
+          - 只在 mockFallbackPaths.length > 0 时显示
+          - 列出 fallback 的具体 path 让 NJX 一眼看出后端哪几个 endpoint 挂了
+          - 文案参考 NJX 7/26 反馈: 演示数据必须显式标, 不能让用户当真的 */}
+      {mockFallbackPaths.length > 0 && (
+        <div
+          role="alert"
+          data-testid="mock-fallback-banner"
+          className="border-b-2 border-red-300 bg-red-50 px-4 py-3 text-sm text-red-900 sm:px-6"
+        >
+          <div className="mx-auto flex max-w-7xl items-start gap-3">
+            <span className="mt-0.5 inline-block h-2 w-2 shrink-0 rounded-full bg-red-500" />
+            <div>
+              <div className="font-semibold">
+                ⚠️ 演示数据 (NJX 拍 P1-2 治本: 用户被蒙骗)
+              </div>
+              <div className="mt-0.5 text-xs text-red-800">
+                后端 <code>NEXT_PUBLIC_API_BASE</code> 不可用或返空, 已 fallback 到 MOCK 数据。
+                影响 {mockFallbackPaths.length} 个 endpoint:
+                <code className="ml-1 break-all">
+                  {mockFallbackPaths.slice(0, 5).join(", ")}
+                  {mockFallbackPaths.length > 5 && ` 等 ${mockFallbackPaths.length - 5} 个`}
+                </code>
+              </div>
+              <div className="mt-1 text-[11px] text-red-700">
+                生产环境此 banner 必须消失才表示所有数据来自真实后端。
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
       {/* SECTION 1 — 浏览城市 (V2 统一视图: 字母 sidebar + 地图) */}
       <section className="mx-auto max-w-7xl px-4 py-12 sm:px-6 sm:py-16 lg:px-8">
         <div className="mb-6 flex flex-wrap items-end justify-between gap-3">
@@ -84,23 +149,33 @@ export function HomeData() {
             </div>
           ) : (
             <div className="grid grid-cols-1 gap-4 lg:grid-cols-[260px,1fr] lg:gap-5">
-              {/* 字母侧栏 — 固定在地图左侧, 高度跟随地图 */}
+              {/* 字母侧栏 — V15.1 单 sidebar 切换航站/航司 */}
               <div className="rounded-lg border border-ink-100 bg-ink-50/30 p-3 lg:h-[520px]">
                 <AlphabetNav
                   cities={cities}
+                  airlines={airlines}
                   mode="sidebar"
                   hoveredLetter={hoveredLetter}
                   onLetterHover={setHoveredLetter}
+                  selectedAirline={selectedAirline}
+                  onSelectAirline={setSelectedAirline}
+                  activeTab={activeTab}
+                  onTabChange={setActiveTab}
                 />
               </div>
 
-              {/* 地图主区域 */}
+              {/* 地图主区域 - V18: dynamic import 解决 SSR window 报错 */}
               <div className="lg:h-[520px]">
-                <WorldMapView
+                <WorldMapLeaflet
                   cities={cities}
+                  airlines={airlines}
+                  airports={airports}
                   hoveredLetter={hoveredLetter}
                   selectedCity={selectedCity}
                   onSelectCity={setSelectedCity}
+                  selectedAirline={selectedAirline}
+                  onSelectAirline={setSelectedAirline}
+                  activeTab={activeTab}
                 />
               </div>
             </div>

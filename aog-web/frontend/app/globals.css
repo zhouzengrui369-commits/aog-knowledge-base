@@ -181,3 +181,236 @@ body {
   color: #111827;
   font-weight: 600;
 }
+
+/* ============================================================
+ *  V16 — react-leaflet 嵌入主图 样式
+ *  - cluster bubble (supercluster 聚合点)
+ *  - city label tooltip (城市 label, 跟 V14 SVG label 视觉一致)
+ *  - 选中态 pulse ring (CSS animation, 替代 V14 SVG <animate>)
+ * ============================================================ */
+
+/* V14 SVG label 视觉对齐 — 白底 + 蓝字 + 1px 边 */
+.leaflet-tooltip.city-label-tooltip {
+  background: rgba(255, 255, 255, 0.92);
+  border: 1px solid #e5e7eb;
+  border-radius: 4px;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
+  padding: 0;
+  font-size: 0;
+  /* 跟 V14 text 字号 14px / 12px / 10px 一致 (Tooltip 内部 span 字号自带) */
+}
+.leaflet-tooltip.city-label-tooltip::before {
+  display: none; /* 去掉 leaflet 默认的小三角 (label 在 dot 右侧, 不需要朝 dot 方向) */
+}
+.leaflet-tooltip.city-label-tooltip .hub-label {
+  color: #1e40af;
+  font-size: 14px;
+  font-weight: 600;
+  letter-spacing: 0.2px;
+}
+.leaflet-tooltip.city-label-tooltip .city-label {
+  color: #1e40af; /* V27b: 灰→蓝, NJX 反馈"218 个航站都是蓝色标签" */
+  font-size: 13px;
+  font-weight: 600;
+}
+.leaflet-tooltip.city-label-tooltip .selected-label {
+  color: #dc2626;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+/* V17: 航司 hub tooltip — 紫色调, 跟 city-label 区分 */
+/* V21 (NJX 拍 C): max-width 200px, 限 top 5 + '还有 N' 折叠, 避免北京 9 航司堆叠 */
+/* V22 (NJX 拍 B): 推翻 V21 — 永久 tooltip 改数字徽章 + 右侧 panel, 零堆叠 */
+.leaflet-tooltip.airline-hub-tooltip {
+  display: none !important; /* V22: 完全隐藏, 改用 divIcon badge + panel */
+}
+
+/* V22: 航司 hub 数字徽章 (NJX 拍 B — 数字徽章替代堆叠 tooltip)
+   - 紫底白字, 圆形, 28x28
+   - 悬停放大 1.15, 选中态 ring-2 amber + scale 1.1 (永久)
+   - 鼠标 cursor: pointer (暗示可点) */
+.airline-hub-badge-wrapper {
+  background: transparent !important;
+  border: none !important;
+}
+.airline-hub-badge {
+  width: 28px;
+  height: 28px;
+  display: grid;
+  place-items: center;
+  border-radius: 9999px;
+  background: #7c3aed;
+  color: #ffffff;
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 1;
+  box-shadow: 0 1px 3px rgba(124, 58, 237, 0.45);
+  border: 2px solid #ffffff;
+  cursor: pointer;
+  transition: transform 0.15s ease, box-shadow 0.15s ease;
+  font-family:
+    -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei",
+    sans-serif;
+  letter-spacing: 0;
+}
+.airline-hub-badge:hover {
+  transform: scale(1.15);
+  box-shadow: 0 2px 6px rgba(124, 58, 237, 0.6);
+}
+.airline-hub-badge-active {
+  outline: 3px solid #f59e0b;
+  outline-offset: 1px;
+  transform: scale(1.1);
+  z-index: 1000;
+}
+
+/* V23: N=1 inline marker — 紫方 IATA + 中文短名, 替代 V22 数字 "1"
+   实际内容显示, 避免 1 个航司的城市还显示徽章 (NJX 反馈冗余) */
+.airline-hub-inline-wrapper {
+  background: transparent !important;
+  border: none !important;
+}
+.airline-hub-inline {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 22px;
+  padding: 0 8px 0 4px;
+  border-radius: 4px;
+  background: #7c3aed;
+  color: #ffffff;
+  box-shadow: 0 1px 2px rgba(124, 58, 237, 0.35);
+  cursor: pointer;
+  font-family:
+    -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei",
+    sans-serif;
+  white-space: nowrap;
+  user-select: none;
+  transition: transform 0.15s ease, box-shadow 0.15s ease;
+}
+.airline-hub-inline:hover {
+  transform: scale(1.05);
+  box-shadow: 0 2px 4px rgba(124, 58, 237, 0.5);
+}
+.airline-hub-inline-active {
+  outline: 2px solid #f59e0b;
+  outline-offset: 1px;
+  transform: scale(1.05);
+  z-index: 1000;
+}
+.airline-hub-inline-iata {
+  display: inline-block;
+  background: rgba(255, 255, 255, 0.22);
+  padding: 1px 5px;
+  border-radius: 3px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  line-height: 1;
+}
+.airline-hub-inline-name {
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 1;
+  letter-spacing: 0.01em;
+}
+
+/* V24: 选中航司后, 非 base 城市 dim — 紫环/badge/inline 透明度降到 0.25 */
+.airline-hub-badge-dim {
+  opacity: 0.25;
+  filter: grayscale(0.4);
+}
+.airline-hub-inline-dim {
+  opacity: 0.25;
+  filter: grayscale(0.4);
+}
+.airline-base-ring {
+  animation: airline-base-pulse 2s ease-in-out infinite;
+}
+@keyframes airline-base-pulse {
+  0%, 100% { opacity: 0.5; }
+  50% { opacity: 1; }
+}
+
+/* cluster bubble — 蓝填充 + 白数字 + 描边 + 阴影 */
+.cluster-bubble-wrapper {
+  background: transparent;
+  border: none;
+}
+.cluster-bubble {
+  background: #2563eb;
+  color: #ffffff;
+  border: 2px solid #ffffff;
+  border-radius: 9999px;
+  font-family:
+    -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei",
+    sans-serif;
+  font-size: 12px;
+  font-weight: 800;
+  text-align: center;
+  box-shadow: 0 0 0 1px rgba(37, 99, 235, 0.4);
+  filter: drop-shadow(0 0 3px rgba(37, 99, 235, 0.5));
+  user-select: none;
+  pointer-events: auto;
+  cursor: pointer;
+}
+
+/* 选中态 pulse ring — CSS animation 替代 V14 SVG <animate>
+   transform-box: fill-box 强制 SVG 元素 transform 相对自身 bounding box
+   (不写的话 transform-origin: center 会被解释为 SVG 根 viewport) */
+.selected-pulse-ring {
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: selected-pulse 1.8s ease-out infinite;
+}
+@keyframes selected-pulse {
+  0% {
+    opacity: 0.5;
+    transform: scale(0.7);
+  }
+  100% {
+    opacity: 0;
+    transform: scale(1.5);
+  }
+}
+
+/* 字母 hover pulse — V6 行为 */
+.letter-pulse-ring {
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: letter-pulse 1.2s ease-out infinite;
+}
+@keyframes letter-pulse {
+  0% {
+    opacity: 0.7;
+    transform: scale(0.6);
+  }
+  100% {
+    opacity: 0;
+    transform: scale(1.3);
+  }
+}
+
+/* V20: 全球机场灰点聚合气泡 (OpenFlights 6072 站) — 浅灰半透明, 跟 AOG 蓝/红区分 */
+.global-cluster-wrapper {
+  background: transparent;
+  border: none;
+}
+.global-cluster-bubble {
+  width: 22px;
+  height: 22px;
+  line-height: 22px;
+  background: rgba(156, 163, 175, 0.65);
+  color: #ffffff;
+  border: 1px solid rgba(255, 255, 255, 0.7);
+  border-radius: 9999px;
+  font-family:
+    -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei",
+    sans-serif;
+  font-size: 9px;
+  font-weight: 700;
+  text-align: center;
+  user-select: none;
+  pointer-events: none;
+}

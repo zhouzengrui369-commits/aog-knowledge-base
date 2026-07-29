@@ -1,6 +1,19 @@
 // API client — 1:1 对应 CONTRACT §2 端点
-// 错误兜底：fetch 失败或后端未启动 → 降级到 lib/mock 数据
-// 验证：Lighthouse 测试时需 NEXT_PUBLIC_API_BASE=http://localhost:8000
+// 错误兜底：fetch 失败或后端未启动 → 降级到 lib/mock 数据 (P0-4: dev only, production 禁 mock)
+//
+// ★ P0-2 URL 规范 (2026-07-29 Owner 授权):
+//   base URL 不带尾 /api, 路径由 endpoint 负责加 /api
+//   错误示例: BASE=https://...com/api  + path=/api/cities  → 请求 ...com/api/api/cities (400)
+//   正确示例: BASE=https://...com     + path=/api/cities  → 请求 ...com/api/cities
+//
+// ★ P0-4 production mock 隔离 (Owner 7/29 严令):
+//   NEXT_PUBLIC_ALLOW_MOCK=false (默认, production/staging 必须) → API 失败不返 mock, 返 null/empty
+//   NEXT_PUBLIC_ALLOW_MOCK=true  (仅 dev/test 显式开)            → 失败可降级 mock (有 MOCK 标志)
+//
+// 验证:  curl -sS "${BASE}/api/health"  → 200 (P0-2 修复后)
+//        curl -sS "${BASE}/api/api/..."  → 404 (path 不会双拼)
+//
+// 唯一允许改 BASE / ALLOW_MOCK 的位置: .env.local / .env.local.example, 改后必须跑上面的验证
 
 import type {
   City,
@@ -9,11 +22,60 @@ import type {
   ChatResponse,
   CorePlan,
   SyncStatus,
+  Airline,
+  Airport,
+  GlobalAirportsData,
 } from "@/lib/types";
 import { MOCK_CITIES } from "@/lib/mock/cities";
 import { MOCK_EXPERIENCES } from "@/lib/mock/experiences";
+import { MOCK_AIRLINES } from "@/lib/mock/airlines";
 
-const BASE = process.env.NEXT_PUBLIC_API_BASE || "http://localhost:8000";
+// ★ P0-4: production 严令 ALLOW_MOCK 默认 false
+//   显式设 "true" 才允许 mock fallback, 任何其他值 (含 unset) 都是 production 模式
+export const ALLOW_MOCK = process.env.NEXT_PUBLIC_ALLOW_MOCK === "true";
+
+if (typeof window !== "undefined" && process.env.NODE_ENV === "production" && ALLOW_MOCK) {
+  // production build 时如果 ALLOW_MOCK=true, 显式 console.error 警告 (但允许 dev 误用)
+  console.error(
+    "[P0-4 WARNING] NEXT_PUBLIC_ALLOW_MOCK=true in production build. " +
+    "mock fallback 会进入 production bundle, 违反 D-044-C. 应设 false."
+  );
+}
+
+// ★ P1-2 治本: mock fallback 路径计数 (ALLOW_MOCK=true 时记录, 用于 UI 红框)
+//   node 测试环境 (vitest) 也记录 — module-level Set
+//   browser 环境也记录 — window.__aogMockFallback (UI 红框读)
+const _nodeMockFallback = new Set<string>();
+function _recordMockFallback(path: string) {
+  if (!ALLOW_MOCK) return;  // production 不记录 (不返 mock)
+  _mockFallbackCount++;
+  _nodeMockFallback.add(path);
+  if (typeof window !== "undefined") {
+    const w = window as any;
+    if (!w.__aogMockFallback) w.__aogMockFallback = new Set<string>();
+    w.__aogMockFallback.add(path);
+  }
+}
+let _mockFallbackCount = 0;
+export function getMockFallbackCount() { return _mockFallbackCount; }
+export function resetMockFallbackCount() { _mockFallbackCount = 0; }
+export function getMockFallbackPaths(): string[] {
+  // node 测试环境读 module-level Set; browser 环境读 window
+  if (typeof window !== "undefined") {
+    const w = window as any;
+    if (w.__aogMockFallback) {
+      return Array.from(w.__aogMockFallback) as string[];
+    }
+  }
+  return Array.from(_nodeMockFallback);
+}
+
+// ★ P0-1 治本: BASE 必须去尾 /api, 否则 ${BASE}/api/cities 拼成 /api/api/cities 返 400
+//   公网 NEXT_PUBLIC_API_BASE=https://...service.tcloudbase.com/api
+//   localhost 模式 NEXT_PUBLIC_API_BASE=http://localhost:8000 (无 /api)
+//   两种情况都 .replace(/\/api\/?$/, "") 安全去尾
+const BASE = (process.env.NEXT_PUBLIC_API_BASE || "http://localhost:8000")
+  .replace(/\/api\/?$/, "");
 
 /** fetch 包装：超时 + 错误捕获 */
 async function safeFetch<T>(
@@ -55,8 +117,15 @@ export async function getCities(params?: {
   if (params?.letter) qs.set("letter", params.letter);
   const q = qs.toString() ? `?${qs}` : "";
   const data = await safeFetch<City[]>(`/api/cities${q}`);
-  if (data) return data;
-  // 降级 mock
+  // dev backend 返空数组时也 fallback 到 MOCK (避免 dev 看到 0 城市)
+  if (data && data.length > 0) return data;
+  // ★ P0-4 production mock 隔离: ALLOW_MOCK=false 时不返 mock, 返空数组
+  if (!ALLOW_MOCK) {
+    // production: 返空 + 显 error/unavailable (UI 端会显 '暂不可用')
+    return [];
+  }
+  // 降级 mock — ★ P1-2 治本: 记录到全局 set, UI 端读 set 显红框
+  _recordMockFallback("/api/cities");
   let list = [...MOCK_CITIES];
   if (params?.region) list = list.filter((c) => c.region === params.region);
   if (params?.status) list = list.filter((c) => c.status === params.status);
@@ -72,6 +141,10 @@ export async function getCity(code: string): Promise<City | null> {
   const encoded = encodeURIComponent(code);
   const data = await safeFetch<City>(`/api/city/${encoded}`);
   if (data) return data;
+  // ★ P0-4 production mock 隔离
+  if (!ALLOW_MOCK) return null;
+  // ★ P1-2 治本: 记录 mock fallback
+  _recordMockFallback(`/api/city/${encoded}`);
   return MOCK_CITIES.find((c) => c.code === code) || null;
 }
 
@@ -87,7 +160,12 @@ export async function getExperiences(params?: {
   if (params?.q) qs.set("q", params.q);
   const q = qs.toString() ? `?${qs}` : "";
   const data = await safeFetch<Experience[]>(`/api/experiences${q}`);
-  if (data) return data;
+  // dev backend 返空数组时 fallback MOCK
+  if (data && data.length > 0) return data;
+  // ★ P0-4 production mock 隔离
+  if (!ALLOW_MOCK) return [];
+  // ★ P1-2 治本: 记录 mock fallback
+  _recordMockFallback("/api/experiences");
   let list = [...MOCK_EXPERIENCES];
   if (params?.category) list = list.filter((e) => e.category === params.category || e.topic === params.category);
   if (params?.status) list = list.filter((e) => e.status === params.status);
@@ -107,13 +185,22 @@ export async function getExperiences(params?: {
 export async function getExperience(id: string): Promise<Experience | null> {
   const data = await safeFetch<Experience>(`/api/experience/${encodeURIComponent(id)}`);
   if (data) return data;
+  // ★ P0-4 production mock 隔离
+  if (!ALLOW_MOCK) return null;
+  // ★ P1-2 治本: 记录 mock fallback
+  _recordMockFallback(`/api/experience/${encodeURIComponent(id)}`);
   return MOCK_EXPERIENCES.find((e) => e.id === id) || null;
 }
 
 /** 核心预案 (CONTRACT §2.6) */
 export async function getCorePlans(): Promise<CorePlan[]> {
   const data = await safeFetch<CorePlan[]>(`/api/core-plans`);
-  return data || [];
+  if (data) return data;
+  // ★ P0-4 production mock 隔离
+  if (!ALLOW_MOCK) return [];
+  // ★ P1-2 治本: 记录 mock fallback
+  _recordMockFallback("/api/core-plans");
+  return [];
 }
 
 /** AI 对话 (CONTRACT §2.7) — 必须 references.length >= 1 (NSM-2)
@@ -126,7 +213,118 @@ export async function chat(req: ChatRequest): Promise<ChatResponse | null> {
     body: JSON.stringify(req),
     timeoutMs: 30000,
   });
-  return data;
+  if (data) return data;
+  // ★ P0-4 production mock 隔离: chat 失败永远不返 mock (chat 必须真实)
+  // ALLOW_MOCK 不影响 chat — chat 失败就 null, UI 显 "Provider 未配置" banner
+  return null;
+}
+
+/** 流式 chat (SSE) — NJX 7/27 15:44 反馈 AI 答案要打字机效果
+ *
+ *  V30 (NJX 7/27 22:14 拍板 🅰️): 后端 /api/chat/stream emit 4 类 SSE event:
+ *    1. event: refs       data: {references, model}              ← 立刻返, 不等 LLM
+ *    2. event: token      data: {content_delta}                   ← LLM 每 yield 一段就 emit
+ *    3. event: sections   data: {sections: ChatSection[]}        ← LLM 流完后, parser 解析成功才 emit (V30 治本)
+ *    4. event: done       data: {latency_ms}                      ← 结束
+ *    5. event: error      data: {error}                           ← 异常
+ *
+ *  回调:
+ *    onRefs({references, model})                     ← event=refs 触发
+ *    onToken(delta)                                  ← event=token 触发 (前端逐字渲染)
+ *    onSections(sections)                            ← event=sections 触发 (V30: 切到结构化渲染)
+ *    onDone(latency_ms)                              ← event=done 触发
+ *    onError(message)                                ← event=error 或 fetch 失败触发
+ */
+export interface ChatStreamCallbacks {
+  onRefs?: (refs: { references: ChatResponse["references"]; model: string }) => void;
+  onToken?: (delta: string) => void;
+  onSections?: (sections: NonNullable<ChatResponse["sections"]>) => void;
+  onDone?: (latencyMs: number) => void;
+  onError?: (message: string) => void;
+}
+
+export async function chatStream(req: ChatRequest, cbs: ChatStreamCallbacks): Promise<void> {
+  const ac = new AbortController();
+  const timeout = setTimeout(() => ac.abort(), 90000);  // 90s 总超时
+  try {
+    const res = await fetch(`${BASE}/api/chat/stream`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(req),
+      signal: ac.signal,
+    });
+    if (!res.ok || !res.body) {
+      cbs.onError?.(`HTTP ${res.status}`);
+      return;
+    }
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      // 按 \n\n 切 SSE event
+      let idx: number;
+      while ((idx = buffer.indexOf("\n\n")) !== -1) {
+        const raw = buffer.slice(0, idx);
+        buffer = buffer.slice(idx + 2);
+        // 解析 event: ... \ndata: ...
+        let event = "message";
+        let dataStr = "";
+        for (const line of raw.split("\n")) {
+          if (line.startsWith("event:")) {
+            event = line.slice(6).trim();
+          } else if (line.startsWith("data:")) {
+            dataStr += line.slice(5).trim();
+          }
+        }
+        if (!dataStr) continue;
+        if (event === "refs") {
+          try {
+            const payload = JSON.parse(dataStr);
+            cbs.onRefs?.({
+              references: payload.references || [],
+              model: payload.model || "unknown",
+            });
+          } catch (e) {
+            console.warn("[chatStream] refs parse failed:", e);
+          }
+        } else if (event === "token") {
+          cbs.onToken?.(dataStr);
+        } else if (event === "sections") {
+          // V30 治本: 后端 parser 解析成功, emit sections 数组
+          // 前端拿到后用 React 组件渲染, 覆盖之前流式 markdown 显示
+          try {
+            const payload = JSON.parse(dataStr);
+            if (Array.isArray(payload.sections)) {
+              cbs.onSections?.(payload.sections as NonNullable<ChatResponse["sections"]>);
+            }
+          } catch (e) {
+            console.warn("[chatStream] sections parse failed:", e);
+          }
+        } else if (event === "done") {
+          try {
+            const payload = JSON.parse(dataStr);
+            cbs.onDone?.(payload.latency_ms || 0);
+          } catch {
+            cbs.onDone?.(0);
+          }
+        } else if (event === "error") {
+          try {
+            const payload = JSON.parse(dataStr);
+            cbs.onError?.(payload.error || "unknown error");
+          } catch {
+            cbs.onError?.(dataStr);
+          }
+        }
+      }
+    }
+  } catch (err) {
+    cbs.onError?.(err instanceof Error ? err.message : String(err));
+  } finally {
+    clearTimeout(timeout);
+  }
 }
 
 /** 同步状态 (CONTRACT §2.9) */
@@ -137,4 +335,112 @@ export async function getSyncStatus(): Promise<SyncStatus | null> {
 /** 健康检查 (CONTRACT §2.1) */
 export async function health(): Promise<{ status: string; version?: string } | null> {
   return safeFetch(`/api/health`);
+}
+
+// ===== Sprint C: 航司 (Airlines) =====
+
+/** 航司列表 — 支持 letter/alliance/hub 过滤 */
+export async function getAirlines(params?: {
+  letter?: string;
+  alliance?: string;
+  hub?: string;
+}): Promise<Airline[]> {
+  const qs = new URLSearchParams();
+  if (params?.letter) qs.set("letter", params.letter);
+  if (params?.alliance) qs.set("alliance", params.alliance);
+  if (params?.hub) qs.set("hub", params.hub);
+  const q = qs.toString() ? `?${qs}` : "";
+  const data = await safeFetch<Airline[]>(`/api/airlines${q}`);
+  // dev backend 返空数组时 fallback MOCK
+  if (data && data.length > 0) return data;
+  // ★ P0-4 production mock 隔离
+  if (!ALLOW_MOCK) return [];
+  // 降级 mock
+  // ★ P1-2 治本: 记录 mock fallback
+  _recordMockFallback("/api/airlines");
+  let list = [...MOCK_AIRLINES];
+  if (params?.letter) {
+    const l = params.letter.toUpperCase();
+    list = list.filter(
+      (a) => a.iata.toUpperCase().startsWith(l) || a.name_cn.startsWith(l)
+    );
+  }
+  if (params?.alliance) list = list.filter((a) => a.alliance === params.alliance);
+  return list;
+}
+
+/** 航司详情 — IATA 2-letter code (大写) */
+export async function getAirline(iata: string): Promise<Airline | null> {
+  if (!iata) return null;
+  const code = iata.toUpperCase();
+  const data = await safeFetch<Airline>(`/api/airlines/${encodeURIComponent(code)}`);
+  if (data) return data;
+  // ★ P0-4 production mock 隔离
+  if (!ALLOW_MOCK) return null;
+  // ★ P1-2 治本: 记录 mock fallback
+  _recordMockFallback(`/api/airlines/${encodeURIComponent(code)}`);
+  return MOCK_AIRLINES.find((a) => a.iata === code) || null;
+}
+
+/** 航司模糊搜索 — IATA / ICAO / 中文名 / 英文名 / 常用简称 */
+export async function searchAirlines(q: string, limit = 20): Promise<Airline[]> {
+  if (!q || !q.trim()) return [];
+  const data = await safeFetch<Airline[]>(
+    `/api/airlines/search?q=${encodeURIComponent(q)}&limit=${limit}`
+  );
+  // dev backend 返空数组时 fallback MOCK
+  if (data && data.length > 0) return data;
+  // ★ P0-4 production mock 隔离
+  if (!ALLOW_MOCK) return [];
+  // 降级 mock
+  // ★ P1-2 治本: 记录 mock fallback
+  _recordMockFallback("/api/airlines/search");
+  const k = q.trim().toLowerCase();
+  return MOCK_AIRLINES.filter((a) => {
+    const haystack = `${a.iata} ${a.icao} ${a.name_cn} ${a.name_en} ${a.name_short || ""}`.toLowerCase();
+    return haystack.includes(k);
+  }).slice(0, limit);
+}
+
+// ===== V20: 全球机场（OpenFlights） =====
+
+/** V20 进程内缓存 — 避免每次组件 mount 都 fetch 700KB JSON */
+let _airportsCache: Airport[] | null = null;
+let _byCountryCache: Record<string, number> | null = null;
+let _airportsPromise: Promise<Airport[]> | null = null;
+
+/** 静态 fetch /data/global-airports.json（public/ 静态资源） */
+export async function getAirports(): Promise<Airport[]> {
+  if (_airportsCache) return _airportsCache;
+  if (_airportsPromise) return _airportsPromise;
+  _airportsPromise = (async () => {
+    try {
+      const res = await fetch("/data/global-airports.json", { cache: "force-cache" });
+      if (!res.ok) {
+        console.warn(`[api] /data/global-airports.json → HTTP ${res.status}`);
+        return [];
+      }
+      const data = (await res.json()) as GlobalAirportsData;
+      _airportsCache = data.airports;
+      _byCountryCache = data.by_country;
+      return data.airports;
+    } catch (err) {
+      console.warn(`[api] /data/global-airports.json failed:`, err);
+      return [];
+    } finally {
+      _airportsPromise = null;
+    }
+  })();
+  return _airportsPromise;
+}
+
+/** 按国家筛机场 */
+export async function getAirportsByCountry(country: string): Promise<Airport[]> {
+  const all = await getAirports();
+  return all.filter((a) => a.country === country);
+}
+
+/** 取 by_country 统计（懒加载, 第一次 getAirports 后才有） */
+export function getByCountryCounts(): Record<string, number> {
+  return _byCountryCache || {};
 }

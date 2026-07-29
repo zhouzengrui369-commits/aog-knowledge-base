@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { ChatWidget } from "@/components/chat-widget";
+import AuthGate from "@/components/auth-gate";
 import "./globals.css";
 
 export const metadata: Metadata = {
@@ -15,9 +16,12 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
   return (
     <html lang="zh-CN">
       <body className="font-sans text-ink-900 bg-white antialiased">
-        {children}
-        {/* ChatWidget 全局挂载（悬浮右下角） */}
-        <ChatWidget />
+        {/* Sprint A: 整个 SPA 套 AuthGate, 未登录显示密码页 */}
+        <AuthGate>
+          {children}
+          {/* ChatWidget 全局挂载（悬浮右下角） */}
+          <ChatWidget />
+        </AuthGate>
       </body>
     </html>
   );

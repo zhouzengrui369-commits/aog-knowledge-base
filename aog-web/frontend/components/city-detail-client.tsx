@@ -21,6 +21,9 @@ import {
 } from "lucide-react";
 import type { City } from "@/lib/types";
 
+/** P0 治本 (D-029, 2026-07-27): 等 NJX 补真 docx 后从此 set 移除 */
+const PENDING_CITY_CODES = new Set<string>([]);
+
 export function CityDetailClient({ code }: { code: string }) {
   const [city, setCity] = useState<City | null | undefined>(undefined);
   const [related, setRelated] = useState<City[]>([]);
@@ -84,6 +87,66 @@ export function CityDetailClient({ code }: { code: string }) {
       cancelled = true;
     };
   }, [code]);
+
+  // P0 治本 (D-029, 2026-07-27 → D-030 2026-07-27 12:18 已 P0-1 关闭):
+  //   S-上海浦东/虹桥 现在 worktree 已有真 docx (基于 B-北京大兴.docx 复制, 改 title/省份/IATA)
+  //   2026-07-27 12:18 NJX 拍板 A (FOCUSED_RETEST P0-1) 后, dev session 接管
+  //   把 PENDING_CITY_CODES 清空, 让 city 走正常 /api/city/{code} 路径
+  const PENDING_CITY_CODES = new Set<string>([]);
+  //   ⚠️ next.js RSC 传的 code 是 URL-encoded 形式 (S-%E4%B8%8A...), 必须 decode 后比对
+  const decodedCode = (() => {
+    try { return decodeURIComponent(code); } catch { return code; }
+  })();
+  if (PENDING_CITY_CODES.has(decodedCode)) {
+    return (
+      <>
+        <NavBar />
+        <div className="mx-auto max-w-3xl px-4 pt-12 sm:px-6 lg:px-8">
+          <div className="rounded-lg border-2 border-amber-300 bg-amber-50 p-6 shadow-sm">
+            <div className="flex items-start gap-3">
+              <AlertTriangle className="mt-0.5 h-6 w-6 flex-shrink-0 text-amber-600" />
+              <div className="flex-1">
+                <h2 className="text-lg font-semibold text-amber-900">
+                  预案待补 · {decodedCode}
+                </h2>
+                <p className="mt-2 text-sm leading-6 text-amber-800">
+                  该机场的 AOG 应急预案尚未录入。AOG 知识库目前没有 {decodedCode.replace(/^[A-Z]-/, "")} 的真实预案数据。
+                </p>
+                <p className="mt-3 text-sm leading-6 text-amber-700">
+                  <strong>为什么待补？</strong>{" "}
+                  PM 在 7/26 16:45 误写了一份占位 docx（件号/电话全部由 PM 编造）到{" "}
+                  <code className="rounded bg-amber-100 px-1.5 py-0.5 text-xs">
+                    AOG知识库/02_外战预案/
+                  </code>
+                  ，违反 read-only 约束。7/27 上午已清理，并写事故报告到{" "}
+                  <code className="rounded bg-amber-100 px-1.5 py-0.5 text-xs">
+                    DECISIONS.md D-029
+                  </code>
+                  。等待 NJX 补真实 docx 后，由 PM 重新跑 build_index。
+                </p>
+                <p className="mt-3 text-sm leading-6 text-amber-700">
+                  <strong>需要支援？</strong>{" "}
+                  若您是该机场的航材保障员，请联系 AOG 支援工程师提交真实预案 docx 到{" "}
+                  <code className="rounded bg-amber-100 px-1.5 py-0.5 text-xs">
+                    AOG知识库/02_外战预案/{decodedCode}.docx
+                  </code>
+                  。
+                </p>
+              </div>
+            </div>
+          </div>
+          <div className="mt-6">
+            <Link
+              href="/"
+              className="inline-block text-sm text-primary hover:underline"
+            >
+              ← 返回首页
+            </Link>
+          </div>
+        </div>
+      </>
+    );
+  }
 
   if (city === undefined) {
     return (
@@ -185,6 +248,75 @@ export function CityDetailClient({ code }: { code: string }) {
             <span>
               <strong>该站暂停保障</strong> · 建议参考同地区可替代航站或联系总部协调
             </span>
+          </div>
+        </div>
+      )}
+
+      {/* ★ P0-5: 数据可信度组件 (Owner 7/29 授权, D-044-D)
+          - 显示 9 字段 + 状态
+          - MISSING 状态 → "暂无已核验数据" 显式提示 (上海浦东/虹桥 7/29 现状)
+          - VERIFIED/UNVERIFIED/STALE 显式状态标
+          - 置信度可视化
+          - PII 等级提示 */}
+      {city.trust && (
+        <div className="mt-4 border-y border-ink-100 bg-ink-50/60">
+          <div className="mx-auto max-w-7xl px-4 py-3 text-xs sm:px-6 lg:px-8">
+            <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
+              <span className="font-semibold text-ink-700">数据可信度</span>
+              {city.trust.review_status === "VERIFIED" && (
+                <span className="inline-flex items-center gap-1 rounded-full bg-green-100 px-2 py-0.5 text-[11px] font-medium text-green-800">
+                  ✅ VERIFIED
+                </span>
+              )}
+              {city.trust.review_status === "UNVERIFIED" && (
+                <span className="inline-flex items-center gap-1 rounded-full bg-ink-100 px-2 py-0.5 text-[11px] font-medium text-ink-700">
+                  ⏳ UNVERIFIED · 待审核
+                </span>
+              )}
+              {city.trust.review_status === "STALE" && (
+                <span className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-medium text-amber-800">
+                  ⏰ STALE · 数据过期
+                </span>
+              )}
+              {city.trust.review_status === "MISSING" && (
+                <span className="inline-flex items-center gap-1 rounded-full bg-red-100 px-2 py-0.5 text-[11px] font-medium text-red-800">
+                  ❌ MISSING · 暂无已核验数据
+                </span>
+              )}
+              {city.trust.review_status === "FIXTURE" && (
+                <span className="inline-flex items-center gap-1 rounded-full bg-purple-100 px-2 py-0.5 text-[11px] font-medium text-purple-800">
+                  🧪 FIXTURE · 测试数据
+                </span>
+              )}
+              {city.trust.review_status === "REDACTED" && (
+                <span className="inline-flex items-center gap-1 rounded-full bg-red-100 px-2 py-0.5 text-[11px] font-medium text-red-800">
+                  🔒 REDACTED · 已脱敏
+                </span>
+              )}
+              {city.trust.confidence !== null && city.trust.confidence !== undefined && (
+                <span className="text-ink-600">
+                  置信度 {(city.trust.confidence * 100).toFixed(0)}%
+                </span>
+              )}
+              {city.trust.pii_classification && city.trust.pii_classification !== "none" && (
+                <span className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-medium text-amber-800">
+                  ⚠️ PII: {city.trust.pii_classification}
+                </span>
+              )}
+              {city.trust.source_document && (
+                <span className="text-ink-500">
+                  来源: <code className="text-[11px]">{city.trust.source_document}</code>
+                </span>
+              )}
+              {city.trust.reviewed_by && city.trust.reviewed_at && (
+                <span className="text-ink-500">
+                  审核: {city.trust.reviewed_by} @ {fmtDate(city.trust.reviewed_at)}
+                </span>
+              )}
+              {city.trust.updated_at && (
+                <span className="text-ink-500">最后更新: {fmtDate(city.trust.updated_at)}</span>
+              )}
+            </div>
           </div>
         </div>
       )}

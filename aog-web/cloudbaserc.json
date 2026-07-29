@@ -25,9 +25,15 @@
         "MINIMAX_MODEL": "minimax-m3",
         "CORS_ALLOW_ORIGINS": "https://njx-copilot-d6gs7642f8fa17122-1343051603.tcloudbaseapp.com,https://njx-copilot-d6gs7642f8fa17122.ap-shanghai.app.tcloudbase.com,https://aog.njx.com,http://localhost:3000",
         "LOG_LEVEL": "INFO",
+        "AOG_VIEW_PASSWORD": "${AOG_VIEW_PASSWORD}",
+        "JWT_SECRET": "${JWT_SECRET}",
         "SYNC_ENABLED": "false",
         "KNOWLEDGE_BASE_PATH": "/tmp",
-        "RAW_PATH": "/tmp"
+        "RAW_PATH": "/tmp",
+        "ALLOW_MOCK": "false",
+        "STRICT_LLM": "true",
+        "APP_COMMIT_SHA": "${APP_COMMIT_SHA}",
+        "AOG_DB_PATH": "/tmp/aog.db"
       }
     }
   ],

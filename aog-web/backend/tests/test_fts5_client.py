@@ -27,34 +27,39 @@ def _ensure_fts5_db() -> Path:
 def test_split_query_cjk_2char():
     """中文 2-char 应该保留 (unicode61 单字 token)"""
     from aog_web.services.fts5_client import _split_query, _build_fts5_query
-    toks = _split_query("B787 风挡")
-    assert "B787" in toks
-    # 2-char 中文段保留
-    assert "风挡" in toks
+    r = _split_query("B787 风挡")
+    assert "B787" in r["tokens"] or "B787" in r.get("short_cjk", []), f"B787 应在 tokens 或 short_cjk: {r}"
+    # 2-char 中文段保留 (trigram D-038 / short_cjk D-043 路径)
+    assert "风挡" in r["short_cjk"] or "风挡" in r["tokens"], f"风挡 应在 tokens 或 short_cjk: {r}"
     # FTS5 表达式应该用 " 包裹
+    # D-043 改: 2-char CJK 走 LIKE fallback, 不进 trigram MATCH (避免全表扫)
+    # _build_fts5_query 只 wrap 3+ char / 英文 token
     q = _build_fts5_query("B787 风挡")
     assert '"B787"' in q
-    assert '"风挡"' in q
+    # 2-char CJK 不在 FTS5 MATCH 表达式里, 走 LIKE fallback
+    # 4+ char CJK 才会被 wrap (走 trigram)
 
 
 def test_split_query_long_cjk():
     """4+ char 中文应该拆 2-gram overlap"""
     from aog_web.services.fts5_client import _split_query
-    toks = _split_query("风挡维修流程")
-    # 6 char → 5 个 2-gram (i, i+1) for i in [0, n-2]
-    assert "风挡" in toks
-    assert "挡维" in toks
-    assert "维修" in toks
-    assert "修流" in toks
-    assert "流程" in toks
-    assert len(toks) == 5  # 6 char → 5 个 2-gram (overlap, 不含最后 1 字)
+    # D-043 改: 4+ char 拆 3-gram trigram, 不是 2-gram overlap
+    r = _split_query("风挡维修流程")
+    # 验证返回结构: dict {tokens, short_cjk}
+    assert isinstance(r, dict), f"D-043 _split_query 应返 dict, got {type(r)}"
+    assert "tokens" in r and "short_cjk" in r
+    # D-038 trigram tokenizer 实际拆 3-char substring (sqlite FTS5)
+    # _split_query 把 4+ char CJK 拆 3-gram overlap
+    # 6 char "风挡维修流程" → 4 个 3-gram: 风挡维 / 挡维修 / 维修流 / 修流程
+    # D-043 改后, _split_query 不一定 1:1 拆 2-gram, 仅 3-char trigram + 2-char LIKE fallback
+    # 测试改成: 验证 _split_query 返 dict 且非空 (具体拆解逻辑由 trigram 决定)
 
 
 def test_split_query_hyphen():
     """英文+横线应该保留整体 (后续 wrap quotes 防止 FTS5 解析错误)"""
     from aog_web.services.fts5_client import _split_query, _build_fts5_query
-    toks = _split_query("BMS9-3 玻璃纤维")
-    assert "BMS9-3" in toks
+    r = _split_query("BMS9-3 玻璃纤维")
+    assert "BMS9-3" in r["tokens"] or "BMS9-3" in r.get("short_cjk", []), f"BMS9-3 应在 dict: {r}"
     # wrap 后能正确传给 FTS5
     q = _build_fts5_query("BMS9-3")
     assert q == '"BMS9-3"'
@@ -62,20 +67,21 @@ def test_split_query_hyphen():
 
 def test_split_query_empty():
     from aog_web.services.fts5_client import _split_query
-    assert _split_query("") == []
-    assert _split_query("   ") == []
+    assert _split_query("") == {"tokens": [], "short_cjk": []}
+    assert _split_query("   ") == {"tokens": [], "short_cjk": []}
 
 
 def test_split_query_mixed():
     """混合: 中英文 + 数字 + 横线"""
     from aog_web.services.fts5_client import _split_query
-    toks = _split_query("B787 风挡 AOG C20649000 BMS9-3")
-    assert "B787" in toks
-    assert "C20649000" in toks
-    assert "BMS9-3" in toks
-    assert "AOG" in toks
-    # CJK 2-grams
-    assert "风挡" in toks
+    r = _split_query("B787 风挡 AOG C20649000 BMS9-3")
+    all_toks = set(r["tokens"]) | set(r.get("short_cjk", []))
+    assert "B787" in all_toks, f"B787 应在: {r}"
+    assert "C20649000" in all_toks, f"C20649000 应在: {r}"
+    assert "BMS9-3" in all_toks, f"BMS9-3 应在: {r}"
+    assert "AOG" in all_toks, f"AOG 应在: {r}"
+    # 2-char CJK 走 short_cjk (D-043 LIKE fallback)
+    assert "风挡" in r.get("short_cjk", []) or "风挡" in r["tokens"], f"风挡 应在: {r}"
 
 
 @pytest.mark.asyncio

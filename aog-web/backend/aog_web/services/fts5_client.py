@@ -24,68 +24,88 @@ logger = logging.getLogger(__name__)
 # ====== Query 智能解析 ======
 _CJK_RE = re.compile(r"[\u4e00-\u9fff]+")
 _ASCII_TOKEN_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_\-./#]*")
+_CJK_CHAR = "\u4e00-\u9fff"
 
 
-def _split_query(q: str) -> List[str]:
-    """拆 query 为 token list
-    - 英文/数字 run 保持完整 (含 . - _ / #)
-    - 中文连续段: 按 2-3 字拆 (避免 4+ char phrase 不能匹配)
+def _split_query(q: str) -> Dict[str, List[str]]:
+    """拆 query 为 tokens + short_cjk 短 CJK 段
+
+    D-038 治本 (NJX 7/27 19:55 反馈"未找到赫尔辛基预案"):
+      unicode61 tokenizer 不切 CJK, 整 db 643 个 term 全 ASCII
+      trigram tokenizer 3-char substring, 召回 CJK 正常
+      短 CJK (2 char, e.g. 西安/三亚/广州) trigram 拆不出 → fallback 走 LIKE 全文扫
+
+    Returns:
+        {
+            "tokens": List[str]   # 走 FTS5 trigram 的 3-gram
+            "short_cjk": List[str]  # 2 char CJK 段, 走 LIKE 全文扫 fallback
+        }
     """
     q = q.strip()
     if not q:
-        return []
-    tokens: List[str] = []
+        return {"tokens": [], "short_cjk": []}
 
-    # 1) 先把英文/数字 token 拿出来
+    trigram_tokens: List[str] = []
+    short_cjk_tokens: List[str] = []
     cursor = 0
-    for m in _ASCII_TOKEN_RE.finditer(q):
-        # m 之前的中文段
-        cjk_seg = q[cursor : m.start()]
-        tokens.extend(_split_cjk(cjk_seg))
-        tokens.append(m.group(0))
-        cursor = m.end()
-    # 尾部中文段
-    tokens.extend(_split_cjk(q[cursor:]))
 
-    # 过滤空 + 单字符
-    tokens = [t for t in tokens if len(t) >= 2]
-    # 去重保序
+    for m in _ASCII_TOKEN_RE.finditer(q):
+        cjk_seg = q[cursor : m.start()]
+        _split_cjk_segment(cjk_seg, trigram_tokens, short_cjk_tokens)
+        trigram_tokens.append(m.group(0))
+        cursor = m.end()
+    _split_cjk_segment(q[cursor:], trigram_tokens, short_cjk_tokens)
+
+    trigram_tokens = [t for t in trigram_tokens if len(t) >= 3]
+    short_cjk_tokens = [t for t in short_cjk_tokens if 2 <= len(t) <= 2]
+    trigram_tokens = _dedup(trigram_tokens)
+    short_cjk_tokens = _dedup(short_cjk_tokens)
+    return {"tokens": trigram_tokens, "short_cjk": short_cjk_tokens}
+
+
+def _split_cjk_segment(seg: str, trigram_out: List[str], short_out: List[str]) -> None:
+    """中文段拆 3-gram (走 FTS5) + 2 char (走 LIKE fallback)"""
+    if not seg:
+        return
+    seg = seg.strip()
+    n = len(seg)
+    if n == 0:
+        return
+    if n <= 2:
+        # 1-2 char CJK: 短 token, 走 LIKE fallback
+        if all("\u4e00" <= c <= "\u9fff" for c in seg):
+            short_out.append(seg)
+        return
+    # 3+ char: 拆 3-gram overlap
+    for i in range(n - 2):
+        gram = seg[i : i + 3]
+        if all("\u4e00" <= c <= "\u9fff" for c in gram):
+            trigram_out.append(gram)
+    # 2-gram 也加入 short_cjk (作为 LIKE fallback 冗余, 防 trigram 漏召)
+    for i in range(n - 1):
+        gram = seg[i : i + 2]
+        if all("\u4e00" <= c <= "\u9fff" for c in gram):
+            short_out.append(gram)
+
+
+def _dedup(items: List[str]) -> List[str]:
     seen = set()
     out = []
-    for t in tokens:
-        if t not in seen:
-            seen.add(t)
-            out.append(t)
-    return out
-
-
-def _split_cjk(seg: str) -> List[str]:
-    """中文段拆为 2-3 字 overlap chunks
-    例: "风挡维修流程" → ["风挡", "挡维", "维修", "理流", "流程"]
-    这样 "风挡" 单独命中 + "维修" 单独命中
-    """
-    if not seg:
-        return []
-    seg = seg.strip()
-    if len(seg) <= 2:
-        return [seg] if seg else []
-    out = []
-    n = len(seg)
-    for i in range(n - 1):
-        # 2-gram
-        out.append(seg[i : i + 2])
-    # 末尾的 3-gram (可选, 减少 noise)
-    # for i in range(n - 2):
-    #     out.append(seg[i : i + 3])
+    for x in items:
+        if x not in seen:
+            seen.add(x)
+            out.append(x)
     return out
 
 
 def _build_fts5_query(q: str) -> str:
-    """构造 FTS5 MATCH 表达式
-    - 每个 token 用 "..." 包裹 (避免 dash / CJK 解析问题)
+    """构造 FTS5 MATCH 表达式 (D-038 治本 trigram)
+    - 3-gram 3+ char CJK token + 英文/数字 run
     - 多个 token 用 OR 连接 (召回优先, BM25 排序自然过滤)
+    - 2 char CJK 段走 LIKE fallback (fts5_client.query 中处理)
     """
-    tokens = _split_query(q)
+    parsed = _split_query(q)
+    tokens = parsed["tokens"]
     if not tokens:
         return ""
     return " OR ".join(f'"{t}"' for t in tokens)
@@ -150,68 +170,209 @@ class FTS5Client:
             return []
         n_results = max(1, min(n_results, 20))
 
-        fts_query = _build_fts5_query(q)
-        if not fts_query:
-            return []
+        parsed = _split_query(q)
+        fts_tokens = parsed["tokens"]
+        short_cjk = parsed["short_cjk"]
+        fts_query = _build_fts5_query(q) if fts_tokens else ""
 
         where = where or {}
         source_type = where.get("source_type") or where.get("kind")
         region = where.get("region")
         status = where.get("status")
 
-        # 构造 WHERE 子句
-        # 注意: source_type/region/status 是 UNINDEXED, 只能走 chunks_meta
-        # 走 JOIN 拿 id, 简单可靠
-        # 一次 query 拿 content (c0) + 其它 metadata, 避免 N+1
-        sql = """
-            SELECT
-                c.rowid AS rowid,
-                cc.c0 AS content,
-                c.doc_id AS doc_id,
-                c.title AS title,
-                c.source_path AS source_path,
-                c.source_type AS source_type,
-                c.region AS region,
-                c.status AS status,
-                c.chunk_index AS chunk_index,
-                bm25(chunks_fts) AS bm25_score
-            FROM chunks_fts c
-            JOIN chunks_fts_content cc ON cc.id = c.rowid
-            WHERE chunks_fts MATCH ?
-        """
-        params: List[Any] = [fts_query]
-        if source_type:
-            sql += " AND c.source_type = ?"
-            params.append(source_type)
-        if region:
-            sql += " AND c.region = ?"
-            params.append(region)
-        if status:
-            sql += " AND c.status = ?"
-            params.append(status)
-        sql += " ORDER BY bm25_score LIMIT ?"
-        params.append(n_results)
+        # 1) 主路径: FTS5 trigram MATCH (3+ char CJK / 英文)
+        fts_rows: List[Tuple] = []
+        if fts_query:
+            sql = """
+                SELECT
+                    c.rowid AS rowid,
+                    cc.c0 AS content,
+                    c.doc_id AS doc_id,
+                    c.title AS title,
+                    c.source_path AS source_path,
+                    c.source_type AS source_type,
+                    c.region AS region,
+                    c.status AS status,
+                    c.chunk_index AS chunk_index,
+                    bm25(chunks_fts) AS bm25_score
+                FROM chunks_fts c
+                JOIN chunks_fts_content cc ON cc.id = c.rowid
+                WHERE chunks_fts MATCH ?
+            """
+            params: List[Any] = [fts_query]
+            if source_type:
+                sql += " AND c.source_type = ?"
+                params.append(source_type)
+            if region:
+                sql += " AND c.region = ?"
+                params.append(region)
+            if status:
+                sql += " AND c.status = ?"
+                params.append(status)
+            # trigram OR 召回较松, 多取一些 (2x n_results), 后面用 LIKE 合并去重
+            sql += " ORDER BY bm25_score LIMIT ?"
+            params.append(n_results * 2)
+            try:
+                db = await self._get_db()
+                async with db.execute(sql, params) as cur:
+                    fts_rows = await cur.fetchall()
+            except Exception as e:
+                logger.error("fts5 query failed: q=%r fts_q=%r err=%s", q[:50], fts_query[:80], e)
+                fts_rows = []
 
-        try:
-            db = await self._get_db()
-            async with db.execute(sql, params) as cur:
-                rows = await cur.fetchall()
-        except Exception as e:
-            logger.error("fts5 query failed: q=%r fts_q=%r err=%s", q[:50], fts_query[:80], e)
-            return []
+        # 2) 短 CJK LIKE fallback (2 char, e.g. 西安/三亚/广州)
+        #    trigram 拆不出 2 char, 必须走 LIKE 全文扫
+        #    D-043 (NJX 7/28 11:44 + 20:45 反馈"雅典/南宁 召错城市"):
+        #      LIKE 召出 100+ city (N-南宁 排 38 / Y-雅典 排 212), LIMIT 16 截不到
+        #      修法: SQL ORDER BY 命中 city-specific keyword 排前
+        #      city-specific 判定: short_cjk 里**只在 source_id 出现**的 keyword (城市名 e.g. "南宁"/"雅典")
+        #      通用词 ("需求/求地/地点/防冰/控制" 等) 在很多 doc 都出现, 不是 city-specific
+        like_rows: List[Tuple] = []
+        if short_cjk:
+            # 通用 AOG 词表 — 这些 keyword 命中算"通用" (不 specificity)
+            # 扩到 NJX 7/28 20:45 query "机号 B-321A 需求地点 南宁 38E93-6 大翼防冰控制活门"
+            # 拆出的所有 short_cjk 词, 真正 city-specific 的只有"南宁"
+            _GENERIC_AOG_WORDS_LIKE = {
+                "保障", "预案", "求援", "故障", "外站", "手册", "应急", "处理",
+                "需求", "求地", "地点", "控制", "活门", "防冰", "大翼", "翼防", "冰控", "制活", "机号",
+                "查询", "结果", "建议", "参考", "资料", "站点", "档案", "模板",
+            }
+            specific_kws = [kw for kw in short_cjk if kw not in _GENERIC_AOG_WORDS_LIKE]
+            # 构造 LIKE: 多个 short_cjk OR
+            # 全部 CAST AS TEXT (D-043: c.doc_id UNINDEXED 是 INTEGER affinity, 直接 LIKE 报 datatype mismatch in aiosqlite)
+            like_clauses = " OR ".join(["CAST(cc.c0 AS TEXT) LIKE ?"] * len(short_cjk))
+            # ORDER BY: 优先 doc_id 含 specific_kw (是该城市 doc), 然后 content 含 specific_kw (提到该城市)
+            #            最后 rowid 自然顺序
+            if specific_kws:
+                specific_doc_id_clauses = " OR ".join(["CAST(c.doc_id AS TEXT) LIKE ?"] * len(specific_kws))
+                specific_content_clauses = " OR ".join(["CAST(cc.c0 AS TEXT) LIKE ?"] * len(specific_kws))
+                order_by_specificity = f"""
+                    ORDER BY (CASE WHEN ({specific_doc_id_clauses}) THEN 0
+                                    WHEN ({specific_content_clauses}) THEN 1
+                                    ELSE 2 END) ASC,
+                             c.rowid ASC
+                """
+            else:
+                order_by_specificity = " ORDER BY c.rowid ASC"
+            sql2 = f"""
+                SELECT
+                    c.rowid AS rowid,
+                    cc.c0 AS content,
+                    c.doc_id AS doc_id,
+                    c.title AS title,
+                    c.source_path AS source_path,
+                    c.source_type AS source_type,
+                    c.region AS region,
+                    c.status AS status,
+                    c.chunk_index AS chunk_index,
+                    0.0 AS bm25_score
+                FROM chunks_fts c
+                JOIN chunks_fts_content cc ON cc.id = c.rowid
+                WHERE {like_clauses}
+            """
+            params2: List[Any] = [f"%{t}%" for t in short_cjk]
+            if source_type:
+                sql2 += " AND c.source_type = ?"
+                params2.append(source_type)
+            if region:
+                sql2 += " AND c.region = ?"
+                params2.append(region)
+            if status:
+                sql2 += " AND c.status = ?"
+                params2.append(status)
+            sql2 += order_by_specificity + " LIMIT ?"
+            if specific_kws:
+                # ORDER BY specificity 参数: doc_id LIKE + content LIKE (在 LIMIT 之前, 占位符顺序)
+                for kw in specific_kws:
+                    params2.append(f"%{kw}%")  # doc_id
+                for kw in specific_kws:
+                    params2.append(f"%{kw}%")  # content
+            params2.append(n_results * 4)  # D-043: 4x, 必须在 specific_kws 之后 (SQL 末尾)
+            try:
+                db = await self._get_db()
+                async with db.execute(sql2, params2) as cur:
+                    like_rows = await cur.fetchall()
+            except Exception as e:
+                logger.warning("fts5 LIKE fallback failed: q=%r err=%s sql=%r params=%r", q[:50], e, sql2, params2)
+                like_rows = []
+
+        # 3) 合并去重 + specificity-aware 排序 (D-043 治本: Y-雅典 LIKE 命中排前)
+        #    修法: 不再"fts_rows 全部 in 完才接 like_rows", 改按 (kind, specificity, score) 排
+        #    - fts5 命中 + city-specific 关键字 (e.g. "雅典") → 最强相关
+        #    - LIKE 命中 + city-specific 关键字 → 次强
+        #    - fts5 命中 + 通用词 (e.g. "保障") → 弱
+        #    - LIKE 命中 + 通用词 → 最弱
+        #    city-specific 判定: short_cjk keyword 不在"通用 AOG 词表" (保障/预案/求援/故障/外站/手册)
+        seen_rowids: set = set()
+        fts_seen: set = set()  # 在 fts_rows 里的 rowid
+        for row in fts_rows:
+            seen_rowids.add(row[0])
+            fts_seen.add(row[0])
+        for row in like_rows:
+            seen_rowids.add(row[0])
+        merged: List[Tuple] = []
+        for row in fts_rows:
+            merged.append(row)
+        for row in like_rows:
+            if row[0] not in fts_seen:
+                merged.append(row)
+
+        # 通用 AOG 词表 — 这些 keyword 命中算"通用" (不 specificity)
+        # D-043 (NJX 7/28 20:45): 词表扩到 20+ 通用词, 避免 "需求/控制/活门" 等误判 city-specific
+        _GENERIC_AOG_WORDS = {
+            "保障", "预案", "求援", "故障", "外站", "手册", "应急", "处理",
+            "需求", "求地", "地点", "控制", "活门", "防冰", "大翼", "翼防", "冰控", "制活", "机号",
+            "查询", "结果", "建议", "参考", "资料", "站点", "档案", "模板",
+        }
+
+        def _specificity(source_id: str, content: str) -> int:
+            """判断 chunk 是否 city-specific (命中城市名 keyword, 不是通用 AOG 词)
+            命中 short_cjk 任一 keyword, 且 keyword 不在通用词表 → 1
+            进一步看 source_id 包含 keyword (e.g. "N-南宁" 含 "南宁") → 2 (最强)
+            """
+            if not short_cjk:
+                return 0
+            for kw in short_cjk:
+                if kw not in _GENERIC_AOG_WORDS:
+                    if source_id and kw in source_id:
+                        return 2  # 是该城市的 doc
+                    if content and kw in content:
+                        return 1  # 提到该城市
+            return 0
+
+        def _sort_key(r):
+            rowid = r[0]
+            content = r[1] or ""
+            source_id = r[2] or ""  # doc_id
+            bm25 = r[9] if len(r) > 9 else 0.0
+            in_fts = rowid in fts_seen
+            spec = _specificity(source_id, content)
+            try:
+                bm25_f = float(bm25) if bm25 not in (None, 0, 0.0) else 0.0
+            except (TypeError, ValueError):
+                bm25_f = 0.0
+            # 排序优先级: specificity (2/1/0) > kind (fts5 < like) > bm25
+            # D-043: 之前 kind > spec, 导致 fts5 命中的"通用 wiki" 顶掉 LIKE 命中的 city-specific chunk
+            #   现在 spec > kind, N-南宁 + Y-雅典 排前
+            # specificity: 2=doc 是该城市, 1=提到该城市, 0=无关
+            # kind: 0=fts5 命中, 1=LIKE 命中
+            # bm25: 越负越相关 (fts5 内部排)
+            kind = 0 if in_fts else 1
+            return (-spec, kind, -bm25_f)
+
+        merged.sort(key=_sort_key)
 
         out: List[Dict[str, Any]] = []
-        for row in rows:
+        for row in merged[:n_results]:
             rowid, content, doc_id, title, source_path, source_type, region, status, chunk_index, bm25 = row
-            # bm25 越小越相关, score = 1 / (1 + |bm25|) → 0-1
             try:
                 bm25_f = float(bm25)
             except (TypeError, ValueError):
                 bm25_f = 0.0
+            if bm25_f == 0.0 and short_cjk:
+                # LIKE fallback 命中: 给一个合理的 score (0.5-0.8 区间)
+                bm25_f = -1.0  # 视为较弱相关
             score = 1.0 / (1.0 + abs(bm25_f))
-            # doc_id: chroma 的 id (e.g. "city:A-澳门:0") 用 doc_id 字段, 但 rowid 不一样
-            # 我们要保留 source_id 形式 ("A-澳门") 给前端 / city:xxx 形式
-            # FTS5 的 rowid 不是 chunk 业务 id, 用 source_id + chunk_index 拼
             chunk_id = f"{source_type}:{doc_id}:{chunk_index}" if source_type and doc_id else f"chunk:{rowid}"
 
             out.append({
@@ -224,7 +385,7 @@ class FTS5Client:
                     "source_type": source_type or "",
                     "region": region or "",
                     "status": status or "",
-                    "kind": source_type or "",  # 兼容 chroma metadata.kind
+                    "kind": source_type or "",
                     "chunk_index": chunk_index or 0,
                 },
                 "score": round(score, 4),
@@ -246,37 +407,83 @@ class FTS5Client:
             return ""
 
     async def search_cities(self, q: str, n: int = 5, region: Optional[str] = None) -> List[Dict[str, Any]]:
-        """城市全文检索 (用于 /api/cities?q=... 与 sqlite_client.list_cities 互补)"""
+        """城市全文检索 (用于 /api/cities?q=... 与 sqlite_client.list_cities 互补)
+        D-038: 加 short_cjk LIKE fallback (2 char 城市名 e.g. 西安/三亚/广州)
+        """
         if not q or not q.strip():
             return []
-        fts_query = _build_fts5_query(q)
-        if not fts_query:
-            return []
-        sql = """
-            SELECT code, name, airport, iata, pinyin, region, status, bm25(cities_fts) AS bm25_score
-            FROM cities_fts
-            WHERE cities_fts MATCH ?
-        """
-        params: List[Any] = [fts_query]
-        if region:
-            sql += " AND region = ?"
-            params.append(region)
-        sql += " ORDER BY bm25_score LIMIT ?"
-        params.append(n)
-        try:
-            db = await self._get_db()
-            async with db.execute(sql, params) as cur:
-                rows = await cur.fetchall()
-        except Exception as e:
-            logger.error("fts5 cities search failed: q=%r err=%s", q[:50], e)
-            return []
+        parsed = _split_query(q)
+        fts_tokens = parsed["tokens"]
+        short_cjk = parsed["short_cjk"]
+        fts_query = _build_fts5_query(q) if fts_tokens else ""
+
+        fts_rows: List[Tuple] = []
+        if fts_query:
+            sql = """
+                SELECT code, name, airport, iata, pinyin, region, status, bm25(cities_fts) AS bm25_score
+                FROM cities_fts
+                WHERE cities_fts MATCH ?
+            """
+            params: List[Any] = [fts_query]
+            if region:
+                sql += " AND region = ?"
+                params.append(region)
+            sql += " ORDER BY bm25_score LIMIT ?"
+            params.append(n * 2)
+            try:
+                db = await self._get_db()
+                async with db.execute(sql, params) as cur:
+                    fts_rows = await cur.fetchall()
+            except Exception as e:
+                logger.error("fts5 cities search failed: q=%r err=%s", q[:50], e)
+                fts_rows = []
+
+        # 短 CJK LIKE fallback (e.g. "西安" 查 cities.name)
+        like_rows: List[Tuple] = []
+        if short_cjk:
+            like_clauses = " OR ".join(["name LIKE ? OR pinyin LIKE ?"] * len(short_cjk))
+            sql2 = f"""
+                SELECT code, name, airport, iata, pinyin, region, status, 0.0 AS bm25_score
+                FROM cities_fts
+                WHERE {like_clauses}
+            """
+            params2: List[Any] = []
+            for t in short_cjk:
+                params2.extend([f"%{t}%", f"%{t}%"])
+            if region:
+                sql2 += " AND region = ?"
+                params2.append(region)
+            sql2 += " LIMIT ?"
+            params2.append(n * 2)
+            try:
+                db = await self._get_db()
+                async with db.execute(sql2, params2) as cur:
+                    like_rows = await cur.fetchall()
+            except Exception as e:
+                logger.warning("fts5 cities LIKE fallback failed: q=%r err=%s", q[:50], e)
+                like_rows = []
+
+        # 合并去重
+        seen_codes: set = set()
+        merged: List[Tuple] = []
+        for r in fts_rows:
+            if r[0] not in seen_codes:
+                seen_codes.add(r[0])
+                merged.append(r)
+        for r in like_rows:
+            if r[0] not in seen_codes:
+                seen_codes.add(r[0])
+                merged.append(r)
+
         out = []
-        for r in rows:
+        for r in merged[:n]:
             code, name, airport, iata, pinyin, region, status, bm25 = r
             try:
                 bm25_f = float(bm25)
             except (TypeError, ValueError):
                 bm25_f = 0.0
+            if bm25_f == 0.0 and short_cjk:
+                bm25_f = -1.0
             score = 1.0 / (1.0 + abs(bm25_f))
             out.append({
                 "id": code,
@@ -296,32 +503,71 @@ class FTS5Client:
         return out
 
     async def search_experiences(self, q: str, n: int = 5) -> List[Dict[str, Any]]:
-        """经验全文检索"""
+        """经验全文检索
+        D-038: trigram 主路径, 短 CJK LIKE fallback
+        """
         if not q or not q.strip():
             return []
-        fts_query = _build_fts5_query(q)
-        if not fts_query:
-            return []
-        sql = """
-            SELECT id, title, category, status, tags, bm25(experiences_fts) AS bm25_score
-            FROM experiences_fts
-            WHERE experiences_fts MATCH ?
-            ORDER BY bm25_score LIMIT ?
-        """
-        try:
-            db = await self._get_db()
-            async with db.execute(sql, (fts_query, n)) as cur:
-                rows = await cur.fetchall()
-        except Exception as e:
-            logger.error("fts5 experiences search failed: q=%r err=%s", q[:50], e)
-            return []
+        parsed = _split_query(q)
+        fts_tokens = parsed["tokens"]
+        short_cjk = parsed["short_cjk"]
+        fts_query = _build_fts5_query(q) if fts_tokens else ""
+
+        fts_rows: List[Tuple] = []
+        if fts_query:
+            sql = """
+                SELECT id, title, category, status, tags, bm25(experiences_fts) AS bm25_score
+                FROM experiences_fts
+                WHERE experiences_fts MATCH ?
+                ORDER BY bm25_score LIMIT ?
+            """
+            try:
+                db = await self._get_db()
+                async with db.execute(sql, (fts_query, n * 2)) as cur:
+                    fts_rows = await cur.fetchall()
+            except Exception as e:
+                logger.error("fts5 experiences search failed: q=%r err=%s", q[:50], e)
+                fts_rows = []
+
+        # 短 CJK LIKE fallback
+        like_rows: List[Tuple] = []
+        if short_cjk:
+            like_clauses = " OR ".join(["title LIKE ?"] * len(short_cjk))
+            sql2 = f"""
+                SELECT id, title, category, status, tags, 0.0 AS bm25_score
+                FROM experiences_fts
+                WHERE {like_clauses}
+                LIMIT ?
+            """
+            params2: List[Any] = [f"%{t}%" for t in short_cjk] + [n * 2]
+            try:
+                db = await self._get_db()
+                async with db.execute(sql2, params2) as cur:
+                    like_rows = await cur.fetchall()
+            except Exception as e:
+                logger.warning("fts5 experiences LIKE fallback failed: q=%r err=%s", q[:50], e)
+                like_rows = []
+
+        seen_ids: set = set()
+        merged: List[Tuple] = []
+        for r in fts_rows:
+            if r[0] not in seen_ids:
+                seen_ids.add(r[0])
+                merged.append(r)
+        for r in like_rows:
+            if r[0] not in seen_ids:
+                seen_ids.add(r[0])
+                merged.append(r)
+
         out = []
-        for r in rows:
+        for r in merged[:n]:
             eid, title, category, status, tags, bm25 = r
             try:
                 bm25_f = float(bm25)
             except (TypeError, ValueError):
                 bm25_f = 0.0
+            if bm25_f == 0.0 and short_cjk:
+                bm25_f = -1.0
             score = 1.0 / (1.0 + abs(bm25_f))
             out.append({
                 "id": eid,
@@ -337,6 +583,163 @@ class FTS5Client:
                 "score": round(score, 4),
             })
         return out
+
+    # ============================================================
+    # ★ P0-3: build_manifest 读写 + 校验 (Owner 7/29 授权)
+    # ============================================================
+
+    EXPECTED_TOKENIZER = "trigram"  # D-038 治本, D-044-B 锁定
+    # ★ P0-7 (Owner 7/29 严令): 精确相等, 不是 >= 比较
+    # 升级 schema 时改这里 + 触发 rebuild
+    EXPECTED_SCHEMA_VERSION_MIN = "v30-d038-d043"  # 启动要求 == 此版本
+
+    async def get_manifest(self) -> Optional[Dict[str, Any]]:
+        """读 build_manifest 单行, 不存在返 None"""
+        try:
+            db = await self._get_db()
+            async with db.execute(
+                """
+                SELECT tokenizer, build_commit, build_branch, build_time,
+                       source_manifest_hash, chunks_count, exp_count,
+                       cities_count, core_count, wiki_count, db_size_bytes,
+                       fts5_schema_version
+                FROM build_manifest WHERE id = 1
+                """
+            ) as cur:
+                row = await cur.fetchone()
+                if not row:
+                    return None
+                return {
+                    "tokenizer": row[0],
+                    "build_commit": row[1],
+                    "build_branch": row[2],
+                    "build_time": row[3],
+                    "source_manifest_hash": row[4],
+                    "chunks_count": row[5],
+                    "exp_count": row[6],
+                    "cities_count": row[7],
+                    "core_count": row[8],
+                    "wiki_count": row[9],
+                    "db_size_bytes": row[10],
+                    "fts5_schema_version": row[11],
+                }
+        except Exception as e:
+            logger.warning("get_manifest failed: %s", e)
+            return None
+
+    async def validate_manifest_or_fail(self) -> Dict[str, Any]:
+        """★ P0-3 + P0-7: 启动时校验 build_manifest, 不一致 fail-closed (抛 RuntimeError)
+
+        校验项 (Owner 7/29 严令):
+        1. manifest 存在 (不存在 = 索引没经过 export_fts5, fail)
+        2. tokenizer == EXPECTED_TOKENIZER (trigram, D-038) — 精确等
+        3. fts5_schema_version == EXPECTED_SCHEMA_VERSION (精确等, 不用 < 比较)
+        4. build_commit 非空 (空 = 占位, fail)
+        5. db_size_bytes > 0 (空索引, fail)
+        6. ★ P0-7: manifest db_size_bytes 与实际 fts5_index.db 文件大小一致
+        7. ★ P0-7: build_commit 与环境变量 APP_COMMIT_SHA 一致 (部署时校验)
+        8. ★ P0-7: chunks_count 与实际 chunks_fts 表行数一致
+        9. ★ P0-7: source_manifest_hash 与 aog.db 实际 sha256 一致 (如指定 aog.db_path)
+        10. ★ P0-7: 日志不输出敏感内容 (build_commit 截断, 不输出 source_manifest_hash 完整)
+
+        任何一项不通过 → 抛 RuntimeError → lifespan 不启动 → SCF 容器重启
+        """
+        import os
+        m = await self.get_manifest()
+        if m is None:
+            raise RuntimeError(
+                f"P0-3 fail-closed: build_manifest 不存在 in {self.db_path}. "
+                "请跑 pipeline/scripts/export_fts5.py 重建索引."
+            )
+        errors = []
+        # 1. tokenizer 精确等
+        if m["tokenizer"] != self.EXPECTED_TOKENIZER:
+            errors.append(
+                f"tokenizer={m['tokenizer']!r} 期望 {self.EXPECTED_TOKENIZER!r} 精确等. "
+                "D-038 治本要求 trigram. 老 unicode61 索引必须 rebuild."
+            )
+        # 2. schema version 精确等 (Owner 7/29 严令: 不用字符串大小比较)
+        if m["fts5_schema_version"] != self.EXPECTED_SCHEMA_VERSION_MIN:
+            errors.append(
+                f"fts5_schema_version={m['fts5_schema_version']!r} "
+                f"!= 期望 {self.EXPECTED_SCHEMA_VERSION_MIN!r} 精确等. "
+                "schema 版本不匹配, 必须 rebuild."
+            )
+        # 3. build_commit 非空
+        if not m["build_commit"] or m["build_commit"] == "unknown":
+            errors.append(
+                f"build_commit={m['build_commit']!r} 不可用. "
+                "export_fts5 跑时 git rev-parse 失败或非 git 仓库."
+            )
+        # 4. db_size_bytes > 0
+        if m["db_size_bytes"] <= 0:
+            errors.append(
+                f"db_size_bytes={m['db_size_bytes']} 索引为空. 必须 rebuild."
+            )
+        # 5. ★ P0-7: manifest db_size_bytes 与实际文件大小核对
+        try:
+            actual_size = self.db_path.stat().st_size
+            if abs(m["db_size_bytes"] - actual_size) > 1024:
+                # 允许 1KB 容差 (DB header 写入)
+                errors.append(
+                    f"db_size_bytes manifest={m['db_size_bytes']} 实际={actual_size} 差 {abs(m['db_size_bytes']-actual_size)} > 1KB. "
+                    "索引文件被改 / 未完整写入 / cache stale, 必须 rebuild."
+                )
+        except OSError as e:
+            errors.append(f"db file stat 失败: {e}")
+        # 6. ★ P0-7: build_commit 与环境变量 APP_COMMIT_SHA 一致 (部署时校验)
+        app_commit_sha = os.environ.get("APP_COMMIT_SHA", "").strip()
+        if app_commit_sha:
+            # 仅前 8 字符 (CI 通常传短 SHA)
+            if not m["build_commit"].startswith(app_commit_sha[:8]):
+                errors.append(
+                    f"build_commit manifest={m['build_commit'][:12]} 部署 APP_COMMIT_SHA={app_commit_sha[:12]} 不匹配. "
+                    "部署的不是本次 build 的索引, 必须 rebuild + 重新部署."
+                )
+        # 7. ★ P0-7: chunks_count 与实际表行数一致
+        try:
+            db = await self._get_db()
+            async with db.execute("SELECT count(*) FROM chunks_fts") as cur:
+                row = await cur.fetchone()
+                actual_chunks = int(row[0]) if row else 0
+            if m["chunks_count"] != actual_chunks:
+                errors.append(
+                    f"chunks_count manifest={m['chunks_count']} 实际表行={actual_chunks} 不一致. "
+                    "索引被截断 / 部分写入, 必须 rebuild."
+                )
+        except Exception as e:
+            errors.append(f"chunks count 验证失败: {e}")
+        # 8. ★ P0-7: source_manifest_hash 与 aog.db 实际 SHA256 (Owner 7/29 严令)
+        aog_db_path_str = os.environ.get("AOG_DB_PATH", "").strip()
+        if aog_db_path_str and m.get("source_manifest_hash"):
+            from pathlib import Path
+            aog_db_path = Path(aog_db_path_str)
+            if aog_db_path.exists():
+                import hashlib
+                h = hashlib.sha256()
+                try:
+                    with open(aog_db_path, "rb") as f:
+                        while chunk := f.read(8192):
+                            h.update(chunk)
+                    actual_hash = h.hexdigest()
+                    if m["source_manifest_hash"] != actual_hash:
+                        errors.append(
+                            f"source_manifest_hash manifest={m['source_manifest_hash'][:12]}... 实际 aog.db sha256={actual_hash[:12]}... 不一致. "
+                            "aog.db 改了但 fts5 索引没 rebuild, 必须 rebuild."
+                        )
+                except OSError as e:
+                    errors.append(f"aog.db hash 计算失败: {e}")
+
+        if errors:
+            msg = "P0-3 + P0-7 fail-closed: build_manifest 校验失败:\n  - " + "\n  - ".join(errors)
+            logger.error(msg)
+            raise RuntimeError(msg)
+        # ★ P0-7: 日志不输出敏感内容 — build_commit 截断, source_manifest_hash 截断, 不输出 db_size_bytes 原值
+        logger.info(
+            "P0-3 + P0-7 manifest 校验通过: tokenizer=%s commit=%s schema=%s chunks=%d (db_size hidden)",
+            m["tokenizer"], m["build_commit"][:8], m["fts5_schema_version"], m["chunks_count"],
+        )
+        return m
 
 
 _client: Optional[FTS5Client] = None

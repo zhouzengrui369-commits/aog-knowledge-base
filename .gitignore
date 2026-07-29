@@ -56,3 +56,4 @@ aog-web/functions/*/aog_web/
 
 # AOG 知识库原始数据 (>50MB 项目周例会等)
 AOG知识库/05_项目立项/项目周例会*
+aog-web/frontend/.next.died/

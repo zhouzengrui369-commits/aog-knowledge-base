@@ -24,6 +24,8 @@ class LLM(Protocol):
 
     async def chat(self, messages: List[Dict[str, str]], **kwargs: Any) -> str: ...
 
+    async def stream_chat(self, messages: List[Dict[str, str]], **kwargs: Any) -> Any: ...  # AsyncIterator[str]
+
     async def close(self) -> None: ...
 
 
@@ -98,15 +100,26 @@ def get_llm(name: Optional[str] = None, settings: Optional[Settings] = None) -> 
     """工厂: 根据 name 获取 LLM 实例
 
     - name 缺省 = settings.llm_model
-    - key 缺失 → 自动降级 MockLLM (带 ⚠️ Mock 模式 标志)
+    - key 缺失 → 自动降级 MockLLM (带 ⚠️ Mock 模式 标志) [dev only]
+    - ALLOW_MOCK=false (production) + is_mock_llm=True → raise RuntimeError (P0-4 fail-closed)
     - 不支持的名字 → 抛 ValueError
     """
     s = settings or get_settings()
     target = name or s.MINIMAX_MODEL
 
-    # key 缺失直接 Mock
+    # key 缺失处理
     if s.is_mock_llm:
-        logger.warning("MINIMAX_API_KEY missing → using MockLLM (⚠️ Mock 模式)")
+        # ★ P0-4: production 严令 (Owner 7/29 授权)
+        # ALLOW_MOCK=false 时即使想 mock 也必须 fail-closed
+        if not s.ALLOW_MOCK:
+            msg = (
+                f"P0-4 fail-closed: ALLOW_MOCK=false 但 MINIMAX_API_KEY 空. "
+                f"production 必须配真 key, 或显式设 ALLOW_MOCK=true (仅 dev). "
+                f"target={target}"
+            )
+            logger.error(msg)
+            raise RuntimeError(msg)
+        logger.warning("MINIMAX_API_KEY missing → using MockLLM (⚠️ Mock 模式, dev only)")
         return MockLLM(model_name=target)
 
     if target in _REGISTRY:
