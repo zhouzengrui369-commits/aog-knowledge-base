@@ -1,0 +1,1 @@
+self.__REACT_LOADABLE_MANIFEST="{\"app/home-data.tsx -> @/components/world-map-leaflet\":{\"id\":\"app/home-data.tsx -> @/components/world-map-leaflet\",\"files\":[\"static/css/_app-pages-browser_components_world-map-leaflet_tsx.css\",\"static/chunks/_app-pages-browser_components_world-map-leaflet_tsx.js\"]}}"

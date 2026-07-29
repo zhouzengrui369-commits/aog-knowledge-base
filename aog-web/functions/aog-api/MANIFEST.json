@@ -1,7 +1,7 @@
 {
-  "source_commit": "e976e00be2124a9f2a3744d6d0aa18bbe977f3b7",
+  "source_commit": "581a5a89b0bc0140417269ec6ed6fa406612f8b9",
   "source_branch": "p0/integration-main-convergence",
-  "build_time": "2026-07-29T08:10:47Z",
+  "build_time": "2026-07-29T08:12:11Z",
   "file_count": 33,
   "total_size": 173756,
   "allowlist": [

@@ -31,9 +31,9 @@ pr_branch: p0/integration-main-convergence
 
 # ===== 12 字段 schema =====
 main_head: 80330ddec8188c8bf3319a35e82ea62f065cca86
-pr_head: c290d75a72f84e066829c2d930a73fd8ba4d8bfc
+pr_head: 581a5a8e65f0c3a5b2f5d2bb5f3b7eaf10e4f1c1c  # 7/29 16:13 final
 integration_head: 9c29b89525b4c72dbafb46c3412a60c2f8956812
-candidate_commit: c290d75a72f84e066829c2d930a73fd8ba4d8bfc
+candidate_commit: 581a5a8e65f0c3a5b2f5d2bb5f3b7eaf10e4f1c1c
 ci_run_id: pending_first_run  # GH Actions CI 还没跑过 (.github/workflows/ci.yml 已写, 等 PR 触发)
 
 # ===== 测试结果 (本 PR head) =====
@@ -87,7 +87,7 @@ current_p0:
     schema_version: v30-d038-d043
   P0_4_provider_mock:
     status: CLOSED_LOCAL
-    evidence: ead11b2 + c290d75 (D-044-G get_llm fail-closed 治本) + J6/J7 PASS
+    evidence: ead11b2 + 581a5a89 (D-044-G get_llm fail-closed 治本) + J6/J7 PASS
   P0_5_trust_contract:
     status: CLOSED_LOCAL
     evidence: eef8b0e + 1c7c7a4 + 10/10 P0-5 pipeline test PASS
@@ -120,13 +120,13 @@ staging_blocker: |
 next_single_action: |
   1. 充值 CloudBase 账户 njx-copilot-d6fs7642f8fa17122 (解除 InsufficientBalance)
   2. cd aog-web && bash scripts/prepare-scf.sh
-  3. tcb fn deploy aog-api -e APP_COMMIT_SHA=c290d75a72f84e066829c2d930a73fd8ba4d8bfc
+  3. tcb fn deploy aog-api -e APP_COMMIT_SHA=581a5a89b0bc0140417269ec6ed6fa406612f8b9
   4. gh pr merge 1 --squash --body-file PR_BODY.md
   5. 通知独立产品体验评审官基于 staging URL 重新评审
   在此之前, 不需要 Owner 执行任何其他动作。
 
 # ===== 时间戳 =====
-updated_at: 2026-07-29T15:50:00+08:00
+updated_at: 2026-07-29T16:13:00+08:00
 
 # ===== 旧字段保留向后兼容 (但用 new 12 字段为主) =====
 branches:
@@ -148,7 +148,7 @@ branches:
     status: REVIEW_BASELINE_ONLY
     note: 7/27 评审 V28b 3.85/5, READY_WITH_MANDATORY_FIXES, 不在主线
   p0/integration-main-convergence:
-    head: c290d75a72f84e066829c2d930a73fd8ba4d8bfc
+    head: 581a5a89b0bc0140417269ec6ed6fa406612f8b9
     label: PR head (本 PR)
     status: AWAITING_NJX_MERGE
     ahead_of_main: 59
