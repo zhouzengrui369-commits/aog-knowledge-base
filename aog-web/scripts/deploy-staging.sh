@@ -244,9 +244,10 @@ PYEOF
     fi
     echo "  ✓ APP_COMMIT_SHA == MERGE_SHA"
 
-    # 4.4 git status clean (工作树无未提交变更)
-    if ! (cd "$REPO_ROOT" && git diff --quiet HEAD 2>/dev/null); then
-        echo "  ✗ FAIL: git working tree 不 clean, 有未提交变更" >&2
+    # 4.4 git status clean (工作树无未提交变更, 含 untracked files)
+    # 用 `git status --porcelain` 检查, 不只查 tracked 变更 (`git diff --quiet HEAD` 不查 untracked)
+    if [ -n "$(cd "$REPO_ROOT" && git status --porcelain 2>/dev/null)" ]; then
+        echo "  ✗ FAIL: git working tree 不 clean, 有未提交变更 (含 untracked)" >&2
         (cd "$REPO_ROOT" && git status --porcelain | head -10) >&2
         echo "  必须 commit 或 stash 后再执行部署" >&2
         return 1
