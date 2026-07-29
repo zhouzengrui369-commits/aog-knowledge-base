@@ -84,14 +84,41 @@
 
 ---
 
-## 7/29 P0 修复 (本 PR 范围, 计划)
+## 7/29 P0 修复 (本 PR 范围, 实际 commit)
 
-- `pending` feat(docs): 重建 5 基线文档 (根目录) + 同步 aog-web/
-- `pending` fix(api): P0-2 API base 规范 (frontend .env.local 去尾 /api)
-- `pending` feat(rag): P0-3 fts5_index build_manifest (tokenizer/build_commit/source_manifest)
-- `pending` feat(config): P0-4 ALLOW_MOCK 隔离 (dev true / SCF false)
-- `pending` feat(data): P0-5 9 字段数据可信度合同 (City/Experience model + DB + UI)
-- `pending` feat(pii): P0-6 contact role_class + REDACTED
-- `pending` feat(rag): D-043 召回错城市治本 (NJX 7/28 反馈, 已 uncommitted)
+### P0 Stabilization 完成 (PR head `c290d75`, 7/29 15:50)
+- `c290d75` test(stabilization): Stage 9.2/9.3 + P0-4 get_llm fail-closed 治本
+  - P0-4 治本: get_llm() factory 之前只看 is_mock_llm, 不看 ALLOW_MOCK — 修
+  - Stage 9.2: select_third_sample.py 5 维评分 (contacts/parts/warehouse/logistics/source_docx) — H-赫尔辛基 winner
+  - Stage 9.3: 10 旅程本地验收 (test_journey_10_local.py 10/10 PASS)
+  - P0-5 10 字段 + 5 cities fixture (B-北京大兴VERIFIED/B-包头STALE/H-赫尔辛基UNVERIFIED/S-上海浦东MISSING/S-上海虹桥MISSING)
+- `2c64f35` test(stabilization): P0-3 RAG 8 query 回归 + D-043 短 CJK LIKE 占位符 + P0-7 chunks_count 真实表行数
+  - 8 RAG 回归 case: 赫尔辛基/北京大兴/西安/三亚/米兰/南宁/雅典/前轮件号 3-1531
+  - fts5_client D-043 修: CAST AS TEXT (doc_id INTEGER affinity) + 占位符顺序
+  - export_fts5 P0-7 修: chunks_count 用真实表行数 (9106) 而非 _insert_chunks 数
+- `5cecf31` fix(stabilization): P0-7 RAG manifest 增强校验 + GitHub CI 5 类检查
+  - 4 项严格校验: db_size / APP_COMMIT_SHA / chunks_count / source_manifest_hash
+  - schema_version 改精确等 (`v30-d038-d043`)
+  - 9 项新测试 → 21/21 export_fts5 manifest test PASS
+  - CI: backend/pipeline/frontend/scf/repository 5 jobs
+- `bb75465` fix(stabilization): P0-4 frontend mock 隔离 + P0-7 SCF drift 检测
+  - 17/17 vitest mock isolation test PASS
+  - prepare-scf.sh: build + drift check + APP_COMMIT_SHA deploy command
+- `1c7c7a4` fix(stabilization): P0-6 PII 隔离 + P0-5 数据可信度 pipeline 真写入
+  - 17/17 PII 4 层 negative test PASS (RAG chunk / FTS5 / chat context / city API)
+  - 10/10 P0-5 trust pipeline test PASS
+- `108f890` fix(stabilization): main.py 连续 else 语法错 + export_fts5 manifest 参数绑定 + 12 项测试
+  - 修 backend/aog_web/main.py line 118-119 两个连续 else:
+  - 修 export_fts5.py SQL 绑定 (VALUES (1, ?×12) → (?×13))
+  - 12 项新测试 (manifest + pipeline core + city model)
+
+### 集成主线 (相对 main 80330dd, +59 commits / 98 files / +30496 / -869)
+- `0bf770e` merge origin/main (no-op, 80330dd is ancestor)
+- `bb3d9ec` feat(ui): P0-5 数据可信度 9 字段顶部组件 + P0-6 contact REDACTED 显示
+- `eef8b0e` feat(data+pii): P0-5 9 字段 + P0-6 contact REDACTED
+- `ead11b2` feat(config): P0-4 mock 隔离 (ALLOW_MOCK + STRICT_LLM, production 禁 mock)
+- `29e6a19` feat(rag): P0-3 build_manifest 写入 + 启动 fail-closed 校验
+- `f89e4cd` fix(api): P0-2 消除 double /api 400 (base 不带尾, path /api/...)
+- `e37afa5` fix(RAG): D-043 召回错城市治本 (NJX 7/28 反馈 雅典/南宁召错)
 
 ---

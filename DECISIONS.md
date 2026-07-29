@@ -219,3 +219,110 @@
 10. 测试未授权用户访问 controlled contact (REDACTED 兜底)
 
 ---
+
+**D-044-G P0-4 get_llm() factory fail-closed 治本 (7/29 严令)**
+
+**根因**:
+- 之前: `get_llm()` factory 只看 `is_mock_llm` (= `not MINIMAX_API_KEY.strip()`), 不看 `ALLOW_MOCK`
+- 后果: 即使 `ALLOW_MOCK=false` (production) + 无 KEY, get_llm() 仍返 MockLLM
+- `main.py:lifespan` 启动时校验 `ALLOW_MOCK + is_mock_llm → RuntimeError`, 但 lifespan 失败时 SCF 容器重启
+- 如果有代码绕过 lifespan 直接 `get_llm(settings=...)`, 仍可能返 MockLLM
+- 测试 J7 (production mock 隔离) 第一次跑就发现这个 gap, 强制修了 factory 函数
+
+**修法**:
+```python
+# aog_web/services/llm.py:get_llm()
+if s.is_mock_llm:
+    if not s.ALLOW_MOCK:
+        raise RuntimeError(
+            f"P0-4 fail-closed: ALLOW_MOCK=false 但 MINIMAX_API_KEY 空. "
+            f"production 必须配真 key, 或显式设 ALLOW_MOCK=true (仅 dev). "
+            f"target={target}"
+        )
+    return MockLLM(model_name=target)
+```
+
+**验证**:
+- J6: lifespan startup RuntimeError PASS
+- J7: get_llm() RuntimeError PASS (新加, 修 factory 函数)
+- dev 对照: ALLOW_MOCK=true + 无 KEY → MockLLM 仍可创建 (dev 模式)
+- production: ALLOW_MOCK=false + 无 KEY → 任何调用 get_llm() 都 fail-closed
+
+**影响**:
+- P0-4 mock 隔离从"lifespan 兜底"升级到"factory 兜底", 真生产安全
+- 任何绕过 startup 校验的代码路径 (测试, 工具脚本) 都被 catch
+
+---
+
+**D-044-H Stage 9.2 第三个样板自动选 (7/29 严令)**
+
+**前提**:
+- NJX 7/29 严令: 第三个样板不向 Owner 询问, 由程序按数据完整度自动评分
+- 排除: #1 (北京大兴) + #2 (上海浦东 MISSING) + 暂停/待开航
+- 5 维评分: contacts(10) + parts(10) + warehouse(5) + logistics(3) + source_docx(2) + diversity_bonus(1)
+
+**实施**: `aog-web/pipeline/scripts/select_third_sample.py`
+- 扫描 aog.db 158 个非排除 cities
+- 5 维评分 + 多样性 bonus (phone + email 数量)
+- 输出 `data/third_sample.json` (winner + top 10 + 评分明细 + 选择依据)
+
+**实际结果** (7/29 15:42):
+```
+1. H-赫尔辛基   23.80/31  (warehouse 3369 char 最高, source 59178 bytes, 2026-01-20 最新)
+2. M-米兰     22.15/31
+3. D-大阪     22.09/31
+4. M-曼谷素万那普 21.90/31
+5. D-东京羽田   21.78/31
+6. 外站保障手册——赫尔辛基 21.75/31
+7. X-新加坡    21.35/31
+8. D-东京成田   21.02/31
+9. Y-雅典     21.00/31
+10. Z-郑州    20.65/31
+```
+
+**H-赫尔辛基 选择理由**:
+- score 23.80/31 (最高)
+- warehouse 3369 char (top 1, 远大于第二名 497 char)
+- contacts 1191 char + parts 667 char
+- source docx 59178 bytes, mtime 2026-01-20 (最新)
+- 国际外站差异化 (跟北京大兴/上海浦东国内主基地互补)
+- 跟 RAG 8 query 第一个 case "赫尔辛基保障" 完美对照 (D-038 治本验证)
+
+**影响**:
+- 第三个样板不依赖 Owner 主观选择, 透明可复核
+- Stage 9.3 10 旅程 J8 用 H-赫尔辛基 作 restricted contact PII negative test fixture
+
+---
+
+**D-044-I Stage 9.3 10 旅程本地验收 (7/29 严令, 不依赖公网 SCF)**
+
+**前提**:
+- NJX 7/29: "在同一 clean commit 上启动 backend + frontend, 运行以下旅程", 但**不依赖公网 SCF**
+- 物理阻塞: CloudBase InsufficientBalance, 等 NJX 充值
+
+**实施**: `aog-web/backend/tests/test_journey_10_local.py`
+- 用 FastAPI TestClient in-process (ASGITransport), 不启 uvicorn
+- 复用 conftest `_test_env` (test kb 目录, test chroma, test sqlite)
+- 加 5 cities seed: B-北京大兴 (VERIFIED) / B-包头 (STALE) / H-赫尔辛基 (UNVERIFIED) / S-上海浦东 (MISSING) / S-上海虹桥 (MISSING)
+- 加 H-赫尔辛基 3 contacts: 1 public + 2 restricted (J8 PII negative)
+- 加 test kb/02_外战预案/B-北京大兴.md + H-赫尔辛基.md (J10 source_document 可访问)
+- 不写 S-上海浦东.md (J10 MISSING source 返 404 + reason)
+
+**10 旅程**:
+1. J1: GET /api/health → 200 + version + llm_mode + rag_backend
+2. J2: GET /api/city/B-北京大兴 → 200 + trust 10 字段 + public phone 保留
+3. J3: GET /api/city/S-上海浦东 → 200 + review_status=MISSING (不 404, 不 mock, 明确状态)
+4. J4: GET /api/city/S-上海虹桥 → 200 + review_status=MISSING (主基地不消失)
+5. J5: POST /api/chat → references ≥ 1 (NSM-2 红线)
+6. J6: ALLOW_MOCK=false + 无 KEY → lifespan startup RuntimeError
+7. J7: get_llm() ALLOW_MOCK=false + is_mock_llm=True → RuntimeError (D-044-G 治本验证)
+8. J8: H-赫尔辛基 2 restricted contact → phone=["REDACTED"], 1 public 保留
+9. J9: B-包头 → review_status=STALE + confidence=0.3 + source_version=2019-Q3
+10. J10: /files/02_外战预案/B-北京大兴.md → 200, S-上海浦东.md → 404 + reason
+
+**结果**: 10/10 PASS in 1.66s
+
+**影响**:
+- 10 旅程可在任意环境跑 (不依赖 SCF / CloudBase / 公网)
+- P0-7 staging 验收时, 等 NJX 物理操作后, 跑同 10 旅程在公网 staging 验证真实部署版本
+- 13 项完成门 (P0-1 ~ P0-6 + 文档 + CI + 索引 + 测试) 全部 CLOSED_LOCAL, 只 P0-7 物理阻塞
