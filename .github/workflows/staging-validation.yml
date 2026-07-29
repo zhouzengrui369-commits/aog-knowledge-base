@@ -250,6 +250,21 @@ jobs:
           python -m pip install --upgrade pip
           pip install pytest
 
+      - name: Setup fake tcb CLI (NJX 7/29 DEPLOYABILITY 严令 fake tcb 验证 execute 模式)
+        run: |
+          set -euo pipefail
+          # 在 /usr/local/bin/tcb 创建 fake tcb 脚本 (exit 0 + log args)
+          # NJX 7/29 严令: test_15/16/17 用 fake tcb 验证 deploy-staging.sh execute 模式
+          # 真实 tcb CLI 在 CI runner 不存在, 必须 mock 否则 execute 模式会 tcb: command not found
+          cat > /usr/local/bin/tcb <<'FAKETCB'
+          #!/bin/bash
+          echo "$@" >> /tmp/tcb_fake.log
+          exit 0
+          FAKETCB
+          chmod +x /usr/local/bin/tcb
+          rm -f /tmp/tcb_fake.log
+          echo "  ✓ fake tcb 已安装: /usr/local/bin/tcb (log: /tmp/tcb_fake.log)"
+
       - name: Run staging isolation tests
         run: |
           set -euo pipefail

@@ -540,31 +540,38 @@ def test_16_deploy_staging_fails_on_dirty_tree():
         ["git", "rev-parse", "HEAD"],
         capture_output=True, text=True, cwd=str(REPO_ROOT),
     ).stdout.strip()
-    env = {
-        **os.environ,
-        "ALLOW_STAGING_DEPLOY": "1",
-        "TCB_ENV_ID": "njx-copilot-staging-FAKE",
-        "MERGE_SHA": git_head,
-        "APP_COMMIT_SHA": git_head,
-        "STAGING_DEPLOY_MODE": "execute",
-    }
-    # 在 REPO_ROOT 临时 touch 一个文件, 让 git status 不 clean
-    sentinel = REPO_ROOT / ".staging_dirty_sentinel.tmp"
-    sentinel.write_text("dirty\n", encoding="utf-8")
-    try:
-        r = subprocess.run(
-            ["bash", str(p)],
-            capture_output=True, text=True,
-            cwd=str(REPO_ROOT / "aog-web"),
-            env=env,
-        )
-        assert r.returncode != 0, f"git working tree dirty 时应 fail, 但 exit 0\nstdout: {r.stdout}\nstderr: {r.stderr}"
-        assert "git" in r.stderr.lower() and "clean" in r.stderr.lower() or "不 clean" in r.stderr or "未提交" in r.stderr, (
-            f"失败信息应提到 git tree 不 clean, 实际 stderr: {r.stderr}"
-        )
-        print(f"  ✓ dirty tree 时 deploy-staging.sh fail (auth 闸门生效)")
-    finally:
-        sentinel.unlink(missing_ok=True)
+    # 自建 fake tcb (本地没装 tcb CLI, 必须 mock)
+    with tempfile_TCB_LOG() as log_path:
+        fake_tcb_dir = log_path.parent
+        _build_fake_tcb(fake_tcb_dir)
+        env = {
+            **os.environ,
+            "PATH": f"{fake_tcb_dir}:{os.environ.get('PATH', '')}",
+            "ALLOW_STAGING_DEPLOY": "1",
+            "TCB_ENV_ID": "njx-copilot-staging-FAKE",
+            "MERGE_SHA": git_head,
+            "APP_COMMIT_SHA": git_head,
+            "STAGING_DEPLOY_MODE": "execute",
+            "TCB_FAKE_LOG": str(log_path),
+        }
+        # 在 REPO_ROOT 临时 touch 一个文件, 让 git status 不 clean
+        sentinel = REPO_ROOT / ".staging_dirty_sentinel.tmp"
+        sentinel.write_text("dirty\n", encoding="utf-8")
+        try:
+            r = subprocess.run(
+                ["bash", str(p)],
+                capture_output=True, text=True,
+                cwd=str(REPO_ROOT / "aog-web"),
+                env=env,
+            )
+            assert r.returncode != 0, f"git working tree dirty 时应 fail, 但 exit 0\nstdout: {r.stdout}\nstderr: {r.stderr}"
+            combined = r.stdout + r.stderr
+            assert "git" in combined.lower() and ("clean" in combined.lower() or "不 clean" in combined or "未提交" in combined), (
+                f"失败信息应提到 git tree 不 clean, 实际: {combined[:500]}"
+            )
+            print(f"  ✓ dirty tree 时 deploy-staging.sh fail (auth 闸门生效)")
+        finally:
+            sentinel.unlink(missing_ok=True)
 
 
 def test_17_deploy_staging_fails_on_sha_mismatch():
@@ -577,23 +584,30 @@ def test_17_deploy_staging_fails_on_sha_mismatch():
         capture_output=True, text=True, cwd=str(REPO_ROOT),
     ).stdout.strip()
     assert fake_sha != git_head, "测试前提: fake_sha != git HEAD"
-    env = {
-        **os.environ,
-        "ALLOW_STAGING_DEPLOY": "1",
-        "TCB_ENV_ID": "njx-copilot-staging-FAKE",
-        "MERGE_SHA": fake_sha,
-        "APP_COMMIT_SHA": fake_sha,
-        "STAGING_DEPLOY_MODE": "execute",
-    }
-    r = subprocess.run(
-        ["bash", str(p)],
-        capture_output=True, text=True,
-        cwd=str(REPO_ROOT / "aog-web"),
-        env=env,
-    )
-    assert r.returncode != 0, f"MERGE_SHA != git HEAD 时应 fail, 但 exit 0\nstdout: {r.stdout}\nstderr: {r.stderr}"
-    assert "MERGE_SHA" in r.stderr or "HEAD" in r.stderr, f"失败信息应提到 MERGE_SHA/HEAD, 实际 stderr: {r.stderr}"
-    print(f"  ✓ MERGE_SHA != git HEAD 时 deploy-staging.sh fail (校验生效)")
+    # 自建 fake tcb (本地没装 tcb CLI, 必须 mock)
+    with tempfile_TCB_LOG() as log_path:
+        fake_tcb_dir = log_path.parent
+        _build_fake_tcb(fake_tcb_dir)
+        env = {
+            **os.environ,
+            "PATH": f"{fake_tcb_dir}:{os.environ.get('PATH', '')}",
+            "ALLOW_STAGING_DEPLOY": "1",
+            "TCB_ENV_ID": "njx-copilot-staging-FAKE",
+            "MERGE_SHA": fake_sha,
+            "APP_COMMIT_SHA": fake_sha,
+            "STAGING_DEPLOY_MODE": "execute",
+            "TCB_FAKE_LOG": str(log_path),
+        }
+        r = subprocess.run(
+            ["bash", str(p)],
+            capture_output=True, text=True,
+            cwd=str(REPO_ROOT / "aog-web"),
+            env=env,
+        )
+        assert r.returncode != 0, f"MERGE_SHA != git HEAD 时应 fail, 但 exit 0\nstdout: {r.stdout}\nstderr: {r.stderr}"
+        combined = r.stdout + r.stderr
+        assert "MERGE_SHA" in combined or "HEAD" in combined, f"失败信息应提到 MERGE_SHA/HEAD, 实际: {combined[:500]}"
+        print(f"  ✓ MERGE_SHA != git HEAD 时 deploy-staging.sh fail (校验生效)")
 
 
 def test_18_deploy_staging_fails_on_production_env():
@@ -608,7 +622,7 @@ def test_18_deploy_staging_fails_on_production_env():
         "TCB_ENV_ID": production_envid,  # 用 production envId
         "MERGE_SHA": "0" * 40,
         "APP_COMMIT_SHA": "0" * 40,
-        "STAGING_DEPLOY_MODE": "dry-run",  # 只需到 deploy_target_validate 阶段就 fail
+        "STAGING_DEPLOY_MODE": "dry-run",  # 只需到 deploy_target_validate 阶段就 fail (不调 tcb)
     }
     r = subprocess.run(
         ["bash", str(p)],
