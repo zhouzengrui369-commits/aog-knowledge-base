@@ -1,0 +1,133 @@
+# AOG Knowledge Base - 工程版本真相 (Engineering Truth of Versions)
+# Owner: NJX (OPC, 航空维修 + 航材供应链数智化)
+# PM: Mavis
+# Last Verified: 2026-07-29 14:30 GMT+8
+# Authority: 此文件是 4 套版本对照的 single source of truth
+# 不得默认 main / integration / 公网 / 本地 任何一个天然代表最新真相
+
+repository: github.com/zhouzengrui369-commits/aog-knowledge-base
+branches:
+  main:
+    head: 80330ddec8188c8bf3319a35e82ea62f065cca86
+    label: V14 (Wave 3 部署, 2026-07-15)
+    status: SEVERELY_STALE
+    behind_integration: 45
+    note: |
+      main 严重落后 integration 45 commit (V14 → V30 跨 13 个版本号)。
+      7/27 独立产品体验评审在 main 上跑出 6 P0 + 9 P1, NOT_READY 2.20/5。
+      7/27 评审更新 (V28b) 在 review/aog-product-experience-baseline 跑, 仍 5 P0。
+      必须 P0-1 修复后才能进入 release candidate 评审。
+  integration/sprint-abc:
+    head: 9c29b89525b4c72dbafb46c3412a60c2f8956812
+    label: V30 (LLM JSON + V29d markdown + V29c trigram + V29b 流式)
+    status: AUTHORITATIVE_BUT_NOT_DEPLOYED
+    ahead_of_main: 45
+    note: |
+      integration 才是当前真主线 (V30 = 7/27 23:xx 最近 commit)。
+      包含 D-038 trigram 治本 (V29c) + LLM 结构化 JSON (V30) + 5 段式召回 (P1-1)。
+      但从未部署到公网 production — 真实公网仍 V14 时代的 Wave 3 部署。
+  review/aog-product-experience-baseline:
+    head: 5d39967ec985bb2da542982f3460de34773cf5e6
+    label: V28b 评审基线 (2026-07-27)
+    status: REVIEW_ONLY
+    ahead_of_main: 2
+    note: |
+      review 分支只装 docs (V14 评审报告 + V28b 评审报告 + 5 文档基线镜像),
+      没装 integration 45 commit 的代码改动。
+      review/aog-product-experience-baseline 是基线承诺 ("当前评审目标 = 哪个 commit"),
+      实际修复在 integration/sprint-abc 上做。
+  p0/integration-main-convergence: # ★ 本 PR 目标
+    head: (本 PR commit 后会变成新的 HEAD)
+    label: 阶段 0-7 全部 P0 修复收敛 (本 PR)
+    base: origin/integration/sprint-abc (V30, 9c29b89)
+    intent: |
+      把 integration/sprint-abc 的 45 commit 主线推到 main,
+      并在之上完成 Owner 7/29 授权的 P0-1/2/3/4/5/6/7 全部修复。
+    commits_planned:
+      - "V30d+ 召回错城市治本 (D-043, NJX 7/28 反馈 雅典/南宁)"
+      - "P0-2: API base 规范 (base 不带尾 /api, path /api/...)"
+      - "P0-3: RAG fts5_index manifest 写入 (tokenizer/build_commit/source_manifest)"
+      - "P0-4: mock 隔离 (production 禁 mock, dev 才允许)"
+      - "P0-5: City/Experience 模型 + DB 加 9 字段数据可信度合同"
+      - "P0-6: Contact 加 role 分级 (公开/受控/私密) + REDACTED 兜底"
+      - "5 基线文档重建 (根目录 + aog-web/)"
+
+production: # 公网真实版本真相
+  primary_url: https://njx-copilot-d6gs7642f8fa17122.service.tcloudbase.com
+  alias: https://aog.njx.com (CNAME)
+  scf_function: aog-api (CloudBase SCF Python 3.11)
+  deployed_commit: UNKNOWN  # 7/27 评时是 Wave 3 V14 时代部署, 之后没重新部署
+  current_status: SERVICE_UNAVAILABLE
+  error: FUNCTIONS_INVOCATION_FAILED, AvailableStatus = InsufficientBalance (b9ac5822-...)
+  note: |
+    公网 production SCF 账户欠费 → 函数被禁用。
+    任何 API 调用 (包括 /api/health) 都返 400 FUNCTIONS_INVOCATION_FAILED。
+    这是 P0-7 staging 真实验收的物理前置条件, NJX 必须先充值 CloudBase。
+  alternative_urls_probed:
+    - url: https://aog.njx.com/api/health
+      result: 000 (cloudbase gateway 拒, InsufficientBalance)
+    - url: https://www.aog.njx.com/api/health
+      result: 000 (同上)
+    - url: https://njx-copilot-d6gs7642f8fa17122.service.tcloudbase.com/
+      result: 404 INVALID_PATH (函数被禁用前的静态托管)
+
+local_dev:
+  backend: http://localhost:8001 (FastAPI uvicorn, Wave 3 时代起的)
+  frontend: http://localhost:3004 (Next.js dev)
+  llm_mode: live (MINIMAX_API_KEY 真 key 配)
+  rag_backend: fts5 (D-038 trigram, V30)
+  data:
+    aog.db: 10MB (2026-07-26 14:49 旧) — 223 cities / 15 exp / 10 core_plans
+    fts5_index.db: 28MB (2026-07-17 11:06 旧) — V14 时代, D-038 后没重建 (D-043 之后会重建)
+    chroma.sqlite3: 87MB (2026-07-27 11:29 新) — collection dim=1024, embedding=chroma default, **V28b 后已废用**
+    sync_state.db: 147KB (2026-07-27 19:02 最新)
+  note: 本地 dev 仍能跑, 但 chroma 集合 dim=1024 vs chroma default ONNX mini-L6=384 dim 不匹配,
+        切回 chroma backend 立即 0 命中 (这是 7/26 评审 1024 vs 384 维度不匹配的真因).
+        现状用 fts5 backend 绕开, chroma 集合已废用.
+
+# ===== Owner 授权优先级 (P0 不可调整) =====
+owner_authorization:
+  date: 2026-07-29
+  authority: "本提示词是 Owner 当前最高优先级执行授权"
+  priorities:
+    P0-1: 分支和版本收敛 (main / integration / staging 同 commit, 或明确锁 baseline)
+    P0-2: API 修复 (消除 double /api, 全栈 URL 规范唯一)
+    P0-3: RAG 维度与索引修复 (provider/model/dim/manifest 显式, fail-closed)
+    P0-4: 真实 Provider 与 mock 边界 (production 禁 mock, UI 显著标识)
+    P0-5: 数据可信度合同 (source_document/source_location/source_version/updated_at/reviewed_at/reviewed_by/review_status/confidence/environment/pii_classification 9 字段, 状态 VERIFIED/UNVERIFIED/STALE/MISSING/FIXTURE/REDACTED 6 类)
+    P0-6: PII 与权限 (个人手机号不公网裸露, contact role 分级)
+    P0-7: staging 真实验收 (main 和 staging 绑同 commit, 10 项旅程通过)
+  explicit_prohibitions:
+    - "地图标签密度微调"
+    - "新地图组件重构"
+    - "新城市批量灌入"
+    - "新航司功能扩展"
+    - "新视觉系统"
+    - "未经核验的数据自动发布"
+    - "以更多 mock 数据掩盖真实数据缺口"
+  acceptance_gate: "完成前不得声明 PRODUCT_READY / PRODUCTION_READY"
+
+# ===== 当前 P0 状态 =====
+p0_status:
+  P0-1_branch_convergence: OPEN  # 本 PR 解决
+  P0-2_api_double_prefix: OPEN  # 本 PR 解决
+  P0-3_rag_dimension_index: OPEN  # 本 PR 解决 (D-038 治本 + manifest 写入)
+  P0-4_real_provider_mock_boundary: PARTIALLY_FIXED  # V30 llm_mode=live 已 OK, mock 隔离本 PR 修
+  P0-5_data_trust_contract: OPEN  # 本 PR 修
+  P0-6_pii_authorization: OPEN  # 本 PR 修
+  P0-7_staging_receipt: BLOCKED_PHYSICAL  # 必须 NJX 充值 CloudBase + 物理 OAuth 部署
+
+# ===== 物理 NJX 待办 (本 PR 不能解决) =====
+owner_physical_actions:
+  - "充值 CloudBase 账户 (njx-copilot-d6gs7642f8fa17122) — 解锁公网 SCF 函数"
+  - "PR merge 后 tcb fn deploy 重新部署 aog-api 函数"
+  - "CloudBase 静态托管重新上传 frontend/out (V30 重新 SSG)"
+  - "评审官线程重新盲测 (基于新 staging commit, 走 FOCUSED_RETEST 模式)"
+
+# ===== 维护节奏 =====
+cadence:
+  heartbeat_cron: mavis-njx-heartbeat-12h (每 12h 状态汇报, 异常才报)
+  phase_1_w1: P0-1/2 (本 PR)
+  phase_1_w2: P0-3/4 (本 PR)
+  phase_1_w3: P0-5/6 (本 PR)
+  phase_1_w4: P0-7 staging 复验 (等 NJX 充值 + 部署)
