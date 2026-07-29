@@ -60,6 +60,20 @@ class Settings(BaseSettings):
     LOG_LEVEL: str = "INFO"
     CORS_ALLOW_ORIGINS: str = "http://localhost:3000,http://127.0.0.1:3000"
 
+    # ★ P0-4: mock 隔离 (Owner 7/29 授权)
+    # dev (本地, .env 不设) = True 允许 MockLLM 跑测试
+    # SCF / production (.env 显式设 false) = 禁 Mock, key 空 fail-closed
+    # 启动时 main.py lifespan 校验:
+    #   ALLOW_MOCK=false + MINIMAX_API_KEY 空 → raise RuntimeError 容器 fail
+    #   ALLOW_MOCK=true + MINIMAX_API_KEY 空 → 允许 MockLLM (仅 dev)
+    #   ALLOW_MOCK=* + MINIMAX_API_KEY 有值 → live LLM 正常
+    ALLOW_MOCK: bool = True
+
+    # ★ P0-4: 严格模式 (production 必须 true)
+    # 开启后 services/llm 任何 chat() 失败 → 抛 503, 不返 mock fallback
+    # 关闭 (dev) → 失败时降级到 mock + ⚠️ 标志
+    STRICT_LLM: bool = False
+
     # ===== Sprint A · Auth (本地优先, MVP 简化方案) =====
     # AOG 知识库访问密码 (Sprint A 拍板方案 🅱️)
     # 生产前必须改; 缺失时 fallback 到默认 "13456789" (仅 dev)

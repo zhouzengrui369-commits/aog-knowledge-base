@@ -29,7 +29,9 @@
         "JWT_SECRET": "${JWT_SECRET}",
         "SYNC_ENABLED": "false",
         "KNOWLEDGE_BASE_PATH": "/tmp",
-        "RAW_PATH": "/tmp"
+        "RAW_PATH": "/tmp",
+        "ALLOW_MOCK": "false",
+        "STRICT_LLM": "true"
       }
     }
   ],
