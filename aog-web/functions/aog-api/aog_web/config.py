@@ -206,4 +206,3 @@ def reset_settings_cache() -> None:
     """测试 helper: 重置单例让下次 get_settings() 重新读环境变量"""
     global _settings
     _settings = None
-// test drift

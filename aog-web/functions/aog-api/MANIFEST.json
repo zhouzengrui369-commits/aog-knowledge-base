@@ -1,9 +1,9 @@
 {
-  "source_commit": "1c7c7a423a1d2d0f875e3c5d07e20b179eeb9268",
+  "source_commit": "e976e00be2124a9f2a3744d6d0aa18bbe977f3b7",
   "source_branch": "p0/integration-main-convergence",
-  "build_time": "2026-07-29T07:19:24Z",
+  "build_time": "2026-07-29T08:10:47Z",
   "file_count": 33,
-  "total_size": 169285,
+  "total_size": 173756,
   "allowlist": [
     "scf_adapter.py",
     "scf_bootstrap",
@@ -147,13 +147,13 @@
     },
     {
       "path": "services/fts5_client.py",
-      "size": 28255,
-      "sha256": "850806a12c240427cb26a88f0a1da60739e1028c58e18e22af069f79eb9aaaea"
+      "size": 32155,
+      "sha256": "0c3674336bc0810272fae0d82e7ea013fcd21f03852ccb64084999ed85352e4a"
     },
     {
       "path": "services/llm.py",
-      "size": 4834,
-      "sha256": "435cbd92737c76b9ac5ea5010c27c5b35568ba2e56a957d941480ee4a55b38b2"
+      "size": 5405,
+      "sha256": "b7f423e4f10448a34e9dc3a35e6bc0ded6395316e47fdf6ef11b62dddcbd7a51"
     },
     {
       "path": "services/sqlite_client.py",
