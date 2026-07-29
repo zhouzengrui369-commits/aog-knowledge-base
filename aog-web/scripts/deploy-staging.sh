@@ -11,9 +11,9 @@
 # 部署目标: aog-api-staging (独立函数, staging env 隔离)
 #
 # NJX 7/29 严令 (本阶段不动云资源):
-#   - 第一轮 staging 用 CloudBase 默认域名 (不配 aog-staging.njx.com CNAME)
-#   - 严禁老命令 `tcb env switch` (CloudBase v2 不再使用)
-#   - 严禁老 flag `-e APP_COMMIT_SHA=` (改用 cloudbaserc.staging.json envVariables + {{env.APP_COMMIT_SHA}})
+#   - 第一轮 staging 用 CloudBase 默认域名 (不配自定义 CNAME)
+#   - 严禁老命令 (CloudBase v2 不再使用, 见 STAGING_ISOLATION_SPEC.md)
+#   - 严禁老 flag (改用 cloudbaserc.staging.json envVariables + {{env.*}} 占位符, 见 SPEC)
 #   - 正确命令: tcb fn deploy aog-api-staging --env-id --config-file --mode staging --yes
 #
 # 用法 (NJX 物理操作后):
@@ -201,9 +201,9 @@ PYEOF
     echo "  APP_COMMIT_SHA: ${MERGE_SHA:0:12}..."
 
     # 真实部署 (此行下方需要 NJX 已经 tcb login + set TCB_ENV_ID)
-    # NJX 7/29 严令: 第一轮 staging 用 CloudBase 默认域名, 不配 aog-staging.njx.com CNAME
-    # 严禁: tcb env switch (老命令, CloudBase v2 不用)
-    # 严禁: -e APP_COMMIT_SHA=... (老 flag, CloudBase v2 用 envVariables + {{env.APP_COMMIT_SHA}})
+    # NJX 7/29 严令: 第一轮 staging 用 CloudBase 默认域名, 不配自定义 CNAME
+    # 严禁: 老命令 (见 STAGING_ISOLATION_SPEC.md)
+    # 严禁: 老 flag (见 STAGING_ISOLATION_SPEC.md)
     # 正确: tcb fn deploy aog-api-staging --env-id --config-file --mode staging --yes
     if [ -z "${TCB_ENV_ID:-}" ]; then
         echo "  ✗ FAIL: TCB_ENV_ID 未设" >&2
