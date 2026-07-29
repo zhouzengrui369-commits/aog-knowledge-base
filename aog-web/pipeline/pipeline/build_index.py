@@ -189,28 +189,50 @@ def _process_core_plans(files: list[Path], kb_root: Path) -> tuple[list[dict], l
 
 
 def _build_contacts_chunk(c: dict) -> str | None:
-    """D-030: 把 city.contacts[] 拼成一段文本, 喂 RAG 让 AI 能召回 "021-22379771" 等具体电话。
+    """D-030 + P0-6: 把 city.contacts[] 拼成一段文本, 喂 RAG 让 AI 能召回 public 公开电话。
+
+    ★ P0-6 (Owner 7/29 严令): 严格 PII 隔离
+    - permission=public           → 拼 phone/email 到 chunk text (公开信息, RAG 可召回)
+    - permission=internal/restricted → 不拼 phone/email, 只保留 org/role/scope + "联系方式受限" 标志
+    - redacted=true                → 同 internal/restricted
+    - 原始 phone/email 仅保留在 SQLite cities.contacts JSON (受控数据层)
+      通过 city detail API + 权限检查返回, 不进 RAG chunk / LLM context
+
     返回 None 表示无 contacts, 跳过。
     """
     contacts = c.get("contacts") or []
     if not contacts:
         return None
-    # 按 permission 分组拼, 避免 internal/restricted 联系人直接当答案 (但保留在索引供 RAG 召回)
     lines: list[str] = [f"# {c['name']} ({c['iata']}) 现场联系人清单"]
     for ct in contacts:
         perm = ct.get("permission", "public")
+        redacted = ct.get("redacted", False)
         org = ct.get("org", "")
         phones = ct.get("phone") or []
         email = ct.get("email", "")
         role = ct.get("role", "")
-        phone_str = " / ".join(phones) if phones else ""
-        parts: list[str] = [f"- [{perm.upper()}] {org}"]
+        scope = ct.get("scope", "")
+
+        # ★ P0-6 隔离决策
+        is_public = (perm == "public") and not redacted
+        parts: list[str] = [f"- [{perm.upper()}{' 已脱敏' if redacted else ''}] {org}"]
         if role:
             parts.append(f"  职责: {role}")
-        if phone_str:
-            parts.append(f"  电话: {phone_str}")
-        if email:
-            parts.append(f"  邮箱: {email}")
+        if scope:
+            parts.append(f"  范围: {scope}")
+
+        if is_public:
+            # public contact: 拼 phone/email (RAG 可召回)
+            phone_str = " / ".join(phones) if phones else ""
+            if phone_str:
+                parts.append(f"  电话: {phone_str}")
+            if email:
+                parts.append(f"  邮箱: {email}")
+        else:
+            # internal/restricted/redacted: 不写原值, 只显"联系方式受限"标志
+            # 受控访问走 city detail API (permission 决定是否返 phone/email)
+            parts.append("  联系方式: [已脱敏/受限, 详情见 city detail API 权限检查]")
+
         lines.append("\n".join(parts))
     return "\n".join(lines)
 

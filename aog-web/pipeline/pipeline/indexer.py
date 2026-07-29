@@ -37,7 +37,17 @@ CREATE TABLE cities (
     logistics TEXT,       -- JSON object string
     content_md TEXT,
     source_path TEXT,
-    updated_at TEXT
+    updated_at TEXT,
+    -- ★ P0-5 数据可信度 10 字段 (Owner 7/29 授权, D-044-D)
+    source_document TEXT,        -- 源文件相对路径
+    source_location TEXT,        -- 源在仓库的位置
+    source_version TEXT,         -- 源版本
+    reviewed_at TEXT,            -- 最后审核时间 ISO8601
+    reviewed_by TEXT,            -- 审核人
+    review_status TEXT DEFAULT 'UNVERIFIED',  -- VERIFIED/UNVERIFIED/STALE/MISSING/FIXTURE/REDACTED
+    confidence REAL,             -- 0.0-1.0
+    environment TEXT DEFAULT 'all',  -- dev/staging/production/all
+    pii_classification TEXT DEFAULT 'none'  -- none/internal/confidential/restricted
 );
 """
 
@@ -96,13 +106,53 @@ class SqliteIndex:
             c.execute(CITIES_SCHEMA)
             c.execute(EXPERIENCES_SCHEMA)
             c.execute(CORE_PLANS_SCHEMA)
+            # ★ P0-5: migration idempotent, 旧 aog.db 缺 10 字段时加列
+            self._migrate_p05(c)
+
+    def _migrate_p05(self, c) -> None:
+        """★ P0-5 migration: 给已存在的 cities 表加 10 字段 (idempotent)
+
+        - 旧 aog.db (7/26 V14 时代) 没 10 字段, ALTER TABLE 补
+        - 已存在列 (重复 ALTER) → 静默 skip
+        - 新 db 已有 10 字段 → ALTER 失败 (duplicate column) → 静默 skip
+        """
+        _P05_CITY_COLUMNS = [
+            ("source_document", "TEXT"),
+            ("source_location", "TEXT"),
+            ("source_version", "TEXT"),
+            ("reviewed_at", "TEXT"),
+            ("reviewed_by", "TEXT"),
+            ("review_status", "TEXT DEFAULT 'UNVERIFIED'"),
+            ("confidence", "REAL"),
+            ("environment", "TEXT DEFAULT 'all'"),
+            ("pii_classification", "TEXT DEFAULT 'none'"),
+        ]
+        for col, col_def in _P05_CITY_COLUMNS:
+            try:
+                c.execute(f"ALTER TABLE cities ADD COLUMN {col} {col_def}")
+            except sqlite3.OperationalError as e:
+                # duplicate column (idempotent) → 静默
+                if "duplicate column" not in str(e).lower():
+                    raise
 
     def upsert_city(self, c: dict) -> None:
+        """写入 city 全字段, 含 P0-5 数据可信度 10 字段 (D-044-D)
+
+        c 字典必须含 c['trust'] 字段 (10 字段子字典), 或显式提供 10 字段顶层 key
+        旧调用方式 (c.get('source_document') 等) 仍兼容 (向后兼容)
+        """
+        # ★ P0-5: 优先从 c['trust'] 子字典读, 兼容旧调用 (c 直接有 10 字段)
+        trust = c.get("trust", {})
+        def _t(key: str, default=None):
+            return trust.get(key, c.get(key, default))
+
         with self._conn() as conn:
             conn.execute(
                 """INSERT OR REPLACE INTO cities
-                (code, name, airport, iata, pinyin, region, status, tags, fleet, parts, contacts, warehouse, logistics, content_md, source_path, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (code, name, airport, iata, pinyin, region, status, tags, fleet, parts, contacts, warehouse, logistics, content_md, source_path, updated_at,
+                 source_document, source_location, source_version, reviewed_at, reviewed_by, review_status, confidence, environment, pii_classification)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+                        ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
                     c["code"],
                     c["name"],
@@ -120,6 +170,16 @@ class SqliteIndex:
                     c.get("content_md", ""),
                     c.get("source_path", ""),
                     c.get("updated_at", ""),
+                    # ★ P0-5: 10 字段 (default UNVERIFIED/all/none)
+                    _t("source_document"),
+                    _t("source_location"),
+                    _t("source_version"),
+                    _t("reviewed_at"),
+                    _t("reviewed_by"),
+                    _t("review_status", "UNVERIFIED"),
+                    _t("confidence"),
+                    _t("environment", "all"),
+                    _t("pii_classification", "none"),
                 ),
             )
 

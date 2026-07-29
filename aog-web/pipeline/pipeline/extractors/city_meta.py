@@ -215,6 +215,18 @@ class City:
     source_path: str
     updated_at: str
 
+    # ★ P0-5: 数据可信度 10 字段 (D-044-D, Owner 7/29 授权)
+    # 旧 docx 无 YAML frontmatter 时由 extract_city() 保守填默认
+    source_document: str | None = None      # 源文件相对路径
+    source_location: str | None = None      # 源在仓库的位置 (e.g. 'filesystem:02_外战预案')
+    source_version: str | None = None       # 源版本
+    reviewed_at: str | None = None          # 最后审核时间 ISO8601
+    reviewed_by: str | None = None          # 审核人
+    review_status: str = "UNVERIFIED"       # VERIFIED/UNVERIFIED/STALE/MISSING/FIXTURE/REDACTED
+    confidence: float | None = None         # 0.0-1.0
+    environment: str = "all"                # dev/staging/production/all
+    pii_classification: str = "none"         # none/internal/confidential/restricted
+
     def to_dict(self) -> dict:
         return asdict(self)
 
@@ -510,9 +522,20 @@ def _extract_logistics(dt: DocxTable) -> dict:
 # ---------- Main extract ----------
 
 def extract_city(path: PathLike, knowledge_base_root: PathLike | None = None) -> City:
-    """从 docx 抽 City 完整字段。
+    """从 docx 抽 City 完整字段 + P0-5 数据可信度 10 字段。
 
     knowledge_base_root: 用于算 source_path 相对路径。如果不传, 用 path 自身的相对部分。
+
+    ★ P0-5 保守默认 (Owner 7/29 严令):
+      - source_document: 真实相对路径 (有)
+      - source_location: 真实源目录 (有)
+      - source_version: null (旧 docx 无 YAML frontmatter)
+      - updated_at: 文件真实 mtime, ISO8601 (有)
+      - reviewed_at / reviewed_by: null
+      - review_status: UNVERIFIED (默认)
+      - confidence: null
+      - environment: all
+      - pii_classification: 保守判断 (有 phone/email → confidential, 否则 none)
     """
     p = Path(path)
     if p.suffix.lower() != ".docx":
@@ -556,6 +579,35 @@ def extract_city(path: PathLike, knowledge_base_root: PathLike | None = None) ->
     if status == "现行":
         tags.append("24h响应")
 
+    # ★ P0-5: 10 字段保守默认填值
+    # source_document: 真实相对路径 (有)
+    source_document = source_path
+    # source_location: 真实源目录 (e.g. 'filesystem:02_外战预案')
+    source_location = "filesystem:" + str(Path(source_path).parent) if source_path else None
+    # source_version: null (旧 docx 无 YAML frontmatter)
+    source_version = None
+    # updated_at: 文件真实 mtime, ISO8601
+    try:
+        mtime = p.stat().st_mtime
+        updated_at = datetime.fromtimestamp(mtime, tz=timezone.utc).isoformat()
+    except OSError:
+        # fallback: 现在
+        updated_at = datetime.now(timezone.utc).isoformat()
+    # reviewed_at / reviewed_by / confidence: null
+    reviewed_at = None
+    reviewed_by = None
+    confidence = None
+    # review_status: UNVERIFIED (默认, 不因 "有数据" 就 VERIFIED)
+    review_status = "UNVERIFIED"
+    # environment: all
+    environment = "all"
+    # pii_classification: 保守判断
+    # 含 phone 或 email → confidential (默认)
+    has_contact_with_pii = any(
+        c.get("phone") or c.get("email") for c in contacts
+    )
+    pii_classification = "confidential" if has_contact_with_pii else "none"
+
     return City(
         code=code,
         name=name,
@@ -572,5 +624,15 @@ def extract_city(path: PathLike, knowledge_base_root: PathLike | None = None) ->
         logistics=logistics,
         content_md=md_text,
         source_path=source_path,
-        updated_at=datetime.now(timezone.utc).isoformat(),
+        updated_at=updated_at,
+        # ★ P0-5: 10 字段
+        source_document=source_document,
+        source_location=source_location,
+        source_version=source_version,
+        reviewed_at=reviewed_at,
+        reviewed_by=reviewed_by,
+        review_status=review_status,
+        confidence=confidence,
+        environment=environment,
+        pii_classification=pii_classification,
     )
