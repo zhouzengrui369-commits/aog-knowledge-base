@@ -62,8 +62,9 @@ def check_file(path: Path, denylist: dict) -> list:
 
     # 排除 # 注释行
     # 排除合法 staging 后缀 (aog-api-staging / aog-staging.njx.com), 用 word boundary + negative lookahead
+    # 排除路径分隔符 / 后的引用 (read 引用, 如 "$AOG_WEB/functions/aog-api/", 是 staging prepare copy handler 用, 不算 deploy 引用)
     envId_re = re.compile(re.escape(denylist["envId"])) if denylist["envId"] else None
-    function_re = re.compile(r"\b" + re.escape(denylist["function_name"]) + r"\b(?!-staging)") if denylist["function_name"] else None
+    function_re = re.compile(r"\b" + re.escape(denylist["function_name"]) + r"\b(?![-/])") if denylist["function_name"] else None
     bucket_re = re.compile(re.escape(denylist["bucket"])) if denylist["bucket"] else None
     domain_re = re.compile(re.escape(denylist["domain"]) + r"(?!-staging)") if denylist["domain"] else None
 

@@ -1,35 +1,49 @@
 {
-  "_comment": "AOG Knowledge Base · Staging CloudBase v2 部署配置 (NJX 7/29 严令 staging 隔离)",
+  "_comment": "AOG Knowledge Base · Staging CloudBase v2 部署配置 (NJX 7/29 严令 staging 隔离 + 7/29 严令 DEPLOYABILITY 修)",
   "_isolated_from_production": true,
   "_first_phase_use_default_domain": "第一轮 staging 使用 CloudBase 默认域名, 不配自定义 CNAME. CNAME 是远端验收通过后的可选项, 非当前 PR 必填 (见 STAGING_ISOLATION_SPEC.md §2).",
   "_denylist_source": "ops/production-resource-denylist.json (仅作 denylist reference, 严禁 staging 引用)",
+  "_deployability_contract_NJX_729": "envVariables 用 object 形式 (key→value), type=HTTP, installDependency=false, memorySize=512, timeout=60, region=ap-shanghai, 必含 ENV/MINIMAX/COS/AOG_DB_PATH/AOG_VIEW_PASSWORD/JWT_SECRET 等全部运行 env vars (见 staging_isolation_test.py test_3 / test_5 验证)",
   "version": "2.0",
   "envId": "{{env.TCB_ENV_ID}}",
+  "region": "ap-shanghai",
   "functionRoot": "./aog-web/functions",
   "functions": [
     {
       "name": "aog-api-staging",
       "runtime": "Python3.11",
       "handler": "scf_bootstrap.main_handler",
-      "memorySize": 256,
-      "timeout": 30,
-      "installDependency": true,
+      "type": "HTTP",
+      "memorySize": 512,
+      "timeout": 60,
+      "installDependency": false,
       "triggers": [],
-      "envVariables": [
-        {"key": "ENVIRONMENT", "value": "staging"},
-        {"key": "ALLOW_MOCK", "value": "false"},
-        {"key": "STRICT_LLM", "value": "true"},
-        {"key": "SYNC_ENABLED", "value": "false"},
-        {"key": "APP_COMMIT_SHA", "value": "{{env.APP_COMMIT_SHA}}"},
-        {"key": "MINIMAX_API_KEY", "value": "{{env.MINIMAX_API_KEY}}"},
-        {"key": "MINIMAX_BASE_URL", "value": "{{env.MINIMAX_BASE_URL}}"},
-        {"key": "MINIMAX_MODEL", "value": "{{env.MINIMAX_MODEL}}"},
-        {"key": "CHROMA_PATH", "value": "{{env.CHROMA_PATH}}"},
-        {"key": "SQLITE_PATH", "value": "{{env.SQLITE_PATH}}"},
-        {"key": "FTS5_PATH", "value": "{{env.FTS5_PATH}}"},
-        {"key": "RAG_BACKEND", "value": "{{env.RAG_BACKEND}}"},
-        {"key": "LOG_LEVEL", "value": "{{env.LOG_LEVEL}}"}
-      ]
+      "envVariables": {
+        "ENVIRONMENT": "staging",
+        "ALLOW_MOCK": "false",
+        "STRICT_LLM": "true",
+        "SYNC_ENABLED": "false",
+        "APP_COMMIT_SHA": "{{env.APP_COMMIT_SHA}}",
+        "MINIMAX_API_KEY": "{{env.MINIMAX_API_KEY}}",
+        "MINIMAX_BASE_URL": "{{env.MINIMAX_BASE_URL}}",
+        "MINIMAX_MODEL": "{{env.MINIMAX_MODEL}}",
+        "CHROMA_PATH": "{{env.CHROMA_PATH}}",
+        "SQLITE_PATH": "{{env.SQLITE_PATH}}",
+        "FTS5_PATH": "{{env.FTS5_PATH}}",
+        "RAG_BACKEND": "{{env.RAG_BACKEND}}",
+        "LOG_LEVEL": "{{env.LOG_LEVEL}}",
+        "COS_BUCKET": "{{env.COS_BUCKET}}",
+        "COS_REGION": "{{env.COS_REGION}}",
+        "COS_SECRET_ID": "{{env.COS_SECRET_ID}}",
+        "COS_SECRET_KEY": "{{env.COS_SECRET_KEY}}",
+        "AOG_DB_PATH": "{{env.AOG_DB_PATH}}",
+        "AOG_VIEW_PASSWORD": "{{env.AOG_VIEW_PASSWORD}}",
+        "JWT_SECRET": "{{env.JWT_SECRET}}",
+        "STAGING_HOSTING_ORIGIN": "{{env.STAGING_HOSTING_ORIGIN}}",
+        "KNOWLEDGE_BASE_PATH": "{{env.KNOWLEDGE_BASE_PATH}}",
+        "RAW_PATH": "{{env.RAW_PATH}}",
+        "CORS_ALLOW_ORIGINS": "{{env.CORS_ALLOW_ORIGINS}}"
+      }
     }
   ]
 }

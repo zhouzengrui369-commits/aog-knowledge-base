@@ -160,20 +160,17 @@ verify_package() {
 deploy() {
     echo "[deploy-staging] 4/4 deploy (实际云端写操作)..."
 
-    # 部署到 staging 独立 env (严禁 production envId)
-    # NJX 7/29: 第一轮 staging 用 TCB_ENV_ID (CloudBase v2 标准 env var)
+    # ============ 1. TCB_ENV_ID 检查 ============
     if [ -z "${TCB_ENV_ID:-}" ]; then
         echo "  ✗ FAIL: TCB_ENV_ID 未设" >&2
         echo "  必须 NJX 在 CloudBase 控制台创建 staging env 后 export TCB_ENV_ID=staging-env-id" >&2
         return 1
     fi
 
-    # CLOUDBASE_STAGING_ENV 是 TCB_ENV_ID 的兼容 alias (老命令支持)
     local CLOUDBASE_STAGING_ENV="${CLOUDBASE_STAGING_ENV:-$TCB_ENV_ID}"
     echo "  staging env: $CLOUDBASE_STAGING_ENV (独立 staging, 严禁 production)"
 
-    # ★ 严禁 deploy 到 production: 用 python 读 production envId + function name, 严格比较
-    # (DENYLIST_REGEX 策略: 不在脚本里 hardcode production 值, 全部从 denylist 读)
+    # ============ 2. 严禁 deploy 到 production (DENYLIST_REGEX 策略) ============
     local deploy_check
     deploy_check=$(python3 - "$CLOUDBASE_STAGING_ENV" "$STAGING_FUNCTION_NAME" "$REPO_ROOT/ops/production-resource-denylist.json" <<'PYEOF'
 import json, sys
@@ -197,27 +194,88 @@ PYEOF
         return 1
     fi
 
-    echo "  function:    $STAGING_FUNCTION_NAME (独立 staging, 见 cloudbaserc.staging.json)"
-    echo "  APP_COMMIT_SHA: ${MERGE_SHA:0:12}..."
+    # ============ 3. STAGING_DEPLOY_MODE 模式 (NJX 7/29 DEPLOYABILITY 严令) ============
+    # 默认 dry-run, 不实际执行 tcb fn deploy
+    # 只有 ALLOW_STAGING_DEPLOY=1 + STAGING_DEPLOY_MODE=execute 才真执行
+    local STAGING_DEPLOY_MODE="${STAGING_DEPLOY_MODE:-dry-run}"
 
-    # 真实部署 (此行下方需要 NJX 已经 tcb login + set TCB_ENV_ID)
-    # NJX 7/29 严令: 第一轮 staging 用 CloudBase 默认域名, 不配自定义 CNAME
-    # 严禁: 老命令 (见 STAGING_ISOLATION_SPEC.md)
-    # 严禁: 老 flag (见 STAGING_ISOLATION_SPEC.md)
-    # 正确: tcb fn deploy aog-api-staging --env-id --config-file --mode staging --yes
-    if [ -z "${TCB_ENV_ID:-}" ]; then
-        echo "  ✗ FAIL: TCB_ENV_ID 未设" >&2
-        echo "  必须 NJX export TCB_ENV_ID=staging-env-id (从 CloudBase 控制台获取)" >&2
+    if [ "$STAGING_DEPLOY_MODE" != "execute" ]; then
+        echo "  [staging-deploy] STAGING_DEPLOY_MODE=$STAGING_DEPLOY_MODE (默认 dry-run, 不实际执行 tcb fn deploy)"
+        echo "  [staging-deploy] 准备好命令 (NJX 物理执行):"
+        echo "    tcb fn deploy aog-api-staging \\"
+        echo "      --env-id \"\$TCB_ENV_ID\" \\"
+        echo "      --config-file \"\$REPO_ROOT/cloudbaserc.staging.json\" \\"
+        echo "      --mode staging \\"
+        echo "      --yes"
+        echo "  [staging-deploy] 严禁: 老命令 / 老 flag (见 STAGING_ISOLATION_SPEC.md §3.5)"
+        echo "  [staging-deploy] 当前 dry-run 完成: preflight + verify_package + deploy_target_validate"
+        return 0
+    fi
+
+    # ============ 4. STAGING_DEPLOY_MODE=execute 真实执行 + 4 项强校验 (NJX 7/29 严令) ============
+    echo "  [staging-deploy] STAGING_DEPLOY_MODE=execute, 进入真实部署模式 (4 项强校验)"
+
+    # 4.1 MERGE_SHA 必须是 40 位 hex SHA1
+    if ! [[ "${MERGE_SHA:-}" =~ ^[0-9a-f]{40}$ ]]; then
+        echo "  ✗ FAIL: MERGE_SHA='${MERGE_SHA:-}' 不是 40 位 hex SHA1" >&2
         return 1
     fi
-    echo "  [staging-deploy] ⚠️ 实际 tcb fn deploy 需 NJX 物理执行 (本阶段不部署, 准备好命令):"
-    echo "    tcb fn deploy aog-api-staging \\"
-    echo "      --env-id \"\$TCB_ENV_ID\" \\"
-    echo "      --config-file \"\$REPO_ROOT/cloudbaserc.staging.json\" \\"
-    echo "      --mode staging \\"
-    echo "      --yes"
-    echo "  [staging-deploy] 严禁: 老命令 / 老 flag (见 STAGING_ISOLATION_SPEC.md §3.5)"
-    echo "  [staging-deploy] 当前仅完成 preflight + verify_package + deploy_target_validate"
+    echo "  ✓ MERGE_SHA=${MERGE_SHA:0:12}... (40 hex)"
+
+    # 4.2 MERGE_SHA == git rev-parse HEAD (本地 HEAD 必须等于 merge commit)
+    local current_head
+    current_head=$(cd "$REPO_ROOT" && git rev-parse HEAD 2>/dev/null)
+    if [ "$current_head" != "$MERGE_SHA" ]; then
+        echo "  ✗ FAIL: git HEAD=$current_head != MERGE_SHA=$MERGE_SHA" >&2
+        echo "  必须 checkout 到 MERGE_SHA 指向的 commit 后再执行部署" >&2
+        return 1
+    fi
+    echo "  ✓ git rev-parse HEAD == MERGE_SHA"
+
+    # 4.3 APP_COMMIT_SHA == MERGE_SHA (运行时环境变量一致性)
+    if [ -z "${APP_COMMIT_SHA:-}" ]; then
+        echo "  ✗ FAIL: APP_COMMIT_SHA 未设" >&2
+        echo "  必须 export APP_COMMIT_SHA=\$MERGE_SHA (部署时由 CI 注入 {{env.APP_COMMIT_SHA}})" >&2
+        return 1
+    fi
+    if [ "$APP_COMMIT_SHA" != "$MERGE_SHA" ]; then
+        echo "  ✗ FAIL: APP_COMMIT_SHA=$APP_COMMIT_SHA != MERGE_SHA=$MERGE_SHA" >&2
+        return 1
+    fi
+    echo "  ✓ APP_COMMIT_SHA == MERGE_SHA"
+
+    # 4.4 git status clean (工作树无未提交变更)
+    if ! (cd "$REPO_ROOT" && git diff --quiet HEAD 2>/dev/null); then
+        echo "  ✗ FAIL: git working tree 不 clean, 有未提交变更" >&2
+        (cd "$REPO_ROOT" && git status --porcelain | head -10) >&2
+        echo "  必须 commit 或 stash 后再执行部署" >&2
+        return 1
+    fi
+    echo "  ✓ git status clean"
+
+    # ============ 5. 真实执行 tcb fn deploy (参数数组, 不 eval) ============
+    # NJX 7/29 严令: 严禁: 老命令 / 老 flag (见 STAGING_ISOLATION_SPEC.md §3.5)
+    # 正确: tcb fn deploy aog-api-staging --env-id --config-file --mode staging --yes
+    echo "  [staging-deploy] 真实执行 tcb fn deploy (参数数组, 不 eval):"
+
+    # 用参数数组 (Bash 数组) 执行, 严禁 eval
+    local tcb_cmd=(
+        tcb fn deploy "aog-api-staging"
+        --env-id "$TCB_ENV_ID"
+        --config-file "$REPO_ROOT/cloudbaserc.staging.json"
+        --mode staging
+        --yes
+    )
+    echo "  + ${tcb_cmd[*]}"
+
+    if ! "${tcb_cmd[@]}"; then
+        local exit_code=$?
+        echo "  ✗ FAIL: tcb fn deploy exit $exit_code" >&2
+        return 1
+    fi
+
+    echo "  ✓ tcb fn deploy 成功"
+    echo "  [staging-deploy] staging deployment done, APP_COMMIT_SHA=$MERGE_SHA"
     return 0
 }
 
