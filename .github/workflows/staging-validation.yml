@@ -3,16 +3,17 @@
 # trigger: push to ops/staging-isolation 分支 + PR 到 main
 # 目标: 验证 staging 隔离 (production 资源严禁引用), 不做云端写操作
 #
-# 4 jobs:
-#   1. denylist-check        - 跑 grep 验证 staging 脚本 + 配置不含 production 4 项
-#   2. staging-prepare       - 跑 prepare-scf-staging.sh preflight + package + compile + drift + manifest
-#   3. staging-deps-isolation - 验证 staging scripts 不引用 production 凭据/COS/域名
-#   4. staging-validation-tests - 跑新增的 staging_isolation_test.py 全部 unit tests
+# 5 jobs:
+#   1. denylist-check         - 跑 denylist_check.py 验证 staging 脚本 + 配置不含 production 4 项
+#   2. staging-prepare        - 跑 prepare-scf-staging.sh preflight + package + compile + drift + manifest
+#   3. staging-deps-isolation - 验证 staging 脚本用占位符, 不含真 production 凭据
+#   4. staging-validation-tests - 跑 staging_isolation_test.py 全部 unit tests
+#   5. staging-all-pass       - aggregate, 全部 job 都通过
 #
 # 任何一项失败, staging PR 不得 merge.
 # 禁止 continue-on-error / || true.
 
-name: staging-validation
+name: "staging-validation"
 
 on:
   push:
@@ -30,24 +31,23 @@ jobs:
   # 1. denylist-check: 全部 staging 脚本 + 配置不含 production 4 项
   # ============================================================
   denylist-check:
-    name: Denylist check (production 资源严禁引用)
+    name: "Denylist check (production 资源严禁引用)"
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v4
 
-      - name: Denylist grep across staging scripts + configs
+      - name: Denylist check across staging scripts + configs
         run: |
           set -euo pipefail
-          # production 4 项 denylist
-          DENYLIST_REGEX='njx-copilot-d6gs7642f8fa17122|aog-prod-data-1343051603|aog\.njx\.com|aog-api[^a-zA-Z0-9_-]'
           # 检查 staging 文件 (限定范围, 不查 production backend/frontend source)
           STAGING_FILES=(
             "cloudbaserc.staging.json"
-            "cloudbaserc.production.json"
+            "ops/production-resource-denylist.json"
             ".env.staging.example"
             "aog-web/scripts/prepare-scf-staging.sh"
             "aog-web/scripts/deploy-staging.sh"
+            "aog-web/scripts/denylist_check.py"
             "docs/STAGING_ISOLATION_SPEC.md"
           )
           error=0
@@ -57,9 +57,9 @@ jobs:
               error=1
               continue
             fi
-            # cloudbaserc.production.json 允许含 production 4 项 (作为 denylist reference)
+            # ops/production-resource-denylist.json 允许含 production 4 项 (作为 denylist reference)
             # 但 _isolated_for_staging_denylist_only: true 必须存在
-            if [ "$f" = "cloudbaserc.production.json" ]; then
+            if [ "$f" = "ops/production-resource-denylist.json" ]; then
               if ! grep -q '"_isolated_for_staging_denylist_only": true' "$f"; then
                 echo "  ✗ FAIL: $f 缺 _isolated_for_staging_denylist_only: true"
                 error=1
@@ -79,9 +79,10 @@ jobs:
               fi
               continue
             fi
-            if grep -E "$DENYLIST_REGEX" "$f" >/dev/null 2>&1; then
+            # 其他 staging 文件用 denylist_check.py 严格检查
+            if ! python3 aog-web/scripts/denylist_check.py "$f" >/dev/null 2>&1; then
               echo "  ✗ FAIL: $f 含 production denylist 字符串:"
-              grep -E "$DENYLIST_REGEX" "$f" | head -3 | sed 's/^/    /'
+              python3 aog-web/scripts/denylist_check.py "$f" 2>&1 | head -5 | sed 's/^/    /'
               error=1
             else
               echo "  ✓ $f (0 denylist 命中)"
@@ -99,7 +100,7 @@ jobs:
   # 2. staging-prepare: prepare-scf-staging.sh preflight + package
   # ============================================================
   staging-prepare:
-    name: Staging SCF package (prepare + compile + drift + manifest)
+    name: "Staging SCF package (prepare + compile + drift + manifest)"
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -139,7 +140,7 @@ jobs:
   # 3. staging-deps-isolation: 验证 staging 不引用 production 凭据
   # ============================================================
   staging-deps-isolation:
-    name: Staging deps isolation (production 凭据严禁)
+    name: "Staging deps isolation (production 凭据严禁)"
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -165,25 +166,64 @@ jobs:
             echo "  ✗ FAIL: .env.staging.example APP_COMMIT_SHA 占位符异常"
             exit 1
           fi
+          if ! grep -q 'TCB_ENV_ID=xxx-STAGING-PLACEHOLDER-xxx' .env.staging.example; then
+            echo "  ✗ FAIL: .env.staging.example TCB_ENV_ID 占位符异常"
+            exit 1
+          fi
           echo "  ✓ .env.staging.example 全用占位符, 无真凭据"
-          # cloudbaserc.staging.json 必须独立, 不含 production 资源
-          if ! grep -q 'envId.*njx-copilot-staging' cloudbaserc.staging.json; then
-            echo "  ✗ FAIL: cloudbaserc.staging.json envId 不是 staging"
+          # cloudbaserc.staging.json 必须是 CloudBase v2 schema + 含占位符 + 不含 production
+          if ! grep -q '"version": "2.0"' cloudbaserc.staging.json; then
+            echo "  ✗ FAIL: cloudbaserc.staging.json 不是 v2 schema (缺 version: 2.0)"
+            exit 1
+          fi
+          if ! grep -q '"functionRoot":' cloudbaserc.staging.json; then
+            echo "  ✗ FAIL: cloudbaserc.staging.json 缺 functionRoot"
+            exit 1
+          fi
+          if ! grep -q '"functions": \[' cloudbaserc.staging.json; then
+            echo "  ✗ FAIL: cloudbaserc.staging.json 缺 functions[]"
+            exit 1
+          fi
+          if ! grep -q '"envVariables": \[' cloudbaserc.staging.json; then
+            echo "  ✗ FAIL: cloudbaserc.staging.json 缺 envVariables[]"
+            exit 1
+          fi
+          if ! grep -q '{{env.TCB_ENV_ID}}' cloudbaserc.staging.json; then
+            echo "  ✗ FAIL: cloudbaserc.staging.json 缺 {{env.TCB_ENV_ID}} 占位符"
             exit 1
           fi
           if ! grep -q 'aog-api-staging' cloudbaserc.staging.json; then
             echo "  ✗ FAIL: cloudbaserc.staging.json function 不是 aog-api-staging"
             exit 1
           fi
-          if ! grep -q 'aog-staging.njx.com' cloudbaserc.staging.json; then
-            echo "  ✗ FAIL: cloudbaserc.staging.json domain 不是 aog-staging.njx.com"
-            exit 1
-          fi
           if grep -E 'njx-copilot-d6gs7642f8fa17122|aog-prod-data-1343051603|aog\.njx\.com' cloudbaserc.staging.json; then
             echo "  ✗ FAIL: cloudbaserc.staging.json 含 production 资源"
             exit 1
           fi
-          echo "  ✓ cloudbaserc.staging.json 全 staging, 0 production 命中"
+          # NJX 7/29 严令: 第一轮 staging 用 CloudBase 默认域名, 不配 aog-staging.njx.com CNAME
+          if grep -q 'aog-staging.njx.com' cloudbaserc.staging.json; then
+            echo "  ✗ FAIL: cloudbaserc.staging.json 含 aog-staging.njx.com 字面量 (CNAME 是远端验收后可选项)"
+            exit 1
+          fi
+          echo "  ✓ cloudbaserc.staging.json 是 v2 schema, 0 production 命中, 0 CNAME 字面量"
+          # deploy-staging.sh 必须不含老命令 tcb env switch 和老 flag -e APP_COMMIT_SHA=
+          if grep -q 'tcb env switch' aog-web/scripts/deploy-staging.sh; then
+            echo "  ✗ FAIL: deploy-staging.sh 含老命令 'tcb env switch' (CloudBase v2 不再使用)"
+            exit 1
+          fi
+          if grep -q -- '-e APP_COMMIT_SHA=' aog-web/scripts/deploy-staging.sh; then
+            echo "  ✗ FAIL: deploy-staging.sh 含老 flag '-e APP_COMMIT_SHA=' (改用 {{env.APP_COMMIT_SHA}})"
+            exit 1
+          fi
+          if ! grep -q 'tcb fn deploy aog-api-staging' aog-web/scripts/deploy-staging.sh; then
+            echo "  ✗ FAIL: deploy-staging.sh 缺正确 CloudBase v2 命令 'tcb fn deploy aog-api-staging'"
+            exit 1
+          fi
+          if ! grep -q -- '--config-file' aog-web/scripts/deploy-staging.sh; then
+            echo "  ✗ FAIL: deploy-staging.sh 缺 --config-file flag"
+            exit 1
+          fi
+          echo "  ✓ deploy-staging.sh 用 CloudBase v2 命令 (tcb fn deploy --env-id --config-file --mode staging --yes)"
           echo
           echo "  ✓ staging deps isolation check 全过"
 
@@ -191,7 +231,7 @@ jobs:
   # 4. staging-validation-tests: 跑 staging_isolation_test.py
   # ============================================================
   staging-validation-tests:
-    name: Staging isolation unit tests
+    name: "Staging isolation unit tests"
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:

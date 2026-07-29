@@ -126,8 +126,8 @@ from pathlib import Path
 root = Path('$FUNCTIONS_DIR')
 files = sorted([p for p in root.rglob('*') if p.is_file() and '__pycache__' not in str(p)])
 total_size = sum(p.stat().st_size for p in files)
-# 从 cloudbaserc.production.json 读 production 4 项 (denylist reference)
-prod_rc = Path('$REPO_ROOT/cloudbaserc.production.json')
+# 从 ops/production-resource-denylist.json 读 production 4 项 (denylist reference)
+prod_rc = Path('$REPO_ROOT/ops/production-resource-denylist.json')
 prod = json.loads(prod_rc.read_text()) if prod_rc.exists() else {}
 denied = {
     'envId': prod.get('envId', ''),

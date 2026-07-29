@@ -1,0 +1,16 @@
+{
+  "_comment": "PRODUCTION 资源 denylist reference (NJX 7/29 严令: 严禁 staging 引用). 此文件只供 denylist_check.py / staging 脚本校验读, 严禁伪装为可部署 cloudbaserc, 严禁 staging 任何脚本实际引用其中 production 值部署到 staging.",
+  "_isolated_for_staging_denylist_only": true,
+  "_purpose": "本文件仅供 staging 脚本 denylist 校验用 (denylist_check.py 读 _denylist_4_keys 字段), 严禁 staging 任何脚本实际引用本文件内容部署到 staging.",
+  "_denylist_4_keys": [
+    "envId",
+    "function_name",
+    "bucket",
+    "domain"
+  ],
+  "envId": "njx-copilot-d6gs7642f8fa17122",
+  "function_name": "aog-api",
+  "bucket": "aog-prod-data-1343051603",
+  "domain": "aog.njx.com",
+  "_staging_rules": "staging 任何代码 (.sh / .json / .yml / .py / .ts) 严禁包含 _denylist_4_keys 的 production 值. CI staging-validation.yml 跑 denylist grep 验证. staging 必须用 {{env.*}} 占位符 + cloudbaserc.staging.json v2 部署结构, 严禁从此文件读实际值."
+}

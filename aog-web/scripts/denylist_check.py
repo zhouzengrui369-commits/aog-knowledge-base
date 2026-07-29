@@ -1,18 +1,20 @@
 #!/usr/bin/env python3
 """denylist_check.py — staging denylist 严格检查 (NJX 7/29 严令)
 
-从 cloudbaserc.production.json 读 production 4 项 denylist, 严格检查 staging 文件不含:
-  - production envId (njx-copilot-d6gs7642f8fa17122)
-  - production function (aog-api)
-  - production bucket (aog-prod-data-1343051603)
-  - production domain (aog.njx.com)
+从 ops/production-resource-denylist.json 读 production 4 项 denylist, 严格检查 staging 文件不含:
+  - production envId
+  - production function name
+  - production bucket
+  - production domain
 
-排除: # 注释行 + cloudbaserc.production.json 文件本身 (作为 denylist reference)
+排除: # 注释行 + ops/production-resource-denylist.json 文件本身 (作为 denylist reference)
+排除: 合法 staging 后缀 (aog-api-staging / aog-staging.njx.com), 用 word boundary + negative lookahead
 
 用法:
   python3 scripts/denylist_check.py FILE [FILE ...]
   exit 0 = 0 production 命中
   exit 1 = 有 production 命中
+  exit 2 = 配置错误 (denylist 文件不存在 / JSON 解析错)
 """
 import json
 import re
@@ -20,56 +22,57 @@ import sys
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
-PROD_RC = REPO_ROOT / "cloudbaserc.production.json"
+DENYLIST_RC = REPO_ROOT / "ops" / "production-resource-denylist.json"
 
 
 def load_denylist() -> dict:
-    """从 cloudbaserc.production.json 读 production 4 项"""
-    if not PROD_RC.exists():
-        print(f"FAIL: {PROD_RC} 不存在", file=sys.stderr)
+    """从 ops/production-resource-denylist.json 读 production 4 项"""
+    if not DENYLIST_RC.exists():
+        print(f"FAIL: {DENYLIST_RC} 不存在", file=sys.stderr)
         sys.exit(2)
     try:
-        data = json.loads(PROD_RC.read_text(encoding="utf-8"))
+        data = json.loads(DENYLIST_RC.read_text(encoding="utf-8"))
     except json.JSONDecodeError as e:
-        print(f"FAIL: {PROD_RC} JSON 解析错: {e}", file=sys.stderr)
+        print(f"FAIL: {DENYLIST_RC} JSON 解析错: {e}", file=sys.stderr)
+        sys.exit(2)
+    # 必须含 _isolated_for_staging_denylist_only: true
+    if not data.get("_isolated_for_staging_denylist_only"):
+        print(f"FAIL: {DENYLIST_RC} 缺 _isolated_for_staging_denylist_only: true 标记", file=sys.stderr)
         sys.exit(2)
     return {
         "envId": data.get("envId", ""),
-        "function_name": data.get("function", {}).get("name", ""),
-        "bucket": data.get("storage", {}).get("bucket", ""),
-        "domain": data.get("hosting", {}).get("domain", ""),
+        "function_name": data.get("function_name", ""),
+        "bucket": data.get("bucket", ""),
+        "domain": data.get("domain", ""),
     }
 
 
 def check_file(path: Path, denylist: dict) -> list:
-    """返回 (line_no, line) 命中的所有 production 引用"""
+    """返回 (line_no, line, label) 命中的所有 production 引用"""
     hits = []
     if not path.exists():
         return [(0, f"FILE_NOT_FOUND: {path}")]
 
-    # 排除 cloudbaserc.production.json 本身 (作为 denylist reference, 必须含 production 4 项)
-    if path == PROD_RC:
+    # 排除 ops/production-resource-denylist.json 本身 (作为 denylist reference)
+    if path.resolve() == DENYLIST_RC.resolve():
         return []
 
-    # 排除 xxx-STAGING 占位符行 (.env.staging.example 用)
-    placeholder = re.compile(r"xxx-STAGING")
+    # 排除 xxx-STAGING 占位符行 (.env.staging.example / cloudbaserc.staging.json 用)
+    placeholder = re.compile(r"xxx-STAGING|\{\{env\.")
 
-    # 排除 cloudbaserc.staging.json 含 "STAGING" 标识
-    is_staging_config = path.name == "cloudbaserc.staging.json" or path.name == ".env.staging.example"
-
-    # 排除 # 注释行 + 含 "aog-api-staging" 的引用 (合法 staging 引用)
-    # 注: aog-api 单独匹配 production function name, 但 aog-api-staging 是合法 staging function
+    # 排除 # 注释行
+    # 排除合法 staging 后缀 (aog-api-staging / aog-staging.njx.com), 用 word boundary + negative lookahead
     envId_re = re.compile(re.escape(denylist["envId"])) if denylist["envId"] else None
     function_re = re.compile(r"\b" + re.escape(denylist["function_name"]) + r"\b(?!-staging)") if denylist["function_name"] else None
     bucket_re = re.compile(re.escape(denylist["bucket"])) if denylist["bucket"] else None
-    domain_re = re.compile(re.escape(denylist["domain"])) if denylist["domain"] else None
+    domain_re = re.compile(re.escape(denylist["domain"]) + r"(?!-staging)") if denylist["domain"] else None
 
     for i, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
         # 排除 # 注释
         if line.strip().startswith("#"):
             continue
-        # 排除 xxx-STAGING 占位符
-        if is_staging_config and placeholder.search(line):
+        # 排除 {{env.*}} 占位符
+        if placeholder.search(line):
             continue
         # 检查 4 项
         for label, regex in [

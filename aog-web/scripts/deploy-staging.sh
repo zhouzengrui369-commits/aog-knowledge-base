@@ -1,24 +1,28 @@
 #!/usr/bin/env bash
 # deploy-staging.sh — staging SCF 部署 (NJX 7/29 严令 staging 隔离)
 #
-# 严禁: 部署到 production 函数 (见 cloudbaserc.production.json denylist)
-# 严禁: 引用 production envId / bucket / domain (见 cloudbaserc.production.json denylist)
+# 严禁: 部署到 production 函数 (见 ops/production-resource-denylist.json)
+# 严禁: 引用 production envId / bucket / domain (见 ops/production-resource-denylist.json)
 #
-# DENYLIST_REGEX 策略: production 4 项从 cloudbaserc.production.json 读, 不在脚本里 hardcode
+# DENYLIST_REGEX 策略: production 4 项从 ops/production-resource-denylist.json 读, 不在脚本里 hardcode
 # (避免脚本自杀 + 与 denylist_check.py 严格对齐)
 #
 # 启动时: 跑 denylist preflight (用 denylist_check.py) + ALLOW_STAGING_DEPLOY 闸门
 # 部署目标: aog-api-staging (独立函数, staging env 隔离)
 #
-# 用法:
+# NJX 7/29 严令 (本阶段不动云资源):
+#   - 第一轮 staging 用 CloudBase 默认域名 (不配 aog-staging.njx.com CNAME)
+#   - 严禁老命令 `tcb env switch` (CloudBase v2 不再使用)
+#   - 严禁老 flag `-e APP_COMMIT_SHA=` (改用 cloudbaserc.staging.json envVariables + {{env.APP_COMMIT_SHA}})
+#   - 正确命令: tcb fn deploy aog-api-staging --env-id --config-file --mode staging --yes
+#
+# 用法 (NJX 物理操作后):
 #   1. NJX 在 CloudBase 控制台创建独立 staging env (新 envId)
 #   2. NJX 申请独立 staging MINIMAX_API_KEY 凭据
-#   3. NJX 创建 staging sub-domain CNAME
-#   4. NJX 创建独立 COS bucket (staging 命名空间)
-#   5. NJX 充值 staging env (PM 建议 ¥50-100)
-#   6. NJX export CLOUDBASE_STAGING_ENV=staging-env-id, CLOUDBASE_STAGING_SECRET_ID=xxx
-#   7. ALLOW_STAGING_DEPLOY=1 MERGE_SHA=<merge-commit-sha> bash scripts/deploy-staging.sh
-#   8. 部署后跑远程 10 旅程 + 8 RAG + PII 真实验收 (NJX 7/29 step 6)
+#   3. NJX 充值 staging env (PM 建议 ¥50-100)
+#   4. NJX export TCB_ENV_ID=staging-env-id, APP_COMMIT_SHA=<merge-sha>
+#   5. ALLOW_STAGING_DEPLOY=1 MERGE_SHA=<merge-commit-sha> bash scripts/deploy-staging.sh
+#   6. 部署后跑远程 10 旅程 + 8 RAG + PII 真实验收 (NJX 7/29 step 6)
 
 set -euo pipefail
 
@@ -74,14 +78,14 @@ preflight() {
         fi
     fi
 
-    # 4. cloudbaserc.production.json 仅作 denylist reference
-    local prod_rc="$REPO_ROOT/cloudbaserc.production.json"
+    # 4. ops/production-resource-denylist.json 仅作 denylist reference (非可部署 rc)
+    local prod_rc="$REPO_ROOT/ops/production-resource-denylist.json"
     if [ -f "$prod_rc" ]; then
         if ! grep -q '"_isolated_for_staging_denylist_only": true' "$prod_rc"; then
             echo "  ✗ FAIL: $prod_rc 缺 _isolated_for_staging_denylist_only: true" >&2
             error=1
         else
-            echo "  ✓ $prod_rc (denylist reference 标记正确)"
+            echo "  ✓ $prod_rc (denylist reference 标记正确, 非可部署 rc)"
         fi
     fi
 
@@ -157,25 +161,28 @@ deploy() {
     echo "[deploy-staging] 4/4 deploy (实际云端写操作)..."
 
     # 部署到 staging 独立 env (严禁 production envId)
-    if [ -z "${CLOUDBASE_STAGING_ENV:-}" ]; then
-        echo "  ✗ FAIL: CLOUDBASE_STAGING_ENV 未设" >&2
-        echo "  必须 NJX 在 CloudBase 控制台创建 staging env 后 export CLOUDBASE_STAGING_ENV=staging-env-id" >&2
+    # NJX 7/29: 第一轮 staging 用 TCB_ENV_ID (CloudBase v2 标准 env var)
+    if [ -z "${TCB_ENV_ID:-}" ]; then
+        echo "  ✗ FAIL: TCB_ENV_ID 未设" >&2
+        echo "  必须 NJX 在 CloudBase 控制台创建 staging env 后 export TCB_ENV_ID=staging-env-id" >&2
         return 1
     fi
 
+    # CLOUDBASE_STAGING_ENV 是 TCB_ENV_ID 的兼容 alias (老命令支持)
+    local CLOUDBASE_STAGING_ENV="${CLOUDBASE_STAGING_ENV:-$TCB_ENV_ID}"
     echo "  staging env: $CLOUDBASE_STAGING_ENV (独立 staging, 严禁 production)"
 
     # ★ 严禁 deploy 到 production: 用 python 读 production envId + function name, 严格比较
-    # (DENYLIST_REGEX 策略: 不在脚本里 hardcode production 值, 全部从 rc 读)
+    # (DENYLIST_REGEX 策略: 不在脚本里 hardcode production 值, 全部从 denylist 读)
     local deploy_check
-    deploy_check=$(python3 - "$CLOUDBASE_STAGING_ENV" "$STAGING_FUNCTION_NAME" "$REPO_ROOT/cloudbaserc.production.json" <<'PYEOF'
+    deploy_check=$(python3 - "$CLOUDBASE_STAGING_ENV" "$STAGING_FUNCTION_NAME" "$REPO_ROOT/ops/production-resource-denylist.json" <<'PYEOF'
 import json, sys
-staging_env, staging_fn, prod_rc = sys.argv[1], sys.argv[2], sys.argv[3]
-prod = json.loads(open(prod_rc).read())
+staging_env, staging_fn, denylist_rc = sys.argv[1], sys.argv[2], sys.argv[3]
+denied = json.loads(open(denylist_rc).read())
 errors = []
-if staging_env == prod.get("envId", ""):
+if staging_env == denied.get("envId", ""):
     errors.append(f"CLOUDBASE_STAGING_ENV={staging_env} equals production envId")
-if staging_fn == prod.get("function", {}).get("name", ""):
+if staging_fn == denied.get("function_name", ""):
     errors.append(f"STAGING_FUNCTION_NAME={staging_fn} equals production function name")
 if errors:
     for e in errors:
@@ -193,14 +200,24 @@ PYEOF
     echo "  function:    $STAGING_FUNCTION_NAME (独立 staging, 见 cloudbaserc.staging.json)"
     echo "  APP_COMMIT_SHA: ${MERGE_SHA:0:12}..."
 
-    # 真实部署 (此行下方需要 NJX 已经 tcb login)
-    # tcb env switch "$CLOUDBASE_STAGING_ENV"
-    # tcb fn deploy "$STAGING_FUNCTION_NAME" -e APP_COMMIT_SHA="$MERGE_SHA"
-    # 当前 PM 阶段仅做 preflight 验证, 不实际 tcb (NJX 拍板后由 NJX 物理执行)
-    echo "  [staging-deploy] ⚠️ 实际 tcb fn deploy 需 NJX 物理执行:"
-    echo "    tcb env switch \$CLOUDBASE_STAGING_ENV"
-    echo "    tcb fn deploy \$STAGING_FUNCTION_NAME -e APP_COMMIT_SHA=\$MERGE_SHA"
-    echo "  [staging-deploy] 当前仅完成 preflight + verify_package"
+    # 真实部署 (此行下方需要 NJX 已经 tcb login + set TCB_ENV_ID)
+    # NJX 7/29 严令: 第一轮 staging 用 CloudBase 默认域名, 不配 aog-staging.njx.com CNAME
+    # 严禁: tcb env switch (老命令, CloudBase v2 不用)
+    # 严禁: -e APP_COMMIT_SHA=... (老 flag, CloudBase v2 用 envVariables + {{env.APP_COMMIT_SHA}})
+    # 正确: tcb fn deploy aog-api-staging --env-id --config-file --mode staging --yes
+    if [ -z "${TCB_ENV_ID:-}" ]; then
+        echo "  ✗ FAIL: TCB_ENV_ID 未设" >&2
+        echo "  必须 NJX export TCB_ENV_ID=staging-env-id (从 CloudBase 控制台获取)" >&2
+        return 1
+    fi
+    echo "  [staging-deploy] ⚠️ 实际 tcb fn deploy 需 NJX 物理执行 (本阶段不部署, 准备好命令):"
+    echo "    tcb fn deploy aog-api-staging \\"
+    echo "      --env-id \"\$TCB_ENV_ID\" \\"
+    echo "      --config-file \"\$REPO_ROOT/cloudbaserc.staging.json\" \\"
+    echo "      --mode staging \\"
+    echo "      --yes"
+    echo "  [staging-deploy] 严禁: 老命令 / 老 flag (见 STAGING_ISOLATION_SPEC.md §3.5)"
+    echo "  [staging-deploy] 当前仅完成 preflight + verify_package + deploy_target_validate"
     return 0
 }
 
