@@ -1,14 +1,14 @@
 # AOG Knowledge Base - 系统架构
 
 > 最后更新: 2026-07-29 15:50 GMT+8
-> 适用版本: PR head `c290d75` (P0 全面修复收敛)
+> 适用版本: PR head `fd02795` (P0 全面修复收敛)
 > 相关文档: [STATUS.md](../STATUS.md) · [TODO.md](../TODO.md) · [CHANGELOG.md](../CHANGELOG.md) · [DECISIONS.md](../DECISIONS.md) · [PROJECT_STATE.yaml](../PROJECT_STATE.yaml)
 
 ---
 
 ## 0. PR 关键变更概览
 
-| 维度 | 之前 (V14 / 80330dd) | 本 PR (c290d75) |
+| 维度 | 之前 (V14 / 80330dd) | 本 PR (fd02795) |
 |------|----------------------|-----------------|
 | API 路径 | base + /api/path 双重 | base 不带尾, path /api/... (P0-2) |
 | RAG 索引 | chroma + 维度隐式 | fts5 trigram + build_manifest 4 项严格校验 (P0-3) |

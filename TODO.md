@@ -10,10 +10,10 @@
 
 | ID | 任务 | 状态 | 验证证据 |
 |----|------|------|----------|
-| P0-1 | 分支和版本收敛 | ⏳ IN PROGRESS (待 NJX merge) | PR head `c290d75`, 59 commits ahead of main |
+| P0-1 | 分支和版本收敛 | ⏳ IN PROGRESS (待 NJX merge) | PR head `fd02795`, 59 commits ahead of main |
 | P0-2 | API 修复 (消除 double /api) | ✅ CLOSED_LOCAL | f89e4cd + test_get_city_ok PASS |
 | P0-3 | RAG 维度与索引 | ✅ CLOSED_LOCAL | 5cecf31 + 8/8 RAG 回归 PASS + fts5_index.db 9106 chunks manifest 校验 PASS |
-| P0-4 | 真实 Provider + mock 边界 | ✅ CLOSED_LOCAL | ead11b2 + 581a5a89 (get_llm fail-closed 治本) + J6/J7 PASS |
+| P0-4 | 真实 Provider + mock 边界 | ✅ CLOSED_LOCAL | ead11b2 + fd02795 (get_llm fail-closed 治本) + J6/J7 PASS |
 | P0-5 | 数据可信度 10 字段 + 6 状态 | ✅ CLOSED_LOCAL | eef8b0e + 1c7c7a4 + 10/10 trust pipeline test PASS |
 | P0-6 | PII 与权限 | ✅ CLOSED_LOCAL | 1c7c7a4 + 17/17 PII 4 层 negative test PASS + J8 PASS |
 | P0-7 | staging 真实验收 | ⏸️ BLOCKED (物理) | 等 NJX 充值 CloudBase + merge PR + tcb fn deploy |
@@ -67,7 +67,7 @@
 
 ## 📋 完成门 (本 PR 13 项)
 
-- [x] PR head 不落后 main (581a5a89 领先 59 commits)
+- [x] PR head 不落后 main (fd02795 领先 59 commits)
 - [x] 工作树 clean
 - [x] 后端 compile/import 成功 (3 命令 exit 0)
 - [x] 全部 CI green (117/117 tests PASS)

@@ -3,7 +3,7 @@
 > 最后更新: 2026-07-29 15:50 GMT+8 (Mavis PM)
 > 评审对象: review/aog-product-experience-baseline `5d39967` (V28b, 7/27)
 > 真正主线: integration/sprint-abc `9c29b89` (V30, 7/27)
-> 目标主线: p0/integration-main-convergence `581a5a89b0bc` (本 PR HEAD, 2026-07-29)
+> 目标主线: p0/integration-main-convergence `fd02795e70290b28f5254142df55c92abcc77a5a` (本 PR HEAD, 2026-07-29)
 
 ---
 
@@ -27,7 +27,7 @@
 ## 2. P0 详细状态
 
 ### P0-1 分支和版本收敛: ⏳ IN PROGRESS (待 NJX merge)
-- PR head: `581a5a89b0bc` (p0/integration-main-convergence)
+- PR head: `fd02795e70290b28f5254142df55c92abcc77a5a` (p0/integration-main-convergence)
 - main: `80330dd` (V14, 落后 59 commits)
 - integration/sprint-abc: `9c29b89` (V30, 落后 16 commits)
 - merge 后 main = staging HEAD, 完成
@@ -45,7 +45,7 @@
 
 ### P0-4 真实 Provider + mock 边界: ✅ CLOSED_LOCAL
 - ead11b2 ALLOW_MOCK + STRICT_LLM 配置
-- 581a5a89 get_llm() factory fail-closed 治本 (P0-4 之前只有 lifespan 校验, factory 不校验)
+- fd02795 get_llm() factory fail-closed 治本 (P0-4 之前只有 lifespan 校验, factory 不校验)
 - J6 lifespan startup RuntimeError PASS
 - J7 get_llm() RuntimeError PASS
 - frontend ALLOW_MOCK gate: 17/17 vitest PASS
@@ -74,7 +74,7 @@
 
 ```
 main HEAD: 80330dd (V14)
-PR HEAD:  581a5a89 (p0/integration-main-convergence)
+PR HEAD:  fd02795 (p0/integration-main-convergence)
 commits ahead: 59
 files changed: 98
 insertions:    30,496
@@ -111,7 +111,7 @@ deletions:     869
 
 ## 6. 评审对比
 
-| 维度 | review baseline `5d39967` (V28b) | p0/integration-main-convergence `581a5a89b0bc` |
+| 维度 | review baseline `5d39967` (V28b) | p0/integration-main-convergence `fd02795e70290b28f5254142df55c92abcc77a5a` |
 |------|--------------------------------|----------------------------------------|
 | 时间 | 7/27 14:30 | 7/29 15:50 |
 | 评审结论 | 3.85/5, READY_WITH_MANDATORY_FIXES | (待评审) |
@@ -131,7 +131,7 @@ deletions:     869
 ```
 1. 充值 CloudBase 账户 njx-copilot-d6gs7642f8fa17122 (解除 InsufficientBalance)
 2. cd aog-web && bash scripts/prepare-scf.sh  (构建函数包)
-3. tcb fn deploy aog-api -e APP_COMMIT_SHA=581a5a89b0bc0140417269ec6ed6fa406612f8b9
+3. tcb fn deploy aog-api -e APP_COMMIT_SHA=fd02795e70290b28f5254142df55c92abcc77a5a0140417269ec6ed6fa406612f8b9
 4. gh pr merge 1 --squash --body-file PR_BODY.md
 5. 通知独立产品体验评审官基于 staging (URL) 重新评审
 ```
