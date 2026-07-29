@@ -1,7 +1,15 @@
 // API client — 1:1 对应 CONTRACT §2 端点
-// 错误兜底：fetch 失败或后端未启动 → 降级到 lib/mock 数据
-// ★ P1-2 治本: 5 个 mock fallback 场景有 isMockFallback 标志, UI 顶部红框 "演示数据" 提示
-// 验证：Lighthouse 测试时需 NEXT_PUBLIC_API_BASE=http://localhost:8000
+// 错误兜底：fetch 失败或后端未启动 → 降级到 lib/mock 数据 (P0-4: dev only, production 禁 mock)
+//
+// ★ P0-2 URL 规范 (2026-07-29 Owner 授权):
+//   base URL 不带尾 /api, 路径由 endpoint 负责加 /api
+//   错误示例: BASE=https://...com/api  + path=/api/cities  → 请求 ...com/api/api/cities (400)
+//   正确示例: BASE=https://...com     + path=/api/cities  → 请求 ...com/api/cities
+//
+// 验证:  curl -sS "${BASE}/api/health"  → 200 (P0-2 修复后)
+//        curl -sS "${BASE}/api/api/..."  → 404 (path 不会双拼)
+//
+// 唯一允许改 BASE 的位置: .env.local / .env.local.example, 改后必须跑上面的验证
 
 import type {
   City,
