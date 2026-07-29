@@ -217,7 +217,7 @@ jobs:
   # 5. Aggregate: 全部 job 都通过
   # ============================================================
   staging-all-pass:
-    name: Staging isolation: all checks passed
+    name: "Staging isolation: all checks passed"
     runs-on: ubuntu-latest
     needs: [denylist-check, staging-prepare, staging-deps-isolation, staging-validation-tests]
     if: success()
