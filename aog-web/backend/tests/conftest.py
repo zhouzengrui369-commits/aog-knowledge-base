@@ -33,6 +33,19 @@ def _test_env():
     (TEST_ROOT / "kb").mkdir(parents=True, exist_ok=True)
     (TEST_ROOT / "raw").mkdir(parents=True, exist_ok=True)
 
+    # ★ J10: 在 test kb 根目录下放一个可下载的源文档, 验证 /files/{path} 200 OK
+    test_kb_root = TEST_ROOT / "kb"
+    test_cities_dir = test_kb_root / "02_外战预案"
+    test_cities_dir.mkdir(parents=True, exist_ok=True)
+    (test_cities_dir / "B-北京大兴.md").write_text(
+        "# 北京大兴\n国际枢纽 (test fixture)\n", encoding="utf-8"
+    )
+    (test_cities_dir / "H-赫尔辛基.md").write_text(
+        "# 赫尔辛基\n国际外站 (test fixture)\n", encoding="utf-8"
+    )
+    # ★ S-上海浦东.md 不写, 验证 J10 MISSING source_document 返 404 + reason 明确
+    #   (同时验证 S-上海浦东 review_status=MISSING, source_path="" 的语义一致)
+
     yield
 
     # 清理
@@ -108,12 +121,22 @@ async def seeded_sqlite():
             tags='["AOG预案","国际枢纽"]',
             fleet='[{"model":"B787","short_stay":false,"after":false}]',
             parts='[{"pn":"C20649000","name":"B787 主轮","stock":0,"unit":"个"}]',
-            contacts='[{"org":"东航","phone":["021-22379771"],"role":"7×24"}]',
+            contacts='[{"org":"东航","phone":["021-22379771"],"role":"7×24","permission":"public"}]',
             warehouse='{"location":"北京大兴东航机务区","main":["B787 主轮"]}',
             logistics='{"rail":"京沪高铁","air":"国内 6h","road":"京津冀 4h"}',
             content_md="# 北京大兴\n\n国际枢纽...",
             source_path="02_外战预案/B-北京大兴.md",
             updated_at=datetime.utcnow().isoformat(),
+            # ★ P0-5 10 字段 (D-044-D)
+            source_document="AOG知识库/02_外战预案/B-北京大兴.docx",
+            source_location="AOG知识库/02_外战预案/",
+            source_version="2025-Q4",
+            reviewed_at="2026-01-15T00:00:00",
+            reviewed_by="NJX",
+            review_status="VERIFIED",  # ★ J9: VERIFIED 标杆
+            confidence=0.95,
+            environment="all",
+            pii_classification="internal",
         ))
         session.add(CityRow(
             code="S-上海浦东",
@@ -127,11 +150,78 @@ async def seeded_sqlite():
             fleet="[]",
             parts="[]",
             contacts="[]",
-            warehouse='{"location":"浦东东航机务","main":[]}',
-            logistics='{"rail":"沪宁","air":"4h","road":"长三角"}',
-            content_md="# 上海浦东\n\n国内最大...",
-            source_path="02_外战预案/S-上海浦东.md",
+            warehouse='{"location":"","main":[]}',
+            logistics='{"rail":"","air":"","road":""}',
+            content_md="",  # ★ P0-5: 上海浦东当前 source docx 不在 aog.db, content_md 空
+            source_path="",  # ★ 真实源文档不存在, 等 NJX 物理补
             updated_at=datetime.utcnow().isoformat(),
+            # ★ P0-5 数据可信度 10 字段 (D-044-D, Owner 7/29 授权)
+            source_document=None,  # 无源文档
+            source_location="AOG知识库/02_外战预案/",
+            source_version=None,
+            reviewed_at=None,
+            reviewed_by=None,
+            review_status="MISSING",  # ★ 7/29 指令: 明确 MISSING, 不 404, 不 mock
+            confidence=None,
+            environment="all",
+            pii_classification="none",  # 没联系人 = none
+        ))
+        # ★ P0-5 J3: 上海虹桥也必须明确状态, 不从产品中无解释消失 (D-044)
+        session.add(CityRow(
+            code="S-上海虹桥",
+            name="上海虹桥",
+            airport="上海虹桥国际机场",
+            region="华东",
+            status="现行",
+            iata="SHA",
+            pinyin="shanghaihongqiao",
+            tags='["AOG预案","国内枢纽"]',
+            fleet="[]",
+            parts="[]",
+            contacts="[]",
+            warehouse='{"location":"","main":[]}',
+            logistics='{"rail":"","air":"","road":""}',
+            content_md="",
+            source_path="",
+            updated_at=datetime.utcnow().isoformat(),
+            source_document=None,
+            source_location="AOG知识库/02_外战预案/",
+            source_version=None,
+            reviewed_at=None,
+            reviewed_by=None,
+            review_status="MISSING",
+            confidence=None,
+            environment="all",
+            pii_classification="none",
+        ))
+        # ★ Stage 9.2: 第三个样板 — 赫尔辛基 (含 restricted contact, J8 PII negative)
+        session.add(CityRow(
+            code="H-赫尔辛基",
+            name="赫尔辛基",
+            airport="赫尔辛基-万塔机场",
+            region="国际-欧洲",
+            status="现行",
+            iata="HEL",
+            pinyin="heerxinji",
+            tags='["AOG预案","国际外站"]',
+            fleet='[{"model":"B787","short_stay":true,"after":false}]',
+            parts='[{"pn":"C20649000","name":"B787 主轮","stock":1,"unit":"个"}]',
+            # ★ J8: 混入 restricted contact, 验证 _decode_city 把 phone 替换为 ["REDACTED"]
+            contacts='[{"org":"东航赫尔辛基站","phone":["+358-9-1234567"],"role":"7×24","permission":"public"},{"org":"Satair Finland","phone":["+358-50-9876543"],"role":"商务","permission":"restricted","redacted":true},{"org":"库房供应商","phone":["13900002222"],"role":"库房","permission":"restricted"}]',
+            warehouse='{"location":"赫尔辛基机场东航区","main":["B787 主轮"]}',
+            logistics='{"rail":"","air":"6h","road":"北欧 4h"}',
+            content_md="# 赫尔辛基\n\n国际外站 (北欧)...",
+            source_path="02_外战预案/H-赫尔辛基.md",
+            updated_at=datetime.utcnow().isoformat(),
+            source_document="AOG知识库/02_外战预案/H-赫尔辛基.docx",
+            source_location="AOG知识库/02_外战预案/",
+            source_version=None,  # 旧文档无版本
+            reviewed_at=None,
+            reviewed_by=None,
+            review_status="UNVERIFIED",  # 旧 docx 未经审核
+            confidence=None,
+            environment="all",
+            pii_classification="restricted",  # 含 restricted contact
         ))
         session.add(CityRow(
             code="B-包头",
@@ -150,7 +240,21 @@ async def seeded_sqlite():
             content_md="包头暂停",
             source_path="02_外战预案/B-包头.md",
             updated_at=datetime.utcnow().isoformat(),
+            # ★ J9: STALE 数据 (P0-5 状态之一) — 内容存在但已过期
+            source_document="AOG知识库/02_外战预案/B-包头.docx",
+            source_location="AOG知识库/02_外战预案/",
+            source_version="2019-Q3",  # 5 年前版本
+            reviewed_at=None,
+            reviewed_by=None,
+            review_status="STALE",  # 来源过期 (>30 天)
+            confidence=0.3,  # 低置信度
+            environment="all",
+            pii_classification="none",
         ))
+        # ★ J9: VERIFIED 标杆 — 北京大兴 (Stage 1 样板, 假设已审核)
+        # 已在 B-北京大兴 add 时直接写入 trust 字段, 上面 update 已删除
+        # 这里保留 _ 引用防止 grep 误判
+        _ = "see B-北京大兴 add above"
 
         # experience
         session.add(ExperienceRow(

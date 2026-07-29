@@ -15,12 +15,14 @@ async def test_list_cities_seeded(client, seeded_sqlite):
     r = await client.get("/api/cities")
     assert r.status_code == 200
     cities = r.json()
-    assert len(cities) == 3
-    # 字段 1:1 对应 CONTRACT §1.1
+    # 5 cities: B-北京大兴 (VERIFIED) + B-包头 (STALE) + H-赫尔辛基 (UNVERIFIED)
+    #          + S-上海浦东 (MISSING) + S-上海虹桥 (MISSING)
+    assert len(cities) == 5
+    # 字段 1:1 对应 CONTRACT §1.1 + P0-5 trust 10 字段
     c = cities[0]
     for key in ["code", "name", "iata", "pinyin", "region", "status", "tags",
                 "fleet", "parts", "contacts", "warehouse", "logistics",
-                "content_md", "source_path", "updated_at"]:
+                "content_md", "source_path", "updated_at", "trust"]:
         assert key in c, f"missing field: {key}"
 
 
@@ -40,7 +42,8 @@ async def test_list_cities_filter_region(client, seeded_sqlite):
     assert r.status_code == 200
     cities = r.json()
     assert all(c["region"] == "华北" for c in cities)
-    assert len(cities) == 2  # 北京大兴 + 包头
+    # 2 华北: 北京大兴 + 包头 (上海浦东/虹桥 华东, 赫尔辛基 国际-欧洲)
+    assert len(cities) == 2
 
 
 @pytest.mark.asyncio
