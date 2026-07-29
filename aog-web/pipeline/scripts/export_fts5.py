@@ -235,7 +235,7 @@ def _write_build_manifest(
             id, tokenizer, build_commit, build_branch, build_time,
             source_manifest_hash, chunks_count, exp_count, cities_count,
             core_count, wiki_count, db_size_bytes, fts5_schema_version
-        ) VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             1,

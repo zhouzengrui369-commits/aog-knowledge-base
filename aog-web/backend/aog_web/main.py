@@ -116,7 +116,6 @@ async def lifespan(app: FastAPI):
             logger.error("FTS5 init failed (P0-3 fail-closed): %s", e)
             raise  # ★ P0-3: 失败必须让容器 fail, 不能降级到 chroma
     else:
-    else:
         # Chroma 客户端 (本地 dev 默认)
         try:
             chroma = get_chroma_client()
