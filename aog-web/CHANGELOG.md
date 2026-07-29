@@ -412,7 +412,7 @@ V27 改 218 label 全部常驻，但 CSS 区分 hub-label（蓝）+ city-label�
 ### 改动
 
 1. `frontend/components/world-map-leaflet.tsx` - showLabel 计算去 isHub 限制
-   - `showLabel = inLabelSet || (isHub && zoom >= 5) || ...` 
+   - `showLabel = inLabelSet || (isHub && zoom >= 5) || ...`
    - → `showLabel = inLabelSet || zoom >= 5 || ...`
 
 ### 原因
