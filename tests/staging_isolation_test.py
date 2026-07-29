@@ -364,11 +364,13 @@ def test_12_denylist_check_uses_ops_production_resource_denylist():
 # =============================================================================
 
 def _build_fake_tcb(tmp_path: Path) -> Path:
-    """建一个 fake tcb 脚本, 记录被调用参数到 tmp_path/tcb_args.log, exit 0"""
+    """建一个 fake tcb 脚本, 记录被调用参数到 tmp_path/tcb_args.log, exit 0
+    日志格式: 'tcb <args>' (含 'tcb' 前缀, 方便 test 验证 fake tcb 被调用)
+    """
     fake_tcb = tmp_path / "tcb"
     fake_tcb.write_text(
         "#!/bin/bash\n"
-        "echo \"$@\" >> \"$TCB_FAKE_LOG\"\n"
+        "echo \"tcb $@\" >> \"$TCB_FAKE_LOG\"\n"
         "exit 0\n",
         encoding="utf-8",
     )
@@ -555,7 +557,8 @@ def test_16_deploy_staging_fails_on_dirty_tree():
             "TCB_FAKE_LOG": str(log_path),
         }
         # 在 REPO_ROOT 临时 touch 一个文件, 让 git status 不 clean
-        sentinel = REPO_ROOT / ".staging_dirty_sentinel.tmp"
+        # 避开 .gitignore `*.tmp` 排除, 用 `_staging_dirty_sentinel_FILE` 名 (无 .tmp)
+        sentinel = REPO_ROOT / "_staging_dirty_sentinel_FILE"
         sentinel.write_text("dirty\n", encoding="utf-8")
         try:
             r = subprocess.run(
