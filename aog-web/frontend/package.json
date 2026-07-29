@@ -41,10 +41,12 @@
     "@types/react": "npm:types-react@19.0.0-rc.1",
     "@types/react-dom": "npm:types-react-dom@19.0.0-rc.1",
     "@types/react-simple-maps": "^3.0.6",
+    "@vitest/ui": "^4.1.10",
     "autoprefixer": "^10.4.20",
     "postcss": "^8.4.49",
     "tailwindcss": "^3.4.15",
-    "typescript": "^5.6.3"
+    "typescript": "^5.6.3",
+    "vitest": "^2.1.0"
   },
   "overrides": {
     "@types/react": "npm:types-react@19.0.0-rc.1",

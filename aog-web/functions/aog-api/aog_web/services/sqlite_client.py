@@ -14,7 +14,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from sqlalchemy import Column, DateTime, Integer, String, Text, select
+from sqlalchemy import Column, DateTime, Integer, String, Text, select, text
 from sqlalchemy.ext.asyncio import (
     AsyncEngine,
     AsyncSession,
@@ -33,7 +33,7 @@ class Base(DeclarativeBase):
 
 
 class CityRow(Base):
-    """镜像 T3 pipeline 实际写的 schema（CONTRACT §1.1 1:1，独立列）"""
+    """镜像 T3 pipeline 实际写的 schema（CONTRACT §1.1 1:1，独立列） + P0-5 数据可信度 9 字段"""
     __tablename__ = "cities"
 
     code: Mapped[str] = mapped_column(String, primary_key=True)
@@ -53,6 +53,27 @@ class CityRow(Base):
     content_md: Mapped[str] = mapped_column(Text, default="")
     source_path: Mapped[str] = mapped_column(String, default="")
     updated_at: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+
+    # ★ P0-5: 数据可信度 9 字段 (D-044-D, Owner 7/29 授权)
+    # 1. source_document
+    source_document: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    # 2. source_location
+    source_location: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    # 3. source_version
+    source_version: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    # 4. updated_at (上面已有, 复用)
+    # 5. reviewed_at
+    reviewed_at: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    # 6. reviewed_by
+    reviewed_by: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    # 7. review_status (default UNVERIFIED, 6 状态枚举见 city.py)
+    review_status: Mapped[str] = mapped_column(String, default="UNVERIFIED")
+    # 8. confidence (0.0-1.0, default None)
+    confidence: Mapped[Optional[float]] = mapped_column(nullable=True)
+    # 9. environment (dev/staging/production/all)
+    environment: Mapped[str] = mapped_column(String, default="all")
+    # 10. pii_classification (none/internal/confidential/restricted)
+    pii_classification: Mapped[str] = mapped_column(String, default="none")
 
 
 class ExperienceRow(Base):
@@ -114,17 +135,45 @@ class SQLiteClient:
         )
 
     async def init(self) -> None:
-        """启动时调用: 建表 (idempotent)"""
+        """启动时调用: 建表 (idempotent) + P0-5 数据可信度 9 列 ALTER"""
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         async with self.engine.begin() as conn:
             await conn.run_sync(Base.metadata.create_all)
+
+        # ★ P0-5: ALTER TABLE 加 9 字段 (旧 aog.db 7/26 没这些列)
+        # 旧数据: review_status='UNVERIFIED', 其他 trust 字段 NULL
+        # ALTER 重复会报 "duplicate column name" → 捕获 (idempotent)
+        _P05_CITY_COLUMNS = [
+            "source_document TEXT",
+            "source_location TEXT",
+            "source_version TEXT",
+            "reviewed_at TEXT",
+            "reviewed_by TEXT",
+            "review_status TEXT DEFAULT 'UNVERIFIED'",
+            "confidence REAL",
+            "environment TEXT DEFAULT 'all'",
+            "pii_classification TEXT DEFAULT 'none'",
+        ]
+        async with self.engine.begin() as conn:
+            for col_def in _P05_CITY_COLUMNS:
+                col_name = col_def.split()[0]
+                try:
+                    await conn.execute(text(f"ALTER TABLE cities ADD COLUMN {col_def}"))
+                    logger.info("P0-5 migration: cities.{} added", col_name)
+                except Exception as e:
+                    # 重复列 (已有) → 静默 skip
+                    if "duplicate column" in str(e).lower() or "already exists" in str(e).lower():
+                        pass
+                    else:
+                        logger.warning("P0-5 migration cities.{} failed: {}", col_name, e)
+
         # 确保 index_stats 单行
         async with self.session_factory() as session:
             existing = await session.get(IndexStatsRow, 1)
             if existing is None:
                 session.add(IndexStatsRow(id=1))
                 await session.commit()
-        logger.info("SQLite initialized: %s", self.db_path)
+        logger.info("SQLite initialized: %s (P0-5 9 columns ensured)", self.db_path)
 
     async def close(self) -> None:
         await self.engine.dispose()
@@ -252,7 +301,7 @@ class SQLiteClient:
 
 
 def _decode_city(row: CityRow) -> Dict[str, Any]:
-    """T3 schema: 所有复杂字段独立列 + JSON 序列化（tags/fleet/parts/contacts/warehouse/logistics）"""
+    """T3 schema: 所有复杂字段独立列 + JSON 序列化（tags/fleet/parts/contacts/warehouse/logistics） + P0-5 9 字段 + P0-6 REDACTED"""
     def _j(s: str, default):
         if not s:
             return default
@@ -260,6 +309,24 @@ def _decode_city(row: CityRow) -> Dict[str, Any]:
             return json.loads(s)
         except json.JSONDecodeError:
             return default
+
+    # ★ P0-6: contact 脱敏处理 (Owner 7/29 授权, D-044-E)
+    # permission=restricted 或 redacted=true → phone/email 替换为 REDACTED
+    # D-030 permission 字段: public 直展示, internal 半透明, restricted 折叠
+    raw_contacts = _j(row.contacts, [])
+    decoded_contacts = []
+    for c in raw_contacts:
+        if not isinstance(c, dict):
+            decoded_contacts.append(c)
+            continue
+        c_copy = dict(c)
+        if c_copy.get("redacted") or c_copy.get("permission") == "restricted":
+            # 脱敏: 替换 phone/email
+            c_copy["phone"] = ["REDACTED"] if c_copy.get("phone") else []
+            if c_copy.get("email"):
+                c_copy["email"] = "REDACTED"
+        decoded_contacts.append(c_copy)
+
     return {
         "code": row.code,
         "name": row.name,
@@ -271,12 +338,25 @@ def _decode_city(row: CityRow) -> Dict[str, Any]:
         "tags": _j(row.tags, []),
         "fleet": _j(row.fleet, []),
         "parts": _j(row.parts, []),
-        "contacts": _j(row.contacts, []),
+        "contacts": decoded_contacts,  # P0-6 REDACTED 兜底
         "warehouse": _j(row.warehouse, {"location": "", "main": []}),
         "logistics": _j(row.logistics, {"rail": "", "air": "", "road": ""}),
         "content_md": row.content_md or "",
         "source_path": row.source_path or "",
         "updated_at": row.updated_at or "",
+        # ★ P0-5: 数据可信度 9 字段 (D-044-D, Owner 7/29 授权)
+        "trust": {
+            "source_document": row.source_document,
+            "source_location": row.source_location,
+            "source_version": row.source_version,
+            "updated_at": row.updated_at,
+            "reviewed_at": row.reviewed_at,
+            "reviewed_by": row.reviewed_by,
+            "review_status": row.review_status or "UNVERIFIED",
+            "confidence": row.confidence,
+            "environment": row.environment or "all",
+            "pii_classification": row.pii_classification or "none",
+        },
     }
 
 

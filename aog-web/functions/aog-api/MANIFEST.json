@@ -1,0 +1,179 @@
+{
+  "source_commit": "1c7c7a423a1d2d0f875e3c5d07e20b179eeb9268",
+  "source_branch": "p0/integration-main-convergence",
+  "build_time": "2026-07-29T07:19:24Z",
+  "file_count": 33,
+  "total_size": 169285,
+  "allowlist": [
+    "scf_adapter.py",
+    "scf_bootstrap",
+    "scf_cos.py"
+  ],
+  "files": [
+    {
+      "path": "__init__.py",
+      "size": 74,
+      "sha256": "7f9867cca8e8e611f01a24b76c4ffa4f7d1cb0886dfd9f41048ee926492d3c9d"
+    },
+    {
+      "path": "api/__init__.py",
+      "size": 66,
+      "sha256": "76b2d48dd4d4e475a4fe892e523bff6c6da1f6a21c56874a817665dd890abb19"
+    },
+    {
+      "path": "api/airlines.py",
+      "size": 4236,
+      "sha256": "284d0b35d6f2631dca1b6b42e4300c2b138712657003bf91cc9c887bd7c57021"
+    },
+    {
+      "path": "api/auth.py",
+      "size": 5831,
+      "sha256": "cd167d89493971b28a9b23ea6ed9ad494f8782c95a5eaec2d9fd1ac7fae09533"
+    },
+    {
+      "path": "api/chat.py",
+      "size": 24875,
+      "sha256": "b740a04b69e7d12252f07fe51f836ab2a7d493d55fb121572dabf21c5c084ac5"
+    },
+    {
+      "path": "api/cities.py",
+      "size": 1560,
+      "sha256": "7efede0b13a9ab076119c0498eeeeea0920593c4421ad0ccba7e4a2a51abf4d1"
+    },
+    {
+      "path": "api/core_plans.py",
+      "size": 868,
+      "sha256": "bae2997366288095d77fd7a27e88394d10c1a05fccac6abcd2c194b27ca843a5"
+    },
+    {
+      "path": "api/experiences.py",
+      "size": 2450,
+      "sha256": "525e06e563dd57b8b7a3d36d92842f03fc7d40efd546c96a25fa2972e9237466"
+    },
+    {
+      "path": "api/files.py",
+      "size": 1984,
+      "sha256": "f4f605c3a01c2c071dcc4284db63bbe16293b15ab3b6fb8d1fb1c3ffcc56885d"
+    },
+    {
+      "path": "api/health.py",
+      "size": 634,
+      "sha256": "a49c271a4124f8b1930ff09fe8ab86d8b33ba2817a15d4070075a76509a10ace"
+    },
+    {
+      "path": "api/reindex.py",
+      "size": 1880,
+      "sha256": "1a83f2d38e9e999d5cd6adbee5d7320ed624001abf416a4f3a26d12dc588268f"
+    },
+    {
+      "path": "api/sync.py",
+      "size": 1823,
+      "sha256": "bde1474dd35097216b4ab3322665e377daa754abfe1643c6618d4439037ce959"
+    },
+    {
+      "path": "config.py",
+      "size": 7325,
+      "sha256": "93a654573914a03148fa3072a403ad4ddd3c5df56661fe69c91a7a75d452d7ef"
+    },
+    {
+      "path": "llm/__init__.py",
+      "size": 51,
+      "sha256": "7451fec19ca52d6b890ba5b2fb77eddc28e0cb19ac35fe78ef44575ef2c76e5c"
+    },
+    {
+      "path": "llm/minimax.py",
+      "size": 6773,
+      "sha256": "bdee4f86656b34fb0cfaa4748ad1188aa6485ab81da61c6b2e90fe2c8619f410"
+    },
+    {
+      "path": "main.py",
+      "size": 6536,
+      "sha256": "a8972bff7cd4feb2cbea0a247de8436d102e7c8aafc5aaadf6f1a44c8f811490"
+    },
+    {
+      "path": "models/__init__.py",
+      "size": 59,
+      "sha256": "50586bd31f1a5b63b7619149113a269786cedd0c1229ca592c53b0c8aefb7da3"
+    },
+    {
+      "path": "models/chat.py",
+      "size": 3100,
+      "sha256": "2785b3074089553354b31233f3a297fe3042a7be72896a37605c57a7bc33f09a"
+    },
+    {
+      "path": "models/city.py",
+      "size": 6479,
+      "sha256": "d439c9b6663b5654a0b07264a8a58ad48885cf37e1475112fc6ac69bf745a051"
+    },
+    {
+      "path": "models/core_plan.py",
+      "size": 488,
+      "sha256": "5ab69146067441258be831716c035ba31d88d4fff490674ee95cae49bf7ec2ae"
+    },
+    {
+      "path": "models/experience.py",
+      "size": 1353,
+      "sha256": "ad228ce16c8a721dcef6ea61f71de0b03e4ed4106cf581a0c9ec29a7f6309b40"
+    },
+    {
+      "path": "scripts/__init__.py",
+      "size": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "scripts/migrate_and_start.py",
+      "size": 4380,
+      "sha256": "6153e1f3ef42e49c3bc26c9d289e4329e6350524f04dcf021ce3ee284240356a"
+    },
+    {
+      "path": "services/__init__.py",
+      "size": 54,
+      "sha256": "510de1f5e6420a18e1706b9a340ae8d7b50af17ac0c43257418a2cd9c0c9394e"
+    },
+    {
+      "path": "services/airlines_client.py",
+      "size": 4506,
+      "sha256": "c4fc4a6f8cd5ba8ac1cbda5c256fc6f32f76ba9fdaf6d74426cd195e7d60b074"
+    },
+    {
+      "path": "services/chroma_client.py",
+      "size": 4112,
+      "sha256": "7bb8fc971c92c344261d48cf1cf4b1ee24ec8316450cf5908a66510d3e532dd6"
+    },
+    {
+      "path": "services/file_watcher.py",
+      "size": 4235,
+      "sha256": "75511d164e4afd62efccc55d19186dd03c206f759d32eaaba3f5184fcf80a679"
+    },
+    {
+      "path": "services/fts5_client.py",
+      "size": 28255,
+      "sha256": "850806a12c240427cb26a88f0a1da60739e1028c58e18e22af069f79eb9aaaea"
+    },
+    {
+      "path": "services/llm.py",
+      "size": 4834,
+      "sha256": "435cbd92737c76b9ac5ea5010c27c5b35568ba2e56a957d941480ee4a55b38b2"
+    },
+    {
+      "path": "services/sqlite_client.py",
+      "size": 16437,
+      "sha256": "9b7e3fc2b2c2fd4f4b1b8a376e37d7d3bd841faf52ebda6b3505108f79b0da91"
+    },
+    {
+      "path": "services/storage_cos.py",
+      "size": 6764,
+      "sha256": "f336b58e059ae6facd048db492f2500cf6bd7f19eb1668c978688c8774a07e6b"
+    },
+    {
+      "path": "services/sync.py",
+      "size": 12615,
+      "sha256": "c71f46517e2ae011268ed461548a0c9a2124422a8be9fdb0c23637d1208692fd"
+    },
+    {
+      "path": "services/sync_db.py",
+      "size": 4648,
+      "sha256": "fdc77608ed85f8ac21508318b622ba51a294bc8f029bc033e9918abe4ea49988"
+    }
+  ]
+}

@@ -41,7 +41,7 @@ class Settings(BaseSettings):
     FTS5_PATH: str = "./data/fts5_index.db"
     # RAG backend: "chroma" (本地 dev) | "fts5" (SCF 部署)
     RAG_BACKEND: str = "chroma"
-    # 航司静态数据 (Sprint C) — 默认相对 functions/aog-api/data/airlines.json
+    # 航司静态数据 (Sprint C) — 测试时可临时覆盖路径
     AIRLINES_DATA_PATH: str = ""
 
     # ===== 知识库源 (只读) =====
@@ -59,6 +59,20 @@ class Settings(BaseSettings):
     PIPELINE_DIR: str = str(_backend_root().parent / "pipeline")
     LOG_LEVEL: str = "INFO"
     CORS_ALLOW_ORIGINS: str = "http://localhost:3000,http://127.0.0.1:3000"
+
+    # ★ P0-4: mock 隔离 (Owner 7/29 授权)
+    # dev (本地, .env 不设) = True 允许 MockLLM 跑测试
+    # SCF / production (.env 显式设 false) = 禁 Mock, key 空 fail-closed
+    # 启动时 main.py lifespan 校验:
+    #   ALLOW_MOCK=false + MINIMAX_API_KEY 空 → raise RuntimeError 容器 fail
+    #   ALLOW_MOCK=true + MINIMAX_API_KEY 空 → 允许 MockLLM (仅 dev)
+    #   ALLOW_MOCK=* + MINIMAX_API_KEY 有值 → live LLM 正常
+    ALLOW_MOCK: bool = True
+
+    # ★ P0-4: 严格模式 (production 必须 true)
+    # 开启后 services/llm 任何 chat() 失败 → 抛 503, 不返 mock fallback
+    # 关闭 (dev) → 失败时降级到 mock + ⚠️ 标志
+    STRICT_LLM: bool = False
 
     # ===== Sprint A · Auth (本地优先, MVP 简化方案) =====
     # AOG 知识库访问密码 (Sprint A 拍板方案 🅱️)
@@ -106,17 +120,24 @@ class Settings(BaseSettings):
     @property
     def airlines_data_path(self) -> Path:
         """航司静态数据 JSON 路径. 优先用 AIRLINES_DATA_PATH, 否则默认
-        functions/aog-api/data/airlines.json (项目内固定位置)
+        aog-web/functions/aog-api/data/airlines.json (项目内固定位置)
         """
         if self.AIRLINES_DATA_PATH.strip():
             p = Path(self.AIRLINES_DATA_PATH)
             if not p.is_absolute():
                 p = self.backend_root / p
             return p.resolve()
-        # 默认: aog_web/services/airlines_client.py → aog_web/api → aog_web → aog-web/functions/aog-api/data/
+        # 默认: aog-web/backend/aog_web/config.py → aog-web/backend/aog_web/ → aog-web/backend/ → aog-web/
         from pathlib import Path as _P
-        here = _P(__file__).resolve().parent.parent.parent  # aog-web/functions/aog-api
-        return (here / "data" / "airlines.json").resolve()
+        here = _P(__file__).resolve().parent.parent.parent  # aog-web/
+        candidates = [
+            here / "functions" / "aog-api" / "data" / "airlines.json",
+            here / "backend" / "data" / "airlines.json",
+        ]
+        for c in candidates:
+            if c.exists():
+                return c.resolve()
+        return candidates[0].resolve()  # 兜底:返回 SCF 路径 (即使不存在, client 也能容错)
 
     @property
     def knowledge_base_path(self) -> Path:
@@ -185,3 +206,4 @@ def reset_settings_cache() -> None:
     """测试 helper: 重置单例让下次 get_settings() 重新读环境变量"""
     global _settings
     _settings = None
+// test drift

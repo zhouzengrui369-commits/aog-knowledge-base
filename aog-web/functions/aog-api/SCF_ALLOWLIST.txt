@@ -1,0 +1,4 @@
+# SCF adapter 允许 drift 的文件 (与 backend/aog_web 不同)
+scf_adapter.py
+scf_cos.py
+scf_bootstrap

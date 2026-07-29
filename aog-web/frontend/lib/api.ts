@@ -6,10 +6,14 @@
 //   错误示例: BASE=https://...com/api  + path=/api/cities  → 请求 ...com/api/api/cities (400)
 //   正确示例: BASE=https://...com     + path=/api/cities  → 请求 ...com/api/cities
 //
+// ★ P0-4 production mock 隔离 (Owner 7/29 严令):
+//   NEXT_PUBLIC_ALLOW_MOCK=false (默认, production/staging 必须) → API 失败不返 mock, 返 null/empty
+//   NEXT_PUBLIC_ALLOW_MOCK=true  (仅 dev/test 显式开)            → 失败可降级 mock (有 MOCK 标志)
+//
 // 验证:  curl -sS "${BASE}/api/health"  → 200 (P0-2 修复后)
 //        curl -sS "${BASE}/api/api/..."  → 404 (path 不会双拼)
 //
-// 唯一允许改 BASE 的位置: .env.local / .env.local.example, 改后必须跑上面的验证
+// 唯一允许改 BASE / ALLOW_MOCK 的位置: .env.local / .env.local.example, 改后必须跑上面的验证
 
 import type {
   City,
@@ -26,9 +30,26 @@ import { MOCK_CITIES } from "@/lib/mock/cities";
 import { MOCK_EXPERIENCES } from "@/lib/mock/experiences";
 import { MOCK_AIRLINES } from "@/lib/mock/airlines";
 
-// ★ P1-2 治本: 5 个 mock fallback 场景计数 (写到 window 让 UI useEffect 监听)
+// ★ P0-4: production 严令 ALLOW_MOCK 默认 false
+//   显式设 "true" 才允许 mock fallback, 任何其他值 (含 unset) 都是 production 模式
+export const ALLOW_MOCK = process.env.NEXT_PUBLIC_ALLOW_MOCK === "true";
+
+if (typeof window !== "undefined" && process.env.NODE_ENV === "production" && ALLOW_MOCK) {
+  // production build 时如果 ALLOW_MOCK=true, 显式 console.error 警告 (但允许 dev 误用)
+  console.error(
+    "[P0-4 WARNING] NEXT_PUBLIC_ALLOW_MOCK=true in production build. " +
+    "mock fallback 会进入 production bundle, 违反 D-044-C. 应设 false."
+  );
+}
+
+// ★ P1-2 治本: mock fallback 路径计数 (ALLOW_MOCK=true 时记录, 用于 UI 红框)
+//   node 测试环境 (vitest) 也记录 — module-level Set
+//   browser 环境也记录 — window.__aogMockFallback (UI 红框读)
+const _nodeMockFallback = new Set<string>();
 function _recordMockFallback(path: string) {
+  if (!ALLOW_MOCK) return;  // production 不记录 (不返 mock)
   _mockFallbackCount++;
+  _nodeMockFallback.add(path);
   if (typeof window !== "undefined") {
     const w = window as any;
     if (!w.__aogMockFallback) w.__aogMockFallback = new Set<string>();
@@ -39,10 +60,14 @@ let _mockFallbackCount = 0;
 export function getMockFallbackCount() { return _mockFallbackCount; }
 export function resetMockFallbackCount() { _mockFallbackCount = 0; }
 export function getMockFallbackPaths(): string[] {
-  if (typeof window === "undefined") return [];
-  const w = window as any;
-  if (!w.__aogMockFallback) return [];
-  return Array.from(w.__aogMockFallback) as string[];
+  // node 测试环境读 module-level Set; browser 环境读 window
+  if (typeof window !== "undefined") {
+    const w = window as any;
+    if (w.__aogMockFallback) {
+      return Array.from(w.__aogMockFallback) as string[];
+    }
+  }
+  return Array.from(_nodeMockFallback);
 }
 
 // ★ P0-1 治本: BASE 必须去尾 /api, 否则 ${BASE}/api/cities 拼成 /api/api/cities 返 400
@@ -94,6 +119,11 @@ export async function getCities(params?: {
   const data = await safeFetch<City[]>(`/api/cities${q}`);
   // dev backend 返空数组时也 fallback 到 MOCK (避免 dev 看到 0 城市)
   if (data && data.length > 0) return data;
+  // ★ P0-4 production mock 隔离: ALLOW_MOCK=false 时不返 mock, 返空数组
+  if (!ALLOW_MOCK) {
+    // production: 返空 + 显 error/unavailable (UI 端会显 '暂不可用')
+    return [];
+  }
   // 降级 mock — ★ P1-2 治本: 记录到全局 set, UI 端读 set 显红框
   _recordMockFallback("/api/cities");
   let list = [...MOCK_CITIES];
@@ -111,6 +141,8 @@ export async function getCity(code: string): Promise<City | null> {
   const encoded = encodeURIComponent(code);
   const data = await safeFetch<City>(`/api/city/${encoded}`);
   if (data) return data;
+  // ★ P0-4 production mock 隔离
+  if (!ALLOW_MOCK) return null;
   // ★ P1-2 治本: 记录 mock fallback
   _recordMockFallback(`/api/city/${encoded}`);
   return MOCK_CITIES.find((c) => c.code === code) || null;
@@ -130,6 +162,8 @@ export async function getExperiences(params?: {
   const data = await safeFetch<Experience[]>(`/api/experiences${q}`);
   // dev backend 返空数组时 fallback MOCK
   if (data && data.length > 0) return data;
+  // ★ P0-4 production mock 隔离
+  if (!ALLOW_MOCK) return [];
   // ★ P1-2 治本: 记录 mock fallback
   _recordMockFallback("/api/experiences");
   let list = [...MOCK_EXPERIENCES];
@@ -151,6 +185,8 @@ export async function getExperiences(params?: {
 export async function getExperience(id: string): Promise<Experience | null> {
   const data = await safeFetch<Experience>(`/api/experience/${encodeURIComponent(id)}`);
   if (data) return data;
+  // ★ P0-4 production mock 隔离
+  if (!ALLOW_MOCK) return null;
   // ★ P1-2 治本: 记录 mock fallback
   _recordMockFallback(`/api/experience/${encodeURIComponent(id)}`);
   return MOCK_EXPERIENCES.find((e) => e.id === id) || null;
@@ -160,6 +196,8 @@ export async function getExperience(id: string): Promise<Experience | null> {
 export async function getCorePlans(): Promise<CorePlan[]> {
   const data = await safeFetch<CorePlan[]>(`/api/core-plans`);
   if (data) return data;
+  // ★ P0-4 production mock 隔离
+  if (!ALLOW_MOCK) return [];
   // ★ P1-2 治本: 记录 mock fallback
   _recordMockFallback("/api/core-plans");
   return [];
@@ -176,8 +214,8 @@ export async function chat(req: ChatRequest): Promise<ChatResponse | null> {
     timeoutMs: 30000,
   });
   if (data) return data;
-  // ★ P1-2 治本: 记录 mock fallback (chat 走 null 时不返 mock, 改返 null 让 UI 显错)
-  _recordMockFallback("/api/chat");
+  // ★ P0-4 production mock 隔离: chat 失败永远不返 mock (chat 必须真实)
+  // ALLOW_MOCK 不影响 chat — chat 失败就 null, UI 显 "Provider 未配置" banner
   return null;
 }
 
@@ -315,6 +353,8 @@ export async function getAirlines(params?: {
   const data = await safeFetch<Airline[]>(`/api/airlines${q}`);
   // dev backend 返空数组时 fallback MOCK
   if (data && data.length > 0) return data;
+  // ★ P0-4 production mock 隔离
+  if (!ALLOW_MOCK) return [];
   // 降级 mock
   // ★ P1-2 治本: 记录 mock fallback
   _recordMockFallback("/api/airlines");
@@ -335,6 +375,8 @@ export async function getAirline(iata: string): Promise<Airline | null> {
   const code = iata.toUpperCase();
   const data = await safeFetch<Airline>(`/api/airlines/${encodeURIComponent(code)}`);
   if (data) return data;
+  // ★ P0-4 production mock 隔离
+  if (!ALLOW_MOCK) return null;
   // ★ P1-2 治本: 记录 mock fallback
   _recordMockFallback(`/api/airlines/${encodeURIComponent(code)}`);
   return MOCK_AIRLINES.find((a) => a.iata === code) || null;
@@ -348,6 +390,8 @@ export async function searchAirlines(q: string, limit = 20): Promise<Airline[]> 
   );
   // dev backend 返空数组时 fallback MOCK
   if (data && data.length > 0) return data;
+  // ★ P0-4 production mock 隔离
+  if (!ALLOW_MOCK) return [];
   // 降级 mock
   // ★ P1-2 治本: 记录 mock fallback
   _recordMockFallback("/api/airlines/search");

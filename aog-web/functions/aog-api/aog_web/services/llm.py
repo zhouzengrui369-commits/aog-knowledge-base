@@ -24,6 +24,8 @@ class LLM(Protocol):
 
     async def chat(self, messages: List[Dict[str, str]], **kwargs: Any) -> str: ...
 
+    async def stream_chat(self, messages: List[Dict[str, str]], **kwargs: Any) -> Any: ...  # AsyncIterator[str]
+
     async def close(self) -> None: ...
 
 

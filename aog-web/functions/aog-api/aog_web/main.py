@@ -63,7 +63,20 @@ async def lifespan(app: FastAPI):
     logger.info("SQLite: %s", settings.sqlite_path)
     logger.info("Knowledge base: %s", settings.knowledge_base_path)
     logger.info("CORS: %s", settings.cors_origins)
+    logger.info("ALLOW_MOCK: %s (P0-4)", settings.ALLOW_MOCK)
+    logger.info("STRICT_LLM: %s (P0-4)", settings.STRICT_LLM)
     logger.info("=" * 60)
+
+    # ★ P0-4: LLM Provider 严格校验 (Owner 7/29 授权)
+    # ALLOW_MOCK=false (production) + MINIMAX_API_KEY 空 → fail-closed
+    if not settings.ALLOW_MOCK and settings.is_mock_llm:
+        msg = (
+            "P0-4 fail-closed: ALLOW_MOCK=false 但 MINIMAX_API_KEY 空. "
+            "production 必须配真 key, 或显式设 ALLOW_MOCK=true (仅 dev). "
+            "SCF 容器将重启直至配 key."
+        )
+        logger.error(msg)
+        raise RuntimeError(msg)
 
     # 0. SCF 冷启动: 如果 fts5 路径在 /tmp 且不存在, 从 COS 下载
     if settings.rag_backend == "fts5" and not settings.fts5_path.exists():
@@ -91,10 +104,17 @@ async def lifespan(app: FastAPI):
         # FTS5 客户端
         try:
             fts5 = get_fts5_client()
+            # ★ P0-3: 启动时校验 build_manifest, 不一致 fail-closed
+            # 失败抛 RuntimeError, lifespan 不启动, SCF 容器重启
+            manifest = await fts5.validate_manifest_or_fail()
             n = await fts5.count()
-            logger.info("FTS5 chunks_fts: %d docs", n)
+            logger.info(
+                "FTS5 chunks_fts: %d docs (manifest: tokenizer=%s commit=%s schema=%s)",
+                n, manifest["tokenizer"], manifest["build_commit"][:8], manifest["fts5_schema_version"],
+            )
         except Exception as e:
-            logger.warning("FTS5 init issue (will continue): %s", e)
+            logger.error("FTS5 init failed (P0-3 fail-closed): %s", e)
+            raise  # ★ P0-3: 失败必须让容器 fail, 不能降级到 chroma
     else:
         # Chroma 客户端 (本地 dev 默认)
         try:
