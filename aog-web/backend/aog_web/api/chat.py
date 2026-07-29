@@ -429,25 +429,29 @@ async def _retrieve_context(request: Request, body: ChatRequest) -> List[Dict[st
         try:
             fts5 = get_fts5_client()
             # 5 段式 query (P1-1: NJX 7/27 14:43 拍 🅰️ 双轨, wiki 优先)
-            wiki_hits = await fts5.query(body.q, n_results=5, where={"source_type": "wiki"})
-            city_hits = await fts5.query(body.q, n_results=5, where={"source_type": "city"})
-            contacts_hits = await fts5.query(body.q, n_results=3, where={"source_type": "city_contacts"})
-            experience_hits = await fts5.query(body.q, n_results=3, where={"source_type": "experience"})
-            core_plan_hits = await fts5.query(body.q, n_results=2, where={"source_type": "core_plan"})
-            # city 主文档 1.5x boost (D-030 治本)
+            # D-043 (NJX 7/28 11:44 反馈 "雅典保障查不到雅典预案"):
+            #   召数扩大 + city 1.5x → 2.0x boost, 让 city 主文档不被"通用模板" wiki 顶掉
+            #   wiki 召数 5→3 (限制"通用模板"占位), city 召数 5→8 (确保 city 一定召到)
+            wiki_hits = await fts5.query(body.q, n_results=3, where={"source_type": "wiki"})
+            city_hits = await fts5.query(body.q, n_results=8, where={"source_type": "city"})
+            contacts_hits = await fts5.query(body.q, n_results=5, where={"source_type": "city_contacts"})
+            experience_hits = await fts5.query(body.q, n_results=2, where={"source_type": "experience"})
+            core_plan_hits = await fts5.query(body.q, n_results=1, where={"source_type": "core_plan"})
+            # city 主文档 2.0x boost (D-043: 雅典 wiki/city 段被通用模板 wiki 顶掉, 治本)
             for h in city_hits:
-                h["score"] = min(1.0, float(h.get("score", 0.0)) * 1.5)
+                h["score"] = min(1.0, float(h.get("score", 0.0)) * 2.0)
             # wiki 段 1.3x boost (P1-1, LLM 整理的更结构化, 优先召)
             for h in wiki_hits:
                 h["score"] = min(1.0, float(h.get("score", 0.0)) * 1.3)
             # 合并去重 (按 wiki > city > contacts > experience > core_plan 顺序)
+            # D-043 限制 8 → 12, 让 city + wiki 都有机会进 top
             seen_ids: set = set()
             rag_hits = []
             for h in wiki_hits + city_hits + contacts_hits + experience_hits + core_plan_hits:
                 if h.get("id") not in seen_ids:
                     seen_ids.add(h.get("id"))
                     rag_hits.append(h)
-                if len(rag_hits) >= 8:
+                if len(rag_hits) >= 12:
                     break
             logger.info(
                 "P1-1 fts5 5 段 hits: %d (wiki=%d city=%d contacts=%d exp=%d core=%d) for q=%r",

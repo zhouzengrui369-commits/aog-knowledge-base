@@ -222,10 +222,38 @@ class FTS5Client:
 
         # 2) 短 CJK LIKE fallback (2 char, e.g. 西安/三亚/广州)
         #    trigram 拆不出 2 char, 必须走 LIKE 全文扫
+        #    D-043 (NJX 7/28 11:44 + 20:45 反馈"雅典/南宁 召错城市"):
+        #      LIKE 召出 100+ city (N-南宁 排 38 / Y-雅典 排 212), LIMIT 16 截不到
+        #      修法: SQL ORDER BY 命中 city-specific keyword 排前
+        #      city-specific 判定: short_cjk 里**只在 source_id 出现**的 keyword (城市名 e.g. "南宁"/"雅典")
+        #      通用词 ("需求/求地/地点/防冰/控制" 等) 在很多 doc 都出现, 不是 city-specific
         like_rows: List[Tuple] = []
         if short_cjk:
+            # 通用 AOG 词表 — 这些 keyword 命中算"通用" (不 specificity)
+            # 扩到 NJX 7/28 20:45 query "机号 B-321A 需求地点 南宁 38E93-6 大翼防冰控制活门"
+            # 拆出的所有 short_cjk 词, 真正 city-specific 的只有"南宁"
+            _GENERIC_AOG_WORDS_LIKE = {
+                "保障", "预案", "求援", "故障", "外站", "手册", "应急", "处理",
+                "需求", "求地", "地点", "控制", "活门", "防冰", "大翼", "翼防", "冰控", "制活", "机号",
+                "查询", "结果", "建议", "参考", "资料", "站点", "档案", "模板",
+            }
+            specific_kws = [kw for kw in short_cjk if kw not in _GENERIC_AOG_WORDS_LIKE]
             # 构造 LIKE: 多个 short_cjk OR
             like_clauses = " OR ".join(["cc.c0 LIKE ?"] * len(short_cjk))
+            # ORDER BY: 优先 source_id 含 specific_kw (是该城市 doc), 然后 content 含 specific_kw (提到该城市)
+            #            最后 rowid 自然顺序
+            if specific_kws:
+                # source_id 包含 city name (e.g. source_id 'N-南宁' 含 "南宁") → 排前
+                # 用 GROUP_CONCAT OR 多个 specific_kw
+                specific_id_clauses = " OR ".join(["c.source_id LIKE ?"] * len(specific_kws))
+                specific_content_clauses = " OR ".join(["cc.c0 LIKE ?"] * len(specific_kws))
+                order_by_specificity = f"""
+                    ORDER BY (CASE WHEN ({specific_id_clauses}) THEN 0 ELSE 1 END) ASC,
+                             (CASE WHEN ({specific_content_clauses}) THEN 0 ELSE 1 END) ASC,
+                             c.rowid ASC
+                """
+            else:
+                order_by_specificity = " ORDER BY c.rowid ASC"
             sql2 = f"""
                 SELECT
                     c.rowid AS rowid,
@@ -252,8 +280,21 @@ class FTS5Client:
             if status:
                 sql2 += " AND c.status = ?"
                 params2.append(status)
-            sql2 += " LIMIT ?"
-            params2.append(n_results * 2)
+            sql2 += order_by_specificity + " LIMIT ?"
+            params2.append(n_results * 4)  # D-043: 4x 让 specificity 排前的能进
+            if specific_kws:
+                # ORDER BY specificity 参数: source_id LIKE + content LIKE
+                for kw in specific_kws:
+                    params2.append(f"%{kw}%")  # source_id
+                for kw in specific_kws:
+                    params2.append(f"%{kw}%")  # content
+            try:
+                db = await self._get_db()
+                async with db.execute(sql2, params2) as cur:
+                    like_rows = await cur.fetchall()
+            except Exception as e:
+                logger.warning("fts5 LIKE fallback failed: q=%r err=%s", q[:50], e)
+                like_rows = []
             try:
                 db = await self._get_db()
                 async with db.execute(sql2, params2) as cur:
@@ -262,17 +303,69 @@ class FTS5Client:
                 logger.warning("fts5 LIKE fallback failed: q=%r err=%s", q[:50], e)
                 like_rows = []
 
-        # 3) 合并去重 (按 rowid), 优先 FTS5 结果 (有 bm25 score)
+        # 3) 合并去重 + specificity-aware 排序 (D-043 治本: Y-雅典 LIKE 命中排前)
+        #    修法: 不再"fts_rows 全部 in 完才接 like_rows", 改按 (kind, specificity, score) 排
+        #    - fts5 命中 + city-specific 关键字 (e.g. "雅典") → 最强相关
+        #    - LIKE 命中 + city-specific 关键字 → 次强
+        #    - fts5 命中 + 通用词 (e.g. "保障") → 弱
+        #    - LIKE 命中 + 通用词 → 最弱
+        #    city-specific 判定: short_cjk keyword 不在"通用 AOG 词表" (保障/预案/求援/故障/外站/手册)
         seen_rowids: set = set()
+        fts_seen: set = set()  # 在 fts_rows 里的 rowid
+        for row in fts_rows:
+            seen_rowids.add(row[0])
+            fts_seen.add(row[0])
+        for row in like_rows:
+            seen_rowids.add(row[0])
         merged: List[Tuple] = []
         for row in fts_rows:
-            if row[0] not in seen_rowids:
-                seen_rowids.add(row[0])
-                merged.append(row)
+            merged.append(row)
         for row in like_rows:
-            if row[0] not in seen_rowids:
-                seen_rowids.add(row[0])
+            if row[0] not in fts_seen:
                 merged.append(row)
+
+        # 通用 AOG 词表 — 这些 keyword 命中算"通用" (不 specificity)
+        # D-043 (NJX 7/28 20:45): 词表扩到 20+ 通用词, 避免 "需求/控制/活门" 等误判 city-specific
+        _GENERIC_AOG_WORDS = {
+            "保障", "预案", "求援", "故障", "外站", "手册", "应急", "处理",
+            "需求", "求地", "地点", "控制", "活门", "防冰", "大翼", "翼防", "冰控", "制活", "机号",
+            "查询", "结果", "建议", "参考", "资料", "站点", "档案", "模板",
+        }
+
+        def _specificity(source_id: str, content: str) -> int:
+            """判断 chunk 是否 city-specific (命中城市名 keyword, 不是通用 AOG 词)
+            命中 short_cjk 任一 keyword, 且 keyword 不在通用词表 → 1
+            进一步看 source_id 包含 keyword (e.g. "N-南宁" 含 "南宁") → 2 (最强)
+            """
+            if not short_cjk:
+                return 0
+            for kw in short_cjk:
+                if kw not in _GENERIC_AOG_WORDS:
+                    if source_id and kw in source_id:
+                        return 2  # 是该城市的 doc
+                    if content and kw in content:
+                        return 1  # 提到该城市
+            return 0
+
+        def _sort_key(r):
+            rowid = r[0]
+            content = r[1] or ""
+            source_id = r[2] or ""  # doc_id
+            bm25 = r[9] if len(r) > 9 else 0.0
+            in_fts = rowid in fts_seen
+            spec = _specificity(source_id, content)
+            try:
+                bm25_f = float(bm25) if bm25 not in (None, 0, 0.0) else 0.0
+            except (TypeError, ValueError):
+                bm25_f = 0.0
+            # 排序优先级: kind (fts5 < like) > specificity (2/1/0) > bm25
+            # kind: 0=fts5 命中, 1=LIKE 命中
+            # specificity: 2=doc 是该城市, 1=提到该城市, 0=无关
+            # bm25: 越负越相关 (fts5 内部排)
+            kind = 0 if in_fts else 1
+            return (kind, -spec, -bm25_f)
+
+        merged.sort(key=_sort_key)
 
         out: List[Dict[str, Any]] = []
         for row in merged[:n_results]:
