@@ -60,7 +60,7 @@ class ContactItem(BaseModel):
     )
     # ★ P0-6: 脱敏标志 (Owner 7/29 授权)
     # true 时 _decode_contact 把 phone/email 替换为 "REDACTED"
-    # 触发场景: 个人手机号 (13910301946) / 商业联系人邮箱 (Satair SPE) / 数据缺失
+    # 触发场景: 个人手机号 (PII_FIXTURE_PHONE_11) / 商业联系人邮箱 (Satair SPE) / 数据缺失
     redacted: bool = Field(
         False, description="P0-6 是否脱敏 (true → phone/email 返 REDACTED)"
     )

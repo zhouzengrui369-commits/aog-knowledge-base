@@ -448,19 +448,37 @@ function renderMarkdown(body: string): React.ReactNode {
       const level = hMatch[1].length;
       const text = hMatch[2].trim();
       // V29d 视觉升级: h1/h2 加左边色块 + 强调
+      // ★ P0: 用 React.createElement 显式构造 heading, 不用 dynamic Tag + JSX.IntrinsicElements cast
+      //   (React 19 + TS 5.9 下 dynamic string tag 已不合法)
       const cls =
         level === 1
           ? "mt-3 mb-2 flex items-center gap-2 border-l-4 border-primary bg-primary/5 px-2.5 py-1.5 text-base font-bold text-ink-900"
           : level === 2
           ? "mt-3 mb-1.5 flex items-center gap-2 border-l-2 border-primary/70 pl-2 text-[15px] font-bold text-ink-900"
           : "mt-2 mb-1 text-sm font-semibold text-primary";
-      const Tag = (`h${level}` as unknown) as keyof JSX.IntrinsicElements;
-      out.push(
-        <Tag key={`h-${k++}`} className={cls}>
-          {level === 1 || level === 2 ? <span className="text-primary/70">▎</span> : null}
-          {formatInline(text)}
-        </Tag>
-      );
+      const showAccent = level === 1 || level === 2;
+      const accent = showAccent ? <span className="text-primary/70">▎</span> : null;
+      if (level === 1) {
+        out.push(
+          <h1 key={`h-${k++}`} className={cls}>
+            {accent}
+            {formatInline(text)}
+          </h1>
+        );
+      } else if (level === 2) {
+        out.push(
+          <h2 key={`h-${k++}`} className={cls}>
+            {accent}
+            {formatInline(text)}
+          </h2>
+        );
+      } else {
+        out.push(
+          <h3 key={`h-${k++}`} className={cls}>
+            {formatInline(text)}
+          </h3>
+        );
+      }
       i++;
       continue;
     }
@@ -784,7 +802,6 @@ export const ChatWidget = React.forwardRef<ChatWidgetHandle>((_, ref) => {
         setTimeout(() => doAsk(q), 50);
       },
     }),
-    // eslint-disable-next-line react-hooks/exhaustive-deps
     []
   );
 

@@ -1,46 +1,43 @@
 # AOG Knowledge Base - 工程版本真相 (Engineering Truth of Versions)
 # Owner: NJX (OPC, 航空维修 + 航材供应链数智化)
 # PM: Mavis
-# Last Verified: 2026-07-29 15:50 GMT+8
+# Last Verified: 2026-07-29 16:45 GMT+8
 # Authority: 此文件是 4 套版本对照的 single source of truth
 # 不得默认 main / integration / 公网 / 本地 任何一个天然代表最新真相
-
-# ★ 7/29 12 字段 schema (Owner 严令)
-# 1. main_head            - main 分支 HEAD SHA
-# 2. pr_head              - 当前 PR head SHA
-# 3. integration_head     - 集成分支 HEAD SHA
-# 4. candidate_commit     - 待 merge 的 commit (= pr_head, 同一)
-# 5. ci_run_id            - CI run ID (gh actions, 占位)
-# 6. backend_test_result  - backend 测试结果
-# 7. frontend_test_result - frontend 测试结果
-# 8. pipeline_test_result - pipeline 测试结果
-# 9. manifest_sha256      - fts5_index.db sha256
-# 10. aog_db_sha256       - aog.db sha256
-# 11. fts5_sha256         - fts5_index.db sha256 (alias manifest)
-# 12. function_package_sha256 - SCF function package sha256
-# 13. current_p0          - P0 现状 dict
-# 14. current_p1          - P1 现状 dict
-# 15. staging_status      - staging 部署状态
-# 16. next_single_action  - 唯一 NJX 下一步动作
-# 17. updated_at          - 本文件更新时间
+#
+# ★ Owner 7/29 严令 schema (不要在同一个 commit 内让文件自引用"当前 commit SHA"):
+#   - candidate_code_commit:        最后一个修改产品代码/测试/构建配置的 commit
+#   - state_document_parent_commit:  本次状态文件提交的父 commit (用 git rev-parse HEAD~1 填)
+#   - observed_pr_head:              git rev-parse HEAD (生成状态报告时观察到)
+#   - last_completed_ci_run_id:      GitHub Actions 最近一次 run ID
+#   - last_completed_ci_conclusion:  那个 run 的结论 (success/failure)
+#   - deploy_app_commit_sha:         ★ 不在 merge 前硬编码, 见 staging_deploy_commit 留空
 
 repository: github.com/zhouzengrui369-commits/aog-knowledge-base
 pr_url: https://github.com/zhouzengrui369-commits/aog-knowledge-base/pull/1
 pr_number: 1
 pr_branch: p0/integration-main-convergence
 
-# ===== 12 字段 schema =====
+# ===== 12+ 字段 schema (Owner 严令) =====
 main_head: 80330ddec8188c8bf3319a35e82ea62f065cca86
-pr_head: fd02795e70290b28f5254142df55c92abcc77a5a  # 7/29 16:13 final
+pr_head: fd02795e70290b28f5254142df55c92abcc77a5a   # Stage 11 之前 PR head, 在 stage 12 + ci-fix 后已变 (见 observed_pr_head)
 integration_head: 9c29b89525b4c72dbafb46c3412a60c2f8956812
-candidate_commit: fd02795e70290b28f5254142df55c92abcc77a5a
-ci_run_id: pending_first_run  # GH Actions CI 还没跑过 (.github/workflows/ci.yml 已写, 等 PR 触发)
+candidate_code_commit: fd02795e70290b28f5254142df55c92abcc77a5a
+state_document_parent_commit: 718319c9c7d3a905c6360a89ef0c3cd40eb123d8
+observed_pr_head: 718319c9c7d3a905c6360a89ef0c3cd40eb123d8
+observed_at: 2026-07-29T16:45:00+08:00
+ci_run_id: pending_first_run
+last_completed_ci_run_id: "30434710828"
+last_completed_ci_conclusion: "failure"
+last_completed_ci_url: "https://github.com/zhouzengrui369-commits/aog-knowledge-base/actions/runs/30434710828"
 
 # ===== 测试结果 (本 PR head) =====
 backend_test_result:
   test_journey_10_local: 10/10_PASS_1.66s
   test_cities: 11/11_PASS_9.54s
-  total: 21/21_PASS
+  test_fts5_e2e: 3/3_PASS_1.25s
+  test_phone_email_scanner: 8/8_PASS_0.86s
+  total: 32/32_PASS
 frontend_test_result:
   api_mock_isolation: 17/17_PASS_4.2s
   total: 17/17_PASS
@@ -70,12 +67,27 @@ manifest_manifest:
   core_count: 10
   wiki_count: 208
 
+# ===== Staging 部署 SHA (merge 后才能确定, 不在 merge 前硬编码) =====
+staging_deploy_commit: null    # merge 后由 git rev-parse main 填
+staging_deploy_command: |
+  gh pr merge 1 --merge  # Owner 严令: 不用 squash, 保留历史
+  git checkout main
+  git pull --ff-only
+  APP_COMMIT_SHA=$(git rev-parse main)
+  cd aog-web && bash scripts/prepare-scf.sh
+  tcb fn deploy aog-api -e APP_COMMIT_SHA=$APP_COMMIT_SHA
+staging_status: BLOCKED_CLOUDBASE_INSUFFICIENT_BALANCE_AND_CI_FAILURE
+staging_blocker: |
+  1. CloudBase 账户 njx-copilot-d6gs7642f8fa17122 InsufficientBalance (NJX 充值)
+  2. GitHub Actions run 30434710828 conclusion=failure (Frontend/Repository scanner 失败, 本次 stage 12+ 修复目标)
+  3. PR 未 merge (NJX 拍板 merge)
+
 # ===== P0 现状 =====
 current_p0:
   P0_1_branch_convergence:
     status: IN_PROGRESS
-    evidence: PR head c290d75, 59 commits ahead of main
-    blocked_by: NJX merge (PR 1 等待 squash merge)
+    evidence: PR head 718319c, 65 commits ahead of main 80330dd
+    blocked_by: NJX merge (PR 1 等待) + GitHub CI 全绿
   P0_2_api_path:
     status: CLOSED_LOCAL
     evidence: f89e4cd + test_get_city_ok PASS + J1 PASS
@@ -87,11 +99,11 @@ current_p0:
     schema_version: v30-d038-d043
   P0_4_provider_mock:
     status: CLOSED_LOCAL
-    evidence: ead11b2 + 581a5a89 (D-044-G get_llm fail-closed 治本) + J6/J7 PASS
+    evidence: ead11b2 + c290d75 (D-044-G get_llm fail-closed 治本) + J6/J7 PASS
   P0_5_trust_contract:
     status: CLOSED_LOCAL
     evidence: eef8b0e + 1c7c7a4 + 10/10 P0-5 pipeline test PASS
-    fields: 10  # source_document/source_location/source_version/updated_at/reviewed_at/reviewed_by/review_status/confidence/environment/pii_classification
+    fields: 10
     statuses: [VERIFIED, UNVERIFIED, STALE, MISSING, FIXTURE, REDACTED]
   P0_6_pii:
     status: CLOSED_LOCAL
@@ -99,68 +111,70 @@ current_p0:
     layers: [RAG_chunk, FTS5_index, chat_context, city_api, frontend_bundle]
   P0_7_staging_journey:
     status: BLOCKED
-    evidence: 10/10 本地旅程 PASS in 1.66s, 但公网 staging 等 NJX 物理操作
-    blocked_by: CloudBase InsufficientBalance + NJX merge + tcb fn deploy
+    evidence: 10/10 本地旅程 PASS in 1.66s, 公网 staging 等 NJX 物理操作
+    blocked_by: CloudBase InsufficientBalance + NJX merge + tcb fn deploy + GitHub CI all green
 
 # ===== P1 现状 =====
 current_p1:
-  P1_1_rag_city_contacts: CLOSED  # c883905, 80aed9e, e37afa5
-  P1_2_mock_fallback_ui_red: CLOSED  # b963d94
-  P1_3_shanghai_pudong_docx: BLOCKED_PHYSICAL  # AOG知识库/ read-only
-  P1_4_airline_99pct_dup: TODO  # P0-6 后
-  P1_5_api_401: CLOSED  # V14 时代已修
-
-# ===== Staging 状态 =====
-staging_status: BLOCKED_CLOUDBASE_INSUFFICIENT_BALANCE
-staging_blocker: |
-  公网 SCF 返 "InsufficientBalance" 400, NJX 需充值 CloudBase 账户
-  njx-copilot-d6gs7642f8fa17122 才能继续 deploy
+  P1_1_rag_city_contacts: CLOSED
+  P1_2_mock_fallback_ui_red: CLOSED
+  P1_3_shanghai_pudong_docx: BLOCKED_PHYSICAL
+  P1_4_airline_99pct_dup: TODO
+  P1_5_api_401: CLOSED
 
 # ===== 唯一 NJX 下一步动作 =====
 next_single_action: |
-  1. 充值 CloudBase 账户 njx-copilot-d6fs7642f8fa17122 (解除 InsufficientBalance)
-  2. cd aog-web && bash scripts/prepare-scf.sh
-  3. tcb fn deploy aog-api -e APP_COMMIT_SHA=fd02795e70290b28f5254142df55c92abcc77a5a0140417269ec6ed6fa406612f8b9
-  4. gh pr merge 1 --squash --body-file PR_BODY.md
-  5. 通知独立产品体验评审官基于 staging URL 重新评审
-  在此之前, 不需要 Owner 执行任何其他动作。
+  本次 stage 12 已修复:
+    - Frontend tsc/lint/vitest/build (4 个 TS 错: dynamic Tag + 联合类型 + airline.hq + cities inactive)
+    - Phone/email scanner 重写 (UnicodeDecodeError → 文本扩展白名单 + 8 项测试, 真仓库 0 findings)
+    - CI pipefail (set -euo pipefail 全部 run block)
+    - PROJECT_STATE.yaml 20 字段 schema (含 4 个新字段)
+    - HANDOFF-TO-DEV.md trailing whitespace 清理
+
+  当前 PR head=718319c + 新修复 commit 后会变 (见 observed_pr_head).
+  下一步:
+    1. 等待 GitHub Actions 新 run, 5 jobs 全绿 (待 push 新 commit 触发)
+    2. 通知独立复核 thread 验证 CI 实际状态
+    3. CI 全绿后 NJX review PR body
+    4. NJX 决定 merge --merge vs --squash (Owner 严令: 建议 merge commit 保留历史)
+    5. merge 后 NJX 充值 CloudBase + 部署 staging
+    6. 通知独立产品体验评审官基于 staging URL 重新评审
+
+  在此之前, 不需要 Owner 执行任何其他动作.
 
 # ===== 时间戳 =====
-updated_at: 2026-07-29T16:18:00+08:00
+updated_at: 2026-07-29T16:45:00+08:00
 
-# ===== 旧字段保留向后兼容 (但用 new 12 字段为主) =====
+# ===== 旧字段保留向后兼容 (但用 new 20 字段为主) =====
 branches:
   main:
     head: 80330ddec8188c8bf3319a35e82ea62f065cca86
     label: V14 (Wave 3 部署, 2026-07-15)
     status: SEVERELY_STALE
-    behind_candidate: 59
-    note: main 落后 PR head 59 commits (V14 → V30+d038+d043+trust10+p0-4-治本)
+    behind_candidate: 65
   integration/sprint-abc:
     head: 9c29b89525b4c72dbafb46c3412a60c2f8956812
     label: V30 (LLM JSON + V29d markdown + V29c trigram + V29b 流式)
     status: AUTHORITATIVE_BUT_NOT_DEPLOYED
     behind_candidate: 16
-    note: integration 落后 PR head 16 commits (P0 全面修复未在 integration)
   review/aog-product-experience-baseline:
     head: 5d39967ec985bb2da542982f3460de34773cf5e6
     label: V28b (7/27 评审基线)
     status: REVIEW_BASELINE_ONLY
-    note: 7/27 评审 V28b 3.85/5, READY_WITH_MANDATORY_FIXES, 不在主线
   p0/integration-main-convergence:
-    head: fd02795e70290b28f5254142df55c92abcc77a5a0140417269ec6ed6fa406612f8b9
-    label: PR head (本 PR)
-    status: AWAITING_NJX_MERGE
-    ahead_of_main: 59
+    head: 718319c9c7d3a905c6360a89ef0c3cd40eb123d8
+    label: PR head (observed at 2026-07-29T16:45)
+    status: AWAITING_NJX_MERGE_AND_CI_GREEN
+    ahead_of_main: 65
     ahead_of_integration: 16
-    note: P0 全面修复收敛 (D-044-A ~ D-044-I), 等 NJX squash merge
 
 # ===== 测试总览 =====
 tests_summary:
-  total: 117
+  total: 128
   pipeline: 79
-  backend: 21
+  backend: 32
   frontend: 17
+  scanner: 8 (CI 上仅主程序, 测试在本地 regression suite)
   all_pass: true
 
 # ===== 三个样板 (Stage 9.2) =====

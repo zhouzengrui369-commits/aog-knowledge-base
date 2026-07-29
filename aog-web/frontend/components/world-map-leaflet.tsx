@@ -160,7 +160,6 @@ function MapController({
     return () => {
       // do not call map.remove() — React Leaflet handles cleanup
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [map]);
 
   useMapEvents({
@@ -1049,8 +1048,8 @@ export function WorldMapLeaflet({
               <span className="tabular-nums text-amber-700">
                 {selectedAirlineBaseCodes.size} 个 base 高亮
               </span>
-              {selectedAirline.hq && (
-                <span className="hidden sm:inline">· 总部 {selectedAirline.hq}</span>
+              {selectedAirline.headquarters && (
+                <span className="hidden sm:inline">· 总部 {selectedAirline.headquarters}</span>
               )}
             </div>
           </div>

@@ -2,7 +2,14 @@
 // 注意：mockup 阶段字段是英文（active/paused），CONTRACT 文档是中文（现行/暂停），
 // 这里兼容两种 case，TS 联合类型用中文（CONTRACT 优先）
 
-export type CityStatus = "现行" | "暂停" | "已废" | "active" | "paused" | "retired";
+// ★ frontend 展示态 (lib/mock/cities.ts dev mockup 用)
+// "inactive" 是 frontend 内部 mockup 展示态, 标识"暂无详情/已下架"
+// 不映射到 backend CONTRACT §1.1 的 CityStatus 业务枚举
+// production bundle 不引用 lib/mock/cities.ts (P0-4 mock 隔离), 这里只 dev/test 用
+export type CityStatus =
+  | "现行" | "暂停" | "已废"         // backend 业务态 (CONTRACT §1.1)
+  | "active" | "paused" | "retired"  // frontend 业务态 (mockup 英文)
+  | "inactive";                       // frontend 展示态 (mockup dev 用)
 export type ExperienceStatus = "现行" | "历史" | "待审" | "已废" | "active" | "paused" | "retired";
 export type ExperienceCategory = "流程" | "规范" | "案例" | "培训" | "技术" | "管理";
 export type CityRegion =

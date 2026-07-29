@@ -32,7 +32,6 @@ export function ExperienceFilter({ all, initialCategory, initialStatus, initialQ
     if (q) params.set("q", q);
     const qs = params.toString();
     router.replace(qs ? `/experiences?${qs}` : "/experiences", { scroll: false });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [topic, status, q]);
 
   const filtered = React.useMemo(() => {

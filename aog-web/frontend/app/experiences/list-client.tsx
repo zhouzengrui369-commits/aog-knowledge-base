@@ -61,7 +61,6 @@ export function ExperiencesListClient() {
       router.replace(`/experiences?${params.toString()}`, { scroll: false });
     }, 200);
     return () => clearTimeout(t);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [search]);
 
   // Filter (live, client-side)

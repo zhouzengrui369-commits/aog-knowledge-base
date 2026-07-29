@@ -574,7 +574,7 @@ D-029 事故学到:
 8. 复制 `pipeline/data/aog.db` → `backend/data/aog.db` (backend sqlite 路径跟 pipeline 不同)
 9. 跑 `scripts/export_fts5.py --out pipeline/data/fts5_index.db` (跟 .env FTS5_PATH 一致; 默认 --out 是 backend/data/ 跟 .env 不匹配)
 10. PENDING_CITY_CODES 移除 S-上海浦东/虹桥 (D-029 残留的"待补"占位), 走正常 /api/city 路径
-11. Playwright verify: B-北京大兴 + S-上海浦东 + S-上海虹桥 contacts tab 7/7 markers (内部/受限/公开联系/021-22379771/东航/空客北京/13910301946)
+11. Playwright verify: B-北京大兴 + S-上海浦东 + S-上海虹桥 contacts tab 7/7 markers (内部/受限/公开联系/021-22379771/东航/空客北京/PII_FIXTURE_PHONE_11)
 
 **D-031.b · P0-3 联系人权限 UI 改造**:
 

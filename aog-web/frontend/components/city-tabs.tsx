@@ -8,6 +8,64 @@ import type { City, ContactPermission } from "@/lib/types";
 
 type TabKey = "plan" | "contacts" | "parts" | "logistics" | "warehouse";
 
+// ★ P0-6 (Owner 7/29 授权): 唯一规范化的联系人 ViewModel
+// 任何来源 (SCF 真实 API / 老 mockup / 测试 fixture) 必须先 normalize 成这个 shape,
+// UI 不直接处理不一致联合类型. 所有缺失字段填默认值, 避免 undefined 越界.
+export interface ContactViewModel {
+  org: string;
+  scope: string;          // 职责/范围 (老 mockup 字段 role 也映射到这)
+  method: string;         // 联系类别 (e.g. 7×24, 商务, 库房) — 用于 method color badge
+  contact: string | undefined;
+  phone: string;          // 已 normalize 为字符串 (phone: string[] join " / ")
+  email: string | undefined;
+  permission: ContactPermission;  // 必填, 缺省 "public"
+  redacted: boolean;      // ★ P0-6: 脱敏标志, backend _decode_city 设 true → 隐藏 phone/email
+}
+
+function normalizePermission(raw: unknown): ContactPermission {
+  // 兼容 string | undefined | null | 任意字符串
+  if (raw === "public" || raw === "internal" || raw === "restricted") {
+    return raw;
+  }
+  return "public";  // 缺省公开, 老 mockup 没 permission 字段统一公开
+}
+
+function normalizeRedacted(raw: unknown): boolean {
+  return raw === true || raw === "true" || raw === 1;
+}
+
+export function normalizeContact(raw: unknown): ContactViewModel {
+  // 兼容多种来源 shape: SCF API {org, phone:string[], role, email, permission, redacted}
+  //                      老 mockup {org, scope, method, contact, phone, email}
+  const r = (raw ?? {}) as Record<string, unknown>;
+  const phoneRaw = r.phone;
+  let phoneStr: string;
+  if (Array.isArray(phoneRaw)) {
+    phoneStr = phoneRaw.filter((p): p is string => typeof p === "string").join(" / ");
+  } else if (typeof phoneRaw === "string") {
+    phoneStr = phoneRaw;
+  } else {
+    phoneStr = "";
+  }
+  // scope 优先 r.scope, 否则 r.role (兼容 SCF API 用 role 表达职责)
+  const roleVal = r.role;
+  const scopeVal = r.scope;
+  const methodVal = r.method;
+  const role = typeof roleVal === "string" ? roleVal : "";
+  const scope = typeof scopeVal === "string" ? scopeVal : role;
+  const method = typeof methodVal === "string" ? methodVal : role;
+  return {
+    org: typeof r.org === "string" ? r.org : "未署名单位",
+    scope,
+    method,
+    contact: typeof r.contact === "string" ? r.contact : undefined,
+    phone: phoneStr,
+    email: typeof r.email === "string" ? r.email : undefined,
+    permission: normalizePermission(r.permission),
+    redacted: normalizeRedacted(r.redacted),
+  };
+}
+
 const TABS: { key: TabKey; label: string }[] = [
   { key: "plan", label: "预案正文" },
   { key: "contacts", label: "联系人" },
@@ -123,21 +181,20 @@ function PlanPane({ city }: { city: City }) {
 //   - public:     正常显示
 //   - internal:   半透明 + "内部" 徽章
 //   - restricted: 折叠 + "受限" 徽章 + 未登录显示登录提示
+//   - redacted:   P0-6 脱敏 (backend 已把 phone/email 替换为 "REDACTED")
 function ContactCard({
   c,
   i,
   isAuthed,
 }: {
-  c: any;
+  c: ContactViewModel;
   i: number;
   isAuthed: boolean;
 }) {
-  const perm: ContactPermission = (c?.permission as ContactPermission) || "public";
+  // ★ ContactViewModel 已 normalize: permission 必填, redacted 必填 boolean
+  const perm = c.permission;
+  const isRedacted = c.redacted;
   const isRestricted = perm === "restricted" && !isAuthed;
-  // ★ P0-6: 脱敏显示 (Owner 7/29 授权, D-044-E)
-  // backend _decode_city 已把 restricted/redacted contact 的 phone/email 替换为 "REDACTED"
-  // 前端再 check: 如果 contact 显式标 redacted=true, 显 REDACTED 标
-  const isRedacted = !!c?.redacted;
 
   return (
     <div
@@ -231,20 +288,14 @@ function ContactsPane({ city }: { city: City }) {
   }, []);
 
   // V14: 兼容 SCF 真实 API (city.contacts: Array<{org, phone:string[], role, email, permission}>) + mockup
-  const rawContacts =
-    (city?.contacts && city.contacts.length > 0
-      ? city.contacts.map((c: any) => ({
-          org: c?.org,
-          scope: c?.role,
-          method: c?.role,
-          contact: undefined,
-          phone: Array.isArray(c?.phone) ? c.phone.join(" / ") : c?.phone,
-          email: c?.email,
-          permission: c?.permission as ContactPermission | undefined,
-        }))
-      : null) ||
-    city?.contacts_mockup ||
-    [];
+  // P0-6 (Owner 7/29 授权): 任何来源先 normalize 成 ContactViewModel, UI 不直接处理不一致联合类型
+  const rawContacts: ContactViewModel[] = React.useMemo(() => {
+    const source: unknown[] =
+      (city?.contacts && city.contacts.length > 0
+        ? city.contacts
+        : (city?.contacts_mockup as unknown[] | undefined)) || [];
+    return source.map((c) => normalizeContact(c));
+  }, [city?.contacts, city?.contacts_mockup]);
   if (rawContacts.length === 0) {
     return (
       <div className="rounded-lg border border-dashed border-ink-100 bg-ink-50 p-8 text-center text-sm text-ink-500">
@@ -253,16 +304,10 @@ function ContactsPane({ city }: { city: City }) {
     );
   }
   // D-030: 按 permission 分组 (public 在前, internal 半透明, restricted 受限)
-  const publicContacts = rawContacts.filter(
-    (c) => (c.permission || "public") === "public",
-  );
+  // ContactViewModel 强制 permission 必填, 老 mockup 通过 normalizeContact 默认 "public"
+  const publicContacts = rawContacts.filter((c) => c.permission === "public");
   const internalContacts = rawContacts.filter((c) => c.permission === "internal");
   const restrictedContacts = rawContacts.filter((c) => c.permission === "restricted");
-  const otherContacts = rawContacts.filter(
-    (c) => !["public", "internal", "restricted"].includes(c.permission || "public"),
-  );
-  // 老 mockup 数据无 permission 字段时, 全部塞 public
-  const legacyContacts = otherContacts;
 
   return (
     <div className="prose-city max-w-none">
@@ -272,11 +317,11 @@ function ContactsPane({ city }: { city: City }) {
         D-030: 联系人按权限分级 — 公开 (航司 desk) / 内部 (库房手机, 半透明) / 受限 (供应商, 需登录)
       </p>
 
-      {publicContacts.length + legacyContacts.length > 0 && (
+      {publicContacts.length > 0 && (
         <>
           <h3 className="mt-6 text-base font-semibold text-ink-900">公开联系 (航司 desk)</h3>
           <div className="not-prose mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
-            {[...publicContacts, ...legacyContacts].map((c, i) => (
+            {publicContacts.map((c, i) => (
               <ContactCard key={`pub-${i}`} c={c} i={i} isAuthed={isAuthed} />
             ))}
           </div>
