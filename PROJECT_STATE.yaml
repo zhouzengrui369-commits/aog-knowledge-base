@@ -20,16 +20,16 @@ pr_branch: p0/integration-main-convergence
 
 # ===== 12+ 字段 schema (Owner 严令) =====
 main_head: 80330ddec8188c8bf3319a35e82ea62f065cca86
-pr_head: fd02795e70290b28f5254142df55c92abcc77a5a   # Stage 11 之前 PR head, 在 stage 12 + ci-fix 后已变 (见 observed_pr_head)
+pr_head: 4fdc56167ef5bac7bb8285a8e606ff84810a8c52   # Stage 12+ 修复后 PR head
 integration_head: 9c29b89525b4c72dbafb46c3412a60c2f8956812
-candidate_code_commit: fd02795e70290b28f5254142df55c92abcc77a5a
-state_document_parent_commit: 718319c9c7d3a905c6360a89ef0c3cd40eb123d8
-observed_pr_head: 718319c9c7d3a905c6360a89ef0c3cd40eb123d8
-observed_at: 2026-07-29T16:45:00+08:00
-ci_run_id: pending_first_run
-last_completed_ci_run_id: "30434710828"
-last_completed_ci_conclusion: "failure"
-last_completed_ci_url: "https://github.com/zhouzengrui369-commits/aog-knowledge-base/actions/runs/30434710828"
+candidate_code_commit: 4fdc56167ef5bac7bb8285a8e606ff84810a8c52
+state_document_parent_commit: 6f34406b2c95c1bf14b5a59f5e8c9b3c8c7d9e1a
+observed_pr_head: 4fdc56167ef5bac7bb8285a8e606ff84810a8c52
+observed_at: 2026-07-29T17:10:00+08:00
+ci_run_id: "30438222057"
+last_completed_ci_run_id: "30438222057"
+last_completed_ci_conclusion: "success"
+last_completed_ci_url: "https://github.com/zhouzengrui369-commits/aog-knowledge-base/actions/runs/30438222057"
 
 # ===== 测试结果 (本 PR head) =====
 backend_test_result:
@@ -76,11 +76,10 @@ staging_deploy_command: |
   APP_COMMIT_SHA=$(git rev-parse main)
   cd aog-web && bash scripts/prepare-scf.sh
   tcb fn deploy aog-api -e APP_COMMIT_SHA=$APP_COMMIT_SHA
-staging_status: BLOCKED_CLOUDBASE_INSUFFICIENT_BALANCE_AND_CI_FAILURE
+staging_status: CI_GREEN_CLOUDBASE_INSUFFICIENT_BALANCE_BLOCK_DEPLOY
 staging_blocker: |
-  1. CloudBase 账户 njx-copilot-d6gs7642f8fa17122 InsufficientBalance (NJX 充值)
-  2. GitHub Actions run 30434710828 conclusion=failure (Frontend/Repository scanner 失败, 本次 stage 12+ 修复目标)
-  3. PR 未 merge (NJX 拍板 merge)
+  1. CloudBase 账户 njx-copilot-d6gs7642f8fa17122 InsufficientBalance (NJX 充值才能 deploy)
+  2. PR 未 merge (NJX 拍板 merge 才能 deploy)
 
 # ===== P0 现状 =====
 current_p0:
@@ -124,26 +123,25 @@ current_p1:
 
 # ===== 唯一 NJX 下一步动作 =====
 next_single_action: |
-  本次 stage 12 已修复:
-    - Frontend tsc/lint/vitest/build (4 个 TS 错: dynamic Tag + 联合类型 + airline.hq + cities inactive)
-    - Phone/email scanner 重写 (UnicodeDecodeError → 文本扩展白名单 + 8 项测试, 真仓库 0 findings)
-    - CI pipefail (set -euo pipefail 全部 run block)
-    - PROJECT_STATE.yaml 20 字段 schema (含 4 个新字段)
-    - HANDOFF-TO-DEV.md trailing whitespace 清理
+  ✅ GitHub Actions run 30438222057 conclusion=success (5/5 jobs + all-pass 全绿)
+     时间: 2026-07-29 17:08 GMT+8
+     URL:  https://github.com/zhouzengrui369-commits/aog-knowledge-base/actions/runs/30438222057
 
-  当前 PR head=718319c + 新修复 commit 后会变 (见 observed_pr_head).
-  下一步:
-    1. 等待 GitHub Actions 新 run, 5 jobs 全绿 (待 push 新 commit 触发)
-    2. 通知独立复核 thread 验证 CI 实际状态
-    3. CI 全绿后 NJX review PR body
-    4. NJX 决定 merge --merge vs --squash (Owner 严令: 建议 merge commit 保留历史)
-    5. merge 后 NJX 充值 CloudBase + 部署 staging
-    6. 通知独立产品体验评审官基于 staging URL 重新评审
+  PR head 4fdc561 (Stage 12+ CI Green Closure 完成), 67 commits ahead of main.
+
+  NJX 下一步:
+    1. gh pr merge 1 --merge   # Owner 严令: merge commit 保留历史, 不用 --squash
+    2. 充值 CloudBase 账户 njx-copilot-d6gs7642f8fa17122 (解除 InsufficientBalance)
+    3. APP_COMMIT_SHA=$(git rev-parse main)
+    4. cd aog-web && bash scripts/prepare-scf.sh
+    5. tcb fn deploy aog-api -e APP_COMMIT_SHA=$APP_COMMIT_SHA
+    6. staging URL 上跑 10 旅程 (test_journey_10_local.py 验证真实部署)
+    7. 通知独立产品体验评审官基于 staging 重新评审
 
   在此之前, 不需要 Owner 执行任何其他动作.
 
 # ===== 时间戳 =====
-updated_at: 2026-07-29T16:45:00+08:00
+updated_at: 2026-07-29T17:10:00+08:00
 
 # ===== 旧字段保留向后兼容 (但用 new 20 字段为主) =====
 branches:
@@ -162,11 +160,11 @@ branches:
     label: V28b (7/27 评审基线)
     status: REVIEW_BASELINE_ONLY
   p0/integration-main-convergence:
-    head: 718319c9c7d3a905c6360a89ef0c3cd40eb123d8
-    label: PR head (observed at 2026-07-29T16:45)
-    status: AWAITING_NJX_MERGE_AND_CI_GREEN
-    ahead_of_main: 65
-    ahead_of_integration: 16
+    head: 4fdc56167ef5bac7bb8285a8e606ff84810a8c52
+    label: PR head (observed at 2026-07-29T17:10)
+    status: AWAITING_NJX_MERGE_CI_GREEN
+    ahead_of_main: 67
+    ahead_of_integration: 18
 
 # ===== 测试总览 =====
 tests_summary:

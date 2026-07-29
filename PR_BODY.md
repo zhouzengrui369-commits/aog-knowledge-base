@@ -1,32 +1,35 @@
 # PR #1 — P0 Stabilization & Evidence Closure (Owner 7/29 严令)
 
-## ⚠️ 当前状态 (7/29 16:45 实测)
+## ⚠️ 当前状态 (7/29 17:10 实测)
 
 | 维度 | 状态 |
 |------|------|
-| **GitHub Actions** | 🔴 **FAILURE** (run 30434710828) |
-| **Frontend job** | 🔴 failure (TS 4 错: dynamic Tag / 联合类型 / airline.hq / cities inactive) |
-| **Repository scanner** | 🔴 failure (UnicodeDecodeError on binary files) |
-| **Backend / Pipeline / SCF** | ✅ success (3 jobs pass) |
-| **all-pass** | ⚠️ skipped (因 frontend + repository fail) |
-| **workflow conclusion** | 🔴 failure |
-| **merge 条件** | ❌ NOT_READY (等 all 5 jobs + all-pass 全绿) |
-| **CloudBase 充值** | ❌ 当前禁止 (Owner 严令) |
-| **tcb fn deploy** | ❌ 当前禁止 |
-| **hosting deploy** | ❌ 当前禁止 |
-| **产品体验复验** | ❌ 当前禁止 |
+| **GitHub Actions** | 🟢 **SUCCESS** (run 30438222057) |
+| **Backend job** | 🟢 success (94+5=99 PASS) |
+| **Frontend job** | 🟢 success (tsc/lint/vitest/build + production mock-disabled) |
+| **Repository scanner** | 🟢 success (scanner 0 findings + PROJECT_STATE 20 字段验证) |
+| **Pipeline job** | 🟢 success (39 项 + FTS5 export smoke) |
+| **SCF job** | 🟢 success (drift check 33 files 一致) |
+| **All checks passed** | 🟢 success |
+| **workflow conclusion** | 🟢 success |
+| **merge 条件** | 🟢 READY (等 NJX review + merge) |
+| **CloudBase 充值** | ❌ 等 NJX (Owner 决定时机) |
+| **tcb fn deploy** | ❌ 等 merge + 充值后 |
+| **hosting deploy** | ❌ 同上 |
+| **产品体验复验** | ❌ 等 staging 部署后 |
 
 ## PR 规模 (GitHub 实际)
 
 ```
-PR head:    718319c9c7d3a905c6360a89ef0c3cd40eb123d8  (P0-4 + Stage 9/10/11/12 stabilization)
-main:       80330ddec8188c8bf3319a35e82ea62f065cca86  (V14, 落后 65 commits)
-commits:    65 ahead of main
-files:      99 changed
+PR head:    4fdc56167ef5bac7bb8285a8e606ff84810a8c52  (Stage 12+ CI Green Closure)
+main:       80330ddec8188c8bf3319a35e82ea62f065cca86  (V14, 落后 67 commits)
+commits:    67 ahead of main
+files:      99+ changed
 insertions: +30,802
 deletions:  -872
 branch:     p0/integration-main-convergence
 URL:        https://github.com/zhouzengrui369-commits/aog-knowledge-base/pull/1
+CI:         run 30438222057 conclusion=success (5/5 jobs + all-pass 全绿)
 ```
 
 ## P0 状态 (Owner 7/29 12 阶段严令)
