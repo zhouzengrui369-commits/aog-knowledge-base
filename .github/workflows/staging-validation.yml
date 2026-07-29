@@ -200,15 +200,17 @@ jobs:
             echo "  ✗ FAIL: cloudbaserc.staging.json 含 production 资源"
             exit 1
           fi
-          # NJX 7/29 严令: 第一轮 staging 用 CloudBase 默认域名, 不配 aog-staging.njx.com CNAME
-          if grep -q 'aog-staging.njx.com' cloudbaserc.staging.json; then
-            echo "  ✗ FAIL: cloudbaserc.staging.json 含 aog-staging.njx.com 字面量 (CNAME 是远端验收后可选项)"
+          # NJX 7/29 严令: 第一轮 staging 用 CloudBase 默认域名, 不配自定义 CNAME
+          # 排除 # 注释行 (文档说明 CNAME 是远端验收后可选项)
+          if grep -v '^[[:space:]]*#' cloudbaserc.staging.json | grep -v '^[[:space:]]*$' | grep -q 'aog-staging.njx.com'; then
+            echo "  ✗ FAIL: cloudbaserc.staging.json 非注释行含 aog-staging.njx.com 字面量 (CNAME 是远端验收后可选项)"
             exit 1
           fi
           echo "  ✓ cloudbaserc.staging.json 是 v2 schema, 0 production 命中, 0 CNAME 字面量"
           # deploy-staging.sh 必须不含老命令 tcb env switch 和老 flag -e APP_COMMIT_SHA=
-          if grep -q 'tcb env switch' aog-web/scripts/deploy-staging.sh; then
-            echo "  ✗ FAIL: deploy-staging.sh 含老命令 'tcb env switch' (CloudBase v2 不再使用)"
+          # 排除 # 注释行 (文档说明老命令作为反面教材)
+          if grep -v '^[[:space:]]*#' aog-web/scripts/deploy-staging.sh | grep -v '^[[:space:]]*$' | grep -q 'tcb env switch'; then
+            echo "  ✗ FAIL: deploy-staging.sh 非注释行含老命令 'tcb env switch' (CloudBase v2 不再使用)"
             exit 1
           fi
           if grep -q -- '-e APP_COMMIT_SHA=' aog-web/scripts/deploy-staging.sh; then
