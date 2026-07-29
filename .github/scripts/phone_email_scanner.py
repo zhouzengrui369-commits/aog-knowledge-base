@@ -55,6 +55,7 @@ FIXTURE_PATH_PREFIXES = (
     "aog-web/pipeline/tests/",
     "aog-web/backend/tests/",
     "aog-web/frontend/tests/",
+    ".github/tests/",              # ★ scanner 自身的测试 (含 fixture phone 故意触发 finding 测试)
     "aog-web/frontend/lib/mock/",  # dev mockup fixture
     "aog-web/mockup/",              # ★ Sprint C 之前的 dev mockup, 已被 lib/mock/ 取代, 仅作历史归档
     "aog-web/AOG知识库/",  # read-only 知识库数据源 (D-029)
@@ -67,6 +68,7 @@ FIXTURE_PATH_PREFIXES = (
     "aog-web/frontend/.next/", # Next.js 编译 cache
     "aog-web/frontend/.next.died/",  # ★ 之前误 commit 的 .next.died 编译产物
     "reports/",
+    "PR_BODY.md",                  # ★ gh CLI 用的 PR body 草稿, 跟代码无关
 )
 
 
