@@ -34,10 +34,39 @@ import pytest  # noqa: E402
 DEFAULT_FTS5 = BACKEND_ROOT / "data" / "fts5_index.db"
 
 
-# 8 RAG 回归表 (Owner 严令)
+# 8 RAG 回归表 (Owner 7/29 严令)
 # expected_match: callable(hit) -> bool, 接受命中条件
 #   - "H-赫尔辛基" 等: source_id 严格 prefix 匹配
-#   - "B-" (件号): source_type == 'city' 即接受 (件号召回 B-/F-/Q- 都可能)
+#   - "B-" (件号): snippet 真实含件号 + source 属于已知件号源
+#       NJX 7/29 严令 4.2: 不允许 source_type==city 即 PASS
+#       必须验证: (a) snippet 真实含 3-1531 / (b) source_id 属于真实含件号的源
+#       已知件号源 (从 fts5 实际召回验证): F-福冈, H-胡志明, H-河内, X-新加坡,
+#         core-manual-xlsx, core-manual-20260205-xlsx, exp-3a73d6ac
+KNOWN_PART_NUMBER_SOURCES = {
+    "F-福冈", "H-胡志明（国际）", "H-河内（国际）", "X-新加坡",
+    "core-manual-xlsx", "core-manual-20260205-xlsx", "exp-3a73d6ac",
+}
+
+# 3-1531 在 fts5_index.db chunks_fts_content c0 真实出现的 evidence (7/29 16:00 实测):
+#   "3-1531-3" 在 F-福冈/H-胡志明/H-河内/X-新加坡/core-manual-xlsx/exp-3a73d6ac 等
+#   所以 assertion: snippet 含 "3-1531" (1-9 数字) 即可认定为真实含件号
+def _part_number_hard_assert(hit: dict) -> bool:
+    """NJX 7/29 4.2 强断言: 件号检索必须真实召回
+
+    验证:
+      1. source_id 属于已知件号源 (不能 source_type==city 即过)
+      2. content/snippet 真实含 3-1531 字串 (1-9 数字的 3-1531)
+    """
+    if hit["source_id"] not in KNOWN_PART_NUMBER_SOURCES:
+        return False
+    # _fts5_query_sync 返 "content" 字段 (substr(c0, 1, 500))
+    content = hit.get("content") or hit.get("snippet") or hit.get("text") or ""
+    # D-038 trigram MATCH: 召回 content 真实含 "3-1531" 或 "3-1531-3"
+    # 用 1-9 数字 pattern 兼容 "3-1531" "3-1531-3" 等变体
+    if not any(s in content for s in ("3-1531", "3-1531-3")):
+        return False
+    return True
+
 RAG_8_QUERIES = [
     ("赫尔辛基保障", lambda h: h["source_id"].startswith("H-赫尔辛基"), 1, "D-038 治本, 赫尔辛基 city"),
     ("北京大兴", lambda h: h["source_id"].startswith("B-北京大兴"), 1, "基础 case, 国内主基地"),
@@ -46,7 +75,8 @@ RAG_8_QUERIES = [
     ("米兰", lambda h: h["source_id"].startswith("M-米兰"), 1, "2 char CJK, 国际外站"),
     ("南宁", lambda h: h["source_id"].startswith("N-南宁"), 1, "D-043 治本, 短 CJK specificity"),
     ("雅典", lambda h: h["source_id"].startswith("Y-雅典"), 1, "D-043 治本, 2 char CJK LIKE fallback"),
-    ("前轮件号 3-1531", lambda h: h["source_type"] == "city", 3, "件号检索, 召回 city chunk (B-/F-/Q- 等)"),
+    # ★ NJX 7/29 4.2 强断言 (不允许 source_type==city 即 PASS)
+    ("前轮件号 3-1531", _part_number_hard_assert, 3, "件号硬断言: snippet 真实含 3-1531 + source 属于已知件号源"),
 ]
 
 
@@ -72,9 +102,11 @@ def _fts5_query_sync(db_path: Path, query: str, n_results: int) -> list:
             fts_query = " OR ".join(f'"{t}"' for t in tokens)
             cur = con.execute(
                 f"""
-                SELECT cm.source_id, cm.source_type, cm.title, bm25(chunks_fts) AS score
+                SELECT cm.source_id, cm.source_type, cm.title, bm25(chunks_fts) AS score,
+                       substr(c.c0, 1, 500) AS content
                 FROM chunks_fts
                 JOIN chunks_meta cm ON chunks_fts.rowid = cm.rowid
+                JOIN chunks_fts_content c ON c.id = cm.rowid
                 WHERE chunks_fts MATCH ?
                 ORDER BY score LIMIT ?
                 """,
@@ -82,7 +114,7 @@ def _fts5_query_sync(db_path: Path, query: str, n_results: int) -> list:
             )
             rows = cur.fetchall()
             return [
-                {"source_id": r[0], "source_type": r[1], "title": r[2], "score": r[3]}
+                {"source_id": r[0], "source_type": r[1], "title": r[2], "score": r[3], "content": r[4]}
                 for r in rows
             ]
 
@@ -97,9 +129,11 @@ def _fts5_query_sync(db_path: Path, query: str, n_results: int) -> list:
             fts_query = " OR ".join(f'"{t}"' for t in tokens)
             cur = con.execute(
                 f"""
-                SELECT cm.source_id, cm.source_type, cm.title, bm25(chunks_fts) AS score
+                SELECT cm.source_id, cm.source_type, cm.title, bm25(chunks_fts) AS score,
+                       substr(c.c0, 1, 500) AS content
                 FROM chunks_fts
                 JOIN chunks_meta cm ON chunks_fts.rowid = cm.rowid
+                JOIN chunks_fts_content c ON c.id = cm.rowid
                 WHERE chunks_fts MATCH ?
                 ORDER BY
                     CASE WHEN cm.source_type = 'city' THEN bm25(chunks_fts) * 2.0
@@ -112,7 +146,7 @@ def _fts5_query_sync(db_path: Path, query: str, n_results: int) -> list:
             )
             rows = cur.fetchall()
             return [
-                {"source_id": r[0], "source_type": r[1], "title": r[2], "score": r[3]}
+                {"source_id": r[0], "source_type": r[1], "title": r[2], "score": r[3], "content": r[4]}
                 for r in rows
             ]
         else:
@@ -139,7 +173,8 @@ def _fts5_query_sync(db_path: Path, query: str, n_results: int) -> list:
             cur = con.execute(
                 f"""
                 SELECT cm.source_id, cm.source_type, cm.title, count(*) AS cnt,
-                    CASE WHEN cm.source_type = 'city' THEN 0 ELSE 1 END AS city_rank
+                    CASE WHEN cm.source_type = 'city' THEN 0 ELSE 1 END AS city_rank,
+                    (SELECT substr(c2.c0, 1, 500) FROM chunks_fts_content c2 WHERE c2.id = cm.rowid LIMIT 1) AS content
                 FROM chunks_fts_content c
                 JOIN chunks_meta cm ON c.id = cm.rowid
                 WHERE {like_clauses}
@@ -151,7 +186,7 @@ def _fts5_query_sync(db_path: Path, query: str, n_results: int) -> list:
             )
             rows = cur.fetchall()
             return [
-                {"source_id": r[0], "source_type": r[1], "title": r[2]}
+                {"source_id": r[0], "source_type": r[1], "title": r[2], "content": r[5] if len(r) > 5 else ""}
                 for r in rows
             ]
     except sqlite3.OperationalError as e:

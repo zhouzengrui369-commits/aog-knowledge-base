@@ -125,14 +125,18 @@ jobs:
           pip install -e .
           pip install pytest aiosqlite sqlalchemy pypinyin python-frontmatter python-docx openpyxl pypdf markdown-it-py fastapi
 
-      - name: Pipeline tests (12 + 17 + 10 = 39 项)
+      - name: Pipeline tests (12 + 17 + 10 + 8 RAG + summary = 41 项)
         working-directory: aog-web/pipeline
         run: |
           set -euo pipefail
+          # 4.1: RAG 8 query regression 纳入 CI (NJX 7/29 严令)
+          # test_rag_8query_remote.py 在缺 AOG_STAGING_API_BASE 时 skip, 不影响 CI
           PYTHONPATH=../backend:.:./scripts python -m pytest \
             tests/test_export_fts5_manifest.py \
             tests/test_pii_isolation.py \
             tests/test_p05_trust_pipeline.py \
+            tests/test_rag_8query_regression.py \
+            tests/test_rag_8query_remote.py \
             -v --tb=short
 
       - name: FTS5 export smoke (临时 chroma → fts5)
