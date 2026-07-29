@@ -184,8 +184,8 @@ jobs:
             echo "  ✗ FAIL: cloudbaserc.staging.json 缺 functions[]"
             exit 1
           fi
-          if ! grep -q '"envVariables": \[' cloudbaserc.staging.json; then
-            echo "  ✗ FAIL: cloudbaserc.staging.json 缺 envVariables[]"
+          if ! grep -q '"envVariables": {' cloudbaserc.staging.json; then
+            echo "  ✗ FAIL: cloudbaserc.staging.json 缺 envVariables{...} (NJX 7/29 DEPLOYABILITY 严令: object 不是 array)"
             exit 1
           fi
           if ! grep -q '{{env.TCB_ENV_ID}}' cloudbaserc.staging.json; then
