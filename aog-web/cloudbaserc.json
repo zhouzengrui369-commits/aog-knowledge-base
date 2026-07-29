@@ -31,7 +31,9 @@
         "KNOWLEDGE_BASE_PATH": "/tmp",
         "RAW_PATH": "/tmp",
         "ALLOW_MOCK": "false",
-        "STRICT_LLM": "true"
+        "STRICT_LLM": "true",
+        "APP_COMMIT_SHA": "${APP_COMMIT_SHA}",
+        "AOG_DB_PATH": "/tmp/aog.db"
       }
     }
   ],

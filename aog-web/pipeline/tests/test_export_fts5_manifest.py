@@ -199,7 +199,20 @@ class TestValidateManifest:
 
     @pytest.fixture
     def written_manifest_db(self, tmp_fts5: Path) -> Path:
-        """含合法 manifest 的 fts5 db"""
+        """含合法 manifest 的 fts5 db (db_size/chunks_count 真实值)"""
+        # 先写 manifest 用 placeholder, 然后 close, 写 chunks, 再 reopen 写真实 manifest
+        # 简化做法: 用 (0, 0, 0) 写 manifest, 然后 close, reopen, 读真实 size + count, 重写 manifest
+        con = sqlite3.connect(str(tmp_fts5))
+        # 写一个 dummy chunk 测真实 count
+        con.execute(
+            "INSERT INTO chunks_fts(content, title, source_path, source_id, source_type, region, status, doc_id, chunk_index) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            ("dummy chunk", "dummy", "f", "T-1", "city", "华北", "现行", "T-1", 0)
+        )
+        con.commit()
+        # close, 看实际 size
+        con.close()
+        actual_size = tmp_fts5.stat().st_size
+        # reopen, 写真实 manifest
         con = sqlite3.connect(str(tmp_fts5))
         _write_build_manifest(
             con,
@@ -207,8 +220,8 @@ class TestValidateManifest:
             build_commit="abc1234567",
             build_branch="p0/integration-main-convergence",
             source_manifest_hash="a" * 64,
-            chunks_count=10, exp_count=2, cities_count=3, core_count=1, wiki_count=1,
-            db_size_bytes=100, schema_version=EXPECTED_SCHEMA_VERSION,
+            chunks_count=1, exp_count=2, cities_count=3, core_count=1, wiki_count=1,
+            db_size_bytes=actual_size, schema_version=EXPECTED_SCHEMA_VERSION,
         )
         con.commit()
         con.close()
@@ -305,4 +318,133 @@ class TestValidateManifest:
         con.close()
         client = self._make_client(tmp_fts5)
         with pytest.raises(RuntimeError, match="db_size_bytes"):
+            _run(client.validate_manifest_or_fail())
+
+    # ====== P0-7 阶段 7 增强校验 (Owner 7/29 严令) ======
+
+    def _write_realistic_manifest(self, db_path: Path, **overrides) -> Path:
+        """写一个真实 manifest (db_size + chunks_count 准确)"""
+        con = sqlite3.connect(str(db_path))
+        # 写 N 个 chunk (可控)
+        n_chunks = overrides.pop("n_chunks", 1)
+        for i in range(n_chunks):
+            con.execute(
+                "INSERT INTO chunks_fts(content, title, source_path, source_id, source_type, region, status, doc_id, chunk_index) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (f"chunk {i}", "t", "f", f"T-{i}", "city", "华北", "现行", f"T-{i}", 0)
+            )
+        con.commit()
+        con.close()
+        # 读实际 size
+        actual_size = db_path.stat().st_size
+        # reopen 写真实 manifest
+        con = sqlite3.connect(str(db_path))
+        kwargs = dict(
+            tokenizer=EXPECTED_TOKENIZER,
+            build_commit=overrides.pop("build_commit", "abc1234567"),
+            build_branch=overrides.pop("build_branch", "p0/integration-main-convergence"),
+            source_manifest_hash=overrides.pop("source_manifest_hash", "a" * 64),
+            chunks_count=n_chunks, exp_count=2, cities_count=3, core_count=1, wiki_count=1,
+            db_size_bytes=actual_size, schema_version=EXPECTED_SCHEMA_VERSION,
+        )
+        kwargs.update(overrides)
+        _write_build_manifest(con, **kwargs)
+        con.commit()
+        con.close()
+        return db_path
+
+    def test_validate_db_size_mismatch_fail_closed(self, tmp_fts5: Path):
+        """P0-7.6: manifest db_size_bytes 与实际文件大小不一致 → fail-closed"""
+        # 写真实 manifest
+        self._write_realistic_manifest(tmp_fts5)
+        # reopen 改 manifest db_size_bytes 改成假值
+        con = sqlite3.connect(str(tmp_fts5))
+        con.execute("UPDATE build_manifest SET db_size_bytes = 999999 WHERE id = 1")
+        con.commit()
+        con.close()
+        client = self._make_client(tmp_fts5)
+        with pytest.raises(RuntimeError, match="db_size_bytes"):
+            _run(client.validate_manifest_or_fail())
+
+    def test_validate_chunks_count_mismatch_fail_closed(self, tmp_fts5: Path):
+        """P0-7.8: chunks_count manifest 与实际表行数不一致 → fail-closed"""
+        self._write_realistic_manifest(tmp_fts5, n_chunks=3)  # 写 3 个
+        # 改 manifest chunks_count 改成 100
+        con = sqlite3.connect(str(tmp_fts5))
+        con.execute("UPDATE build_manifest SET chunks_count = 100 WHERE id = 1")
+        con.commit()
+        con.close()
+        client = self._make_client(tmp_fts5)
+        with pytest.raises(RuntimeError, match="chunks_count"):
+            _run(client.validate_manifest_or_fail())
+
+    def test_validate_app_commit_sha_match_pass(self, tmp_fts5: Path, monkeypatch):
+        """P0-7.7: APP_COMMIT_SHA 与 build_commit 前 8 字符匹配 → PASS"""
+        real_commit = "abc1234567890"
+        self._write_realistic_manifest(tmp_fts5, build_commit=real_commit)
+        monkeypatch.setenv("APP_COMMIT_SHA", "abc12345")
+        client = self._make_client(tmp_fts5)
+        m = _run(client.validate_manifest_or_fail())
+        assert m["build_commit"] == real_commit
+
+    def test_validate_app_commit_sha_mismatch_fail_closed(self, tmp_fts5: Path, monkeypatch):
+        """P0-7.7: APP_COMMIT_SHA 与 build_commit 不匹配 → fail-closed"""
+        self._write_realistic_manifest(tmp_fts5, build_commit="abc1234567")
+        monkeypatch.setenv("APP_COMMIT_SHA", "deadbeef")
+        client = self._make_client(tmp_fts5)
+        with pytest.raises(RuntimeError, match="APP_COMMIT_SHA"):
+            _run(client.validate_manifest_or_fail())
+
+    def test_validate_no_app_commit_sha_env_skipped(self, tmp_fts5: Path, monkeypatch):
+        """P0-7.7: APP_COMMIT_SHA 未设 (dev 环境) → 跳过此校验"""
+        monkeypatch.delenv("APP_COMMIT_SHA", raising=False)
+        self._write_realistic_manifest(tmp_fts5)
+        client = self._make_client(tmp_fts5)
+        m = _run(client.validate_manifest_or_fail())  # 不抛
+        assert m["tokenizer"] == "trigram"
+
+    def test_validate_source_manifest_hash_mismatch_fail_closed(self, tmp_fts5: Path, tmp_path: Path, monkeypatch):
+        """P0-7.9: source_manifest_hash 与 aog.db 实际 SHA256 不一致 → fail-closed"""
+        self._write_realistic_manifest(tmp_fts5, source_manifest_hash="a" * 64)
+        # 写临时 aog.db
+        aog_db = tmp_path / "aog.db"
+        aog_db.write_bytes(b"actual aog db content" * 100)
+        monkeypatch.setenv("AOG_DB_PATH", str(aog_db))
+        client = self._make_client(tmp_fts5)
+        with pytest.raises(RuntimeError, match="source_manifest_hash"):
+            _run(client.validate_manifest_or_fail())
+
+    def test_validate_source_manifest_hash_match_pass(self, tmp_fts5: Path, tmp_path: Path, monkeypatch):
+        """P0-7.9: source_manifest_hash 与 aog.db 实际 SHA256 匹配 → PASS"""
+        # 写临时 aog.db, 算 sha256
+        aog_db = tmp_path / "aog.db"
+        content = b"aog db content for hash test" * 50
+        aog_db.write_bytes(content)
+        import hashlib
+        h = hashlib.sha256()
+        h.update(content)
+        actual_hash = h.hexdigest()
+        self._write_realistic_manifest(tmp_fts5, source_manifest_hash=actual_hash)
+        monkeypatch.setenv("AOG_DB_PATH", str(aog_db))
+        client = self._make_client(tmp_fts5)
+        m = _run(client.validate_manifest_or_fail())
+        assert m["source_manifest_hash"] == actual_hash
+
+    def test_validate_schema_version_exact_equal_not_less_than(self, tmp_fts5: Path):
+        """P0-7.3: schema version 精确等 (不用 < 比较) — 'v30-d038-d043' == 'v30-d038-d043' OK"""
+        # 之前 8c test 用 'v14-unicode61' 校验 < 比较, 现在 schema 字段已经改精确等
+        # 这里测精确等通过
+        self._write_realistic_manifest(tmp_fts5)  # 默认用 EXPECTED_SCHEMA_VERSION
+        client = self._make_client(tmp_fts5)
+        m = _run(client.validate_manifest_or_fail())  # 不抛
+        assert m["fts5_schema_version"] == "v30-d038-d043"
+
+    def test_validate_schema_version_extra_fail_closed(self, tmp_fts5: Path):
+        """P0-7.3: 'v30-d038-d043-extra' 也不应通过 (精确等)"""
+        self._write_realistic_manifest(tmp_fts5)  # 默认 v30-d038-d043
+        con = sqlite3.connect(str(tmp_fts5))
+        con.execute("UPDATE build_manifest SET fts5_schema_version = 'v30-d038-d043-extra' WHERE id = 1")
+        con.commit()
+        con.close()
+        client = self._make_client(tmp_fts5)
+        with pytest.raises(RuntimeError, match="fts5_schema_version"):
             _run(client.validate_manifest_or_fail())

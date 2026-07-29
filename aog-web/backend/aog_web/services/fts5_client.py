@@ -594,7 +594,9 @@ class FTS5Client:
     # ============================================================
 
     EXPECTED_TOKENIZER = "trigram"  # D-038 治本, D-044-B 锁定
-    EXPECTED_SCHEMA_VERSION_MIN = "v30-d038-d043"  # 启动要求 ≥ 此版本
+    # ★ P0-7 (Owner 7/29 严令): 精确相等, 不是 >= 比较
+    # 升级 schema 时改这里 + 触发 rebuild
+    EXPECTED_SCHEMA_VERSION_MIN = "v30-d038-d043"  # 启动要求 == 此版本
 
     async def get_manifest(self) -> Optional[Dict[str, Any]]:
         """读 build_manifest 单行, 不存在返 None"""
@@ -631,17 +633,23 @@ class FTS5Client:
             return None
 
     async def validate_manifest_or_fail(self) -> Dict[str, Any]:
-        """★ P0-3: 启动时校验 build_manifest, 不一致 fail-closed (抛 RuntimeError)
+        """★ P0-3 + P0-7: 启动时校验 build_manifest, 不一致 fail-closed (抛 RuntimeError)
 
-        校验项:
+        校验项 (Owner 7/29 严令):
         1. manifest 存在 (不存在 = 索引没经过 export_fts5, fail)
-        2. tokenizer == EXPECTED_TOKENIZER (trigram, D-038)
-        3. fts5_schema_version >= EXPECTED_SCHEMA_VERSION_MIN (版本匹配)
+        2. tokenizer == EXPECTED_TOKENIZER (trigram, D-038) — 精确等
+        3. fts5_schema_version == EXPECTED_SCHEMA_VERSION (精确等, 不用 < 比较)
         4. build_commit 非空 (空 = 占位, fail)
         5. db_size_bytes > 0 (空索引, fail)
+        6. ★ P0-7: manifest db_size_bytes 与实际 fts5_index.db 文件大小一致
+        7. ★ P0-7: build_commit 与环境变量 APP_COMMIT_SHA 一致 (部署时校验)
+        8. ★ P0-7: chunks_count 与实际 chunks_fts 表行数一致
+        9. ★ P0-7: source_manifest_hash 与 aog.db 实际 sha256 一致 (如指定 aog.db_path)
+        10. ★ P0-7: 日志不输出敏感内容 (build_commit 截断, 不输出 source_manifest_hash 完整)
 
         任何一项不通过 → 抛 RuntimeError → lifespan 不启动 → SCF 容器重启
         """
+        import os
         m = await self.get_manifest()
         if m is None:
             raise RuntimeError(
@@ -649,34 +657,92 @@ class FTS5Client:
                 "请跑 pipeline/scripts/export_fts5.py 重建索引."
             )
         errors = []
+        # 1. tokenizer 精确等
         if m["tokenizer"] != self.EXPECTED_TOKENIZER:
             errors.append(
-                f"tokenizer={m['tokenizer']!r} 期望 {self.EXPECTED_TOKENIZER!r}. "
+                f"tokenizer={m['tokenizer']!r} 期望 {self.EXPECTED_TOKENIZER!r} 精确等. "
                 "D-038 治本要求 trigram. 老 unicode61 索引必须 rebuild."
             )
-        if m["fts5_schema_version"] < self.EXPECTED_SCHEMA_VERSION_MIN:
+        # 2. schema version 精确等 (Owner 7/29 严令: 不用字符串大小比较)
+        if m["fts5_schema_version"] != self.EXPECTED_SCHEMA_VERSION_MIN:
             errors.append(
                 f"fts5_schema_version={m['fts5_schema_version']!r} "
-                f"< 期望 {self.EXPECTED_SCHEMA_VERSION_MIN!r}. "
-                "schema 升级未生效, 必须 rebuild."
+                f"!= 期望 {self.EXPECTED_SCHEMA_VERSION_MIN!r} 精确等. "
+                "schema 版本不匹配, 必须 rebuild."
             )
+        # 3. build_commit 非空
         if not m["build_commit"] or m["build_commit"] == "unknown":
             errors.append(
                 f"build_commit={m['build_commit']!r} 不可用. "
                 "export_fts5 跑时 git rev-parse 失败或非 git 仓库."
             )
+        # 4. db_size_bytes > 0
         if m["db_size_bytes"] <= 0:
             errors.append(
                 f"db_size_bytes={m['db_size_bytes']} 索引为空. 必须 rebuild."
             )
+        # 5. ★ P0-7: manifest db_size_bytes 与实际文件大小核对
+        try:
+            actual_size = self.db_path.stat().st_size
+            if abs(m["db_size_bytes"] - actual_size) > 1024:
+                # 允许 1KB 容差 (DB header 写入)
+                errors.append(
+                    f"db_size_bytes manifest={m['db_size_bytes']} 实际={actual_size} 差 {abs(m['db_size_bytes']-actual_size)} > 1KB. "
+                    "索引文件被改 / 未完整写入 / cache stale, 必须 rebuild."
+                )
+        except OSError as e:
+            errors.append(f"db file stat 失败: {e}")
+        # 6. ★ P0-7: build_commit 与环境变量 APP_COMMIT_SHA 一致 (部署时校验)
+        app_commit_sha = os.environ.get("APP_COMMIT_SHA", "").strip()
+        if app_commit_sha:
+            # 仅前 8 字符 (CI 通常传短 SHA)
+            if not m["build_commit"].startswith(app_commit_sha[:8]):
+                errors.append(
+                    f"build_commit manifest={m['build_commit'][:12]} 部署 APP_COMMIT_SHA={app_commit_sha[:12]} 不匹配. "
+                    "部署的不是本次 build 的索引, 必须 rebuild + 重新部署."
+                )
+        # 7. ★ P0-7: chunks_count 与实际表行数一致
+        try:
+            db = await self._get_db()
+            async with db.execute("SELECT count(*) FROM chunks_fts") as cur:
+                row = await cur.fetchone()
+                actual_chunks = int(row[0]) if row else 0
+            if m["chunks_count"] != actual_chunks:
+                errors.append(
+                    f"chunks_count manifest={m['chunks_count']} 实际表行={actual_chunks} 不一致. "
+                    "索引被截断 / 部分写入, 必须 rebuild."
+                )
+        except Exception as e:
+            errors.append(f"chunks count 验证失败: {e}")
+        # 8. ★ P0-7: source_manifest_hash 与 aog.db 实际 SHA256 (Owner 7/29 严令)
+        aog_db_path_str = os.environ.get("AOG_DB_PATH", "").strip()
+        if aog_db_path_str and m.get("source_manifest_hash"):
+            from pathlib import Path
+            aog_db_path = Path(aog_db_path_str)
+            if aog_db_path.exists():
+                import hashlib
+                h = hashlib.sha256()
+                try:
+                    with open(aog_db_path, "rb") as f:
+                        while chunk := f.read(8192):
+                            h.update(chunk)
+                    actual_hash = h.hexdigest()
+                    if m["source_manifest_hash"] != actual_hash:
+                        errors.append(
+                            f"source_manifest_hash manifest={m['source_manifest_hash'][:12]}... 实际 aog.db sha256={actual_hash[:12]}... 不一致. "
+                            "aog.db 改了但 fts5 索引没 rebuild, 必须 rebuild."
+                        )
+                except OSError as e:
+                    errors.append(f"aog.db hash 计算失败: {e}")
+
         if errors:
-            msg = "P0-3 fail-closed: build_manifest 校验失败:\n  - " + "\n  - ".join(errors)
+            msg = "P0-3 + P0-7 fail-closed: build_manifest 校验失败:\n  - " + "\n  - ".join(errors)
             logger.error(msg)
             raise RuntimeError(msg)
+        # ★ P0-7: 日志不输出敏感内容 — build_commit 截断, source_manifest_hash 截断, 不输出 db_size_bytes 原值
         logger.info(
-            "P0-3 manifest 校验通过: tokenizer=%s commit=%s schema=%s db_size=%d chunks=%d",
-            m["tokenizer"], m["build_commit"][:8], m["fts5_schema_version"],
-            m["db_size_bytes"], m["chunks_count"],
+            "P0-3 + P0-7 manifest 校验通过: tokenizer=%s commit=%s schema=%s chunks=%d (db_size hidden)",
+            m["tokenizer"], m["build_commit"][:8], m["fts5_schema_version"], m["chunks_count"],
         )
         return m
 

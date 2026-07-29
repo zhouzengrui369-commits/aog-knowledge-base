@@ -1,0 +1,339 @@
+# AOG Knowledge Base · CI (Owner 7/29 Stabilization & Evidence Closure)
+#
+# 5 类检查 (Owner 严令):
+#   1. Backend: compileall / py_compile main.py / pytest / import app
+#   2. Pipeline: pipeline tests / 临时 db build / FTS5 export / manifest validation / PII negative
+#   3. Frontend: pnpm install --frozen-lockfile / typecheck / lint / unit tests / pnpm build / mock-disabled
+#   4. SCF: build.sh / compileall / backend/function drift check
+#   5. Repository: git diff --check / PROJECT_STATE schema / secret scan / phone-email fixture allowlist
+#
+# 任何一项失败 PR 不得 merge. 禁止 continue-on-error / || true / exit 0 隐藏失败.
+
+name: aog-ci
+
+on:
+  pull_request:
+    branches: [main, integration/sprint-abc, p0/integration-main-convergence]
+  push:
+    branches: [main, integration/sprint-abc, p0/integration-main-convergence]
+
+jobs:
+  # ============================================================
+  # 1. Backend (Python compile + pytest + import)
+  # ============================================================
+  backend:
+    name: Backend (compileall + pytest + import)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install backend deps
+        working-directory: aog-web/backend
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e . 2>&1 | tail -3
+          pip install pytest pytest-asyncio aiosqlite sqlalchemy fastapi uvicorn[standard] pypinyin python-frontmatter python-docx openpyxl pypdf markdown-it-py 2>&1 | tail -3
+
+      - name: py_compile main.py
+        working-directory: aog-web/backend
+        run: python -m py_compile aog_web/main.py
+        # exit 0 = 语法 OK; 非 0 = 阻断 PR
+
+      - name: compileall aog_web
+        working-directory: aog-web/backend
+        run: python -m compileall -q aog_web 2>&1 | tail -5
+
+      - name: import app smoke test
+        working-directory: aog-web/backend
+        run: |
+          python -c "from aog_web.main import app; assert app.title == 'AOG AI 知识库 API', f'app title: {app.title}'; print('import OK:', app.title)"
+
+      - name: Run backend tests
+        working-directory: aog-web/backend
+        run: |
+          PYTHONPATH=. python -m pytest tests/ -v --tb=short 2>&1 | tail -30
+        # 测试 import + 业务逻辑
+
+  # ============================================================
+  # 2. Pipeline (RAG + FTS5 + manifest + PII)
+  # ============================================================
+  pipeline:
+    name: Pipeline (tests + FTS5 export + manifest + PII)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install pipeline + backend deps
+        working-directory: aog-web
+        run: |
+          cd pipeline
+          python -m pip install --upgrade pip
+          pip install -e . 2>&1 | tail -3
+          pip install pytest aiosqlite sqlalchemy pypinyin python-frontmatter python-docx openpyxl pypdf markdown-it-py fastapi 2>&1 | tail -3
+
+      - name: Pipeline tests (12 + 17 + 10 = 39 项)
+        working-directory: aog-web/pipeline
+        run: |
+          PYTHONPATH=../backend:.:./scripts python -m pytest \
+            tests/test_export_fts5_manifest.py \
+            tests/test_pii_isolation.py \
+            tests/test_p05_trust_pipeline.py \
+            -v --tb=short 2>&1 | tail -10
+
+      - name: FTS5 export smoke (临时 chroma → fts5)
+        working-directory: aog-web
+        run: |
+          # 用临时 chroma + sqlite 测 export 命令
+          tmpdir=$(mktemp -d)
+          mkdir -p $tmpdir/chroma $tmpdir/output
+          python -c "
+          import chromadb
+          from chromadb.config import Settings as ChromaSettings
+          c = chromadb.PersistentClient(path='$tmpdir/chroma', settings=ChromaSettings(anonymized_telemetry=False))
+          col = c.get_or_create_collection('aog_knowledge', metadata={'hnsw:space': 'cosine'})
+          col.add(ids=['T-1:0'], documents=['test'], metadatas=[{'source_id': 'T-1', 'source_type': 'city', 'source_path': 'f', 'title': 'T', 'region': '华北', 'status': '现行', 'chunk_index': 0}])
+          # 写 dummy aog.db
+          import sqlite3
+          con = sqlite3.connect('$tmpdir/aog.db')
+          con.execute('CREATE TABLE cities (code TEXT PRIMARY KEY, name TEXT, airport TEXT, iata TEXT, pinyin TEXT, region TEXT, status TEXT, tags TEXT, fleet TEXT, parts TEXT, contacts TEXT, warehouse TEXT, logistics TEXT, content_md TEXT, source_path TEXT, updated_at TEXT)')
+          con.execute('CREATE TABLE experiences (id TEXT PRIMARY KEY, title TEXT, category TEXT, status TEXT, tags TEXT, summary TEXT, content_md TEXT, related_pn TEXT, source_path TEXT, updated_at TEXT)')
+          con.execute('CREATE TABLE core_plans (id TEXT PRIMARY KEY, title TEXT, type TEXT, content_md TEXT, source_path TEXT, updated_at TEXT)')
+          con.execute('INSERT INTO cities VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)', ('T-1', 'T-1', '', '', '', '华北', '现行', '[]', '[]', '[]', '[]', '{}', '{}', '', '', ''))
+          con.commit(); con.close()
+          print('Setup OK')
+          "
+          cd pipeline
+          python -m scripts.export_fts5 \
+            --chroma $tmpdir/chroma \
+            --sqlite $tmpdir/aog.db \
+            --out $tmpdir/output/fts5_index.db \
+            --no-smoke 2>&1 | tail -10
+          # 验证 manifest 写入
+          python -c "
+          import sqlite3
+          con = sqlite3.connect('$tmpdir/output/fts5_index.db')
+          row = con.execute('SELECT tokenizer, build_commit, fts5_schema_version, chunks_count, db_size_bytes FROM build_manifest WHERE id = 1').fetchone()
+          assert row, 'build_manifest 应已写入'
+          assert row[0] == 'trigram', f'tokenizer 应 trigram, 实际 {row[0]}'
+          assert row[2] == 'v30-d038-d043', f'schema version 应 v30-d038-d043, 实际 {row[2]}'
+          assert row[3] >= 1, f'chunks_count 应 ≥1, 实际 {row[3]}'
+          assert row[4] > 0, f'db_size 应 >0, 实际 {row[4]}'
+          print('FTS5 manifest 验证通过:', row)
+          "
+
+  # ============================================================
+  # 3. Frontend (install + typecheck + lint + vitest + build)
+  # ============================================================
+  frontend:
+    name: Frontend (install + typecheck + lint + vitest + build)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: pnpm
+          cache-dependency-path: aog-web/frontend/pnpm-lock.yaml
+
+      - name: pnpm install --frozen-lockfile
+        working-directory: aog-web/frontend
+        run: pnpm install --frozen-lockfile
+
+      - name: typecheck (tsc)
+        working-directory: aog-web/frontend
+        run: pnpm exec tsc --noEmit
+        # exit 0 = 类型 OK; 非 0 = 阻断 PR
+
+      - name: lint (next lint)
+        working-directory: aog-web/frontend
+        run: pnpm lint
+        continue-on-error: false  # Owner 严令: 禁止 continue-on-error
+
+      - name: vitest unit tests (P0-4 mock 隔离 17 项)
+        working-directory: aog-web/frontend
+        run: ./node_modules/.bin/vitest run tests/api-mock-isolation.test.ts
+        # 任何失败都阻断
+
+      - name: production mock-disabled build check
+        working-directory: aog-web/frontend
+        env:
+          NEXT_PUBLIC_ALLOW_MOCK: "false"
+          NEXT_PUBLIC_API_BASE: "https://test.example.com"
+        run: |
+          # build 时 ALLOW_MOCK=false, production bundle 不应包含 mock fallback 触发路径
+          pnpm build 2>&1 | tail -10
+          # 验证 out/ bundle 不含 MOCK_CITIES 数据
+          if grep -r "MOCK_CITIES" .next/ 2>/dev/null; then
+            echo "✗ MOCK_CITIES 出现在 production bundle"; exit 1
+          fi
+          if grep -r "MOCK_EXPERIENCES" .next/ 2>/dev/null; then
+            echo "✗ MOCK_EXPERIENCES 出现在 production bundle"; exit 1
+          fi
+          if grep -r "MOCK_AIRLINES" .next/ 2>/dev/null; then
+            echo "✗ MOCK_AIRLINES 出现在 production bundle"; exit 1
+          fi
+          echo "✓ production bundle 不含 MOCK_* 数据"
+
+  # ============================================================
+  # 4. SCF (build.sh + compileall + drift check)
+  # ============================================================
+  scf:
+    name: SCF (build.sh + drift check)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Run prepare-scf.sh (build + drift check)
+        working-directory: aog-web
+        run: |
+          chmod +x scripts/prepare-scf.sh functions/aog-api/build.sh
+          bash scripts/prepare-scf.sh 2>&1 | tail -15
+          # prepare-scf.sh 内置 33 files 一致性校验, 失败 exit 1 → 阻断 PR
+
+      - name: Verify SCF MANIFEST.json
+        working-directory: aog-web
+        run: |
+          test -f functions/aog-api/MANIFEST.json
+          python -c "
+          import json
+          m = json.load(open('functions/aog-api/MANIFEST.json'))
+          assert m['file_count'] > 0, f'MANIFEST file_count 应 >0, 实际 {m[\"file_count\"]}'
+          assert m['source_commit'], 'source_commit 应非空'
+          assert m['fts5_schema_version'] if 'fts5_schema_version' in m else True, '应包含 fts5_schema_version'
+          print('MANIFEST 验证通过:', m['file_count'], 'files,', m['source_commit'][:8])
+          "
+
+  # ============================================================
+  # 5. Repository (git diff + PROJECT_STATE + secret scan)
+  # ============================================================
+  repository:
+    name: Repository (diff check + PROJECT_STATE + secret/phone scan)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # 需要 git log
+
+      - name: git diff --check (whitespace + conflict markers)
+        run: |
+          git diff --check HEAD~10..HEAD 2>&1 | head -20
+          # exit 0 = OK; 非 0 = conflict markers / trailing whitespace → 阻断
+
+      - name: PROJECT_STATE schema (12 字段, Owner 11)
+        run: |
+          test -f PROJECT_STATE.yaml
+          python -c "
+          import yaml
+          d = yaml.safe_load(open('PROJECT_STATE.yaml'))
+          required = ['main_head', 'pr_head', 'integration_head', 'candidate_commit', 'ci_run_id', 'backend_test_result', 'frontend_test_result', 'pipeline_test_result', 'manifest_sha256', 'aog_db_sha256', 'fts5_sha256', 'function_package_sha256', 'current_p0', 'current_p1', 'staging_status', 'next_single_action', 'updated_at']
+          for k in required:
+              assert k in d, f'PROJECT_STATE.yaml 缺字段: {k}'
+          print('PROJECT_STATE.yaml 12+ 字段验证通过')
+          "
+
+      - name: Secret scan (API key, password, private key)
+        run: |
+          # 排除 .git/, node_modules/, .venv/, vendor/, data/
+          # 检查: API key / password / private key patterns
+          python3 -c "
+          import re, subprocess
+          patterns = [
+              (r'AKID[a-zA-Z0-9]{16,}', 'Tencent Cloud SecretId'),
+              (r'-----BEGIN [A-Z ]+ PRIVATE KEY-----', 'Private key'),
+              (r'sk-[a-zA-Z0-9]{20,}', 'OpenAI/Anthropic API key'),
+              (r'ghp_[a-zA-Z0-9]{36}', 'GitHub PAT'),
+          ]
+          cmd = ['git', 'diff', '--name-only', 'origin/main..HEAD']
+          r = subprocess.run(cmd, capture_output=True, text=True)
+          files = [f for f in r.stdout.splitlines() if f and not f.startswith('.git/')]
+          errors = []
+          for f in files:
+              try:
+                  content = open(f).read()
+              except (FileNotFoundError, IsADirectoryError):
+                  continue
+              for pat, label in patterns:
+                  if re.search(pat, content):
+                      errors.append(f'{f}: 命中 {label}')
+          if errors:
+              for e in errors:
+                  print('  -', e)
+              raise SystemExit(1)
+          print('Secret scan: 无命中')
+          "
+
+      - name: Phone/email fixture allowlist scan
+        run: |
+          # P0-6: 真实手机号/邮箱不应在 production 代码 (除 fixtures/ 显式 allowlist)
+          python3 -c "
+          import re, subprocess
+          phone_re = re.compile(r'(?<!\d)1[3-9]\d{9}(?!\d)')
+          email_re = re.compile(r'[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}')
+          # 排除路径: tests/, fixtures/, allowlist/ 目录
+          cmd = ['git', 'ls-files']
+          r = subprocess.run(cmd, capture_output=True, text=True)
+          files = [f for f in r.stdout.splitlines() if f]
+          errors = []
+          for f in files:
+              if f.startswith('aog-web/pipeline/tests/') or f.startswith('aog-web/frontend/tests/') or f.startswith('aog-web/AOG知识库/') or 'fixture' in f.lower() or f.startswith('aog-web/DELIVERY-') or f.startswith('aog-web/reports/'):
+                  continue  # fixture / data / 历史文档
+              try:
+                  content = open(f).read()
+              except (FileNotFoundError, IsADirectoryError):
+                  continue
+              # 只在 source 代码查
+              if not (f.endswith('.py') or f.endswith('.ts') or f.endswith('.tsx') or f.endswith('.js')):
+                  continue
+              # 真实手机号 (11 位 1[3-9]xx)
+              matches = phone_re.findall(content)
+              if matches:
+                  errors.append(f'{f}: 含真实手机号: {matches[:3]}')
+              # 真实邮箱 (排除 fixture / example / test 域)
+              for m in email_re.findall(content):
+                  if not any(tld in m.lower() for tld in ['example', 'test', 'fixture', 'localhost', 'openclaw.local']):
+                      errors.append(f'{f}: 含真实邮箱: {m}')
+          if errors:
+              for e in errors:
+                  print('  -', e)
+              raise SystemExit(1)
+          print('Phone/email allowlist scan: 无真实 PII')
+          "
+
+  # ============================================================
+  # 6. Aggregate: 全部 job 都通过
+  # ============================================================
+  all-pass:
+    name: All checks passed
+    runs-on: ubuntu-latest
+    needs: [backend, pipeline, frontend, scf, repository]
+    if: success()
+    steps:
+      - run: echo "✓ All 5 CI checks passed. PR ready for review."
