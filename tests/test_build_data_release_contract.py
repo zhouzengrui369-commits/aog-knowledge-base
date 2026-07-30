@@ -343,8 +343,8 @@ def test_08_pytest_failure_no_fake_green(git_clean_check, app_commit_sha):
     assert not or_true_lines, (
         f"build-data-release.sh 非注释行含 || true 假绿: {or_true_lines[:3]}"
     )
-    # 必须 8/8 校验 (脚本里实际写法: ${RAG_PASS_COUNT:-0} -lt 8)
-    assert "RAG_PASS_COUNT:-0} -lt 8" in content or "RAG_PASS_COUNT} -lt 8" in content, (
+    # 必须 8/8 校验 (脚本里实际写法: [ "${RAG_PASS_COUNT:-0}" -lt 8 ])
+    assert 'RAG_PASS_COUNT:-0}" -lt 8' in content or 'RAG_PASS_COUNT} -lt 8' in content, (
         "build-data-release.sh 必须校验 RAG_PASS_COUNT >= 8 (NJX 7/30 严令 8/8 不能少)"
     )
 
