@@ -125,15 +125,17 @@ jobs:
           pip install -e .
           pip install pytest aiosqlite sqlalchemy pypinyin python-frontmatter python-docx openpyxl pypdf markdown-it-py fastapi
 
-      - name: Pipeline tests (12 + 17 + 10 + 8 RAG + summary = 41 项)
+      - name: Pipeline tests (12 + 17 + 10 + 8 RAG + summary + PII sanitizer = 41+15 项)
         working-directory: aog-web/pipeline
         run: |
           set -euo pipefail
           # 4.1: RAG 8 query regression 纳入 CI (NJX 7/29 严令)
           # test_rag_8query_remote.py 在缺 AOG_STAGING_API_BASE 时 skip, 不影响 CI
+          # NJX 7/30 PR #5 严令: 加 test_pii_sanitizer.py (5 层 sanitized + 6 单元 + 2 source = 14 项)
           PYTHONPATH=../backend:.:./scripts python -m pytest \
             tests/test_export_fts5_manifest.py \
             tests/test_pii_isolation.py \
+            tests/test_pii_sanitizer.py \
             tests/test_p05_trust_pipeline.py \
             tests/test_rag_8query_regression.py \
             tests/test_rag_8query_remote.py \

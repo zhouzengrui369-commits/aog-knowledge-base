@@ -118,6 +118,52 @@ if ! echo "$PII_TEST_OUT" | grep -q "PASSED"; then
 fi
 echo "  ✓ Gate 3 PASS: PII redaction 生效 (H-赫尔辛基 phone=[\"REDACTED\"])"
 
+# ====== Gate 4: PII-7a 真实 KB FTS5 leak check (NJX 7/30 PR #5 严令 5 项) ======
+# NJX 7/30 严令 5: PR #4 PII-7a 保留, 作为最终真实 KB Gate.
+# NJX 7/30 严令来源: PR #4 staging 合同 PASS, 但真实 KB local rehearsal 触发 PII-7a FAIL.
+# 根因: aog.db content_md 字段 (含 vendor info / 站点地址 / 库房电话) 漏脱敏, 9 个 chunk 命中
+#       3 个 non-public/redacted phone 原值 (D-051 教训). PR #5 pii_sanitizer 修.
+# 检查方法:
+#   1. 从 owner 真实 aog.db 抽所有 non-public/restricted/redacted phone + email (hash 12 字符)
+#   2. 查 FTS5 chunks_fts_content.c0 是否 0 命中 (命中 = 漏脱敏, fail)
+#   3. 严禁进 FTS5 chunk text / chroma persistence / aog.db content_md
+# 注: owner 真 aog.db 不在 repo (.gitignore), deploy 阶段才拉到. fixture KB 用
+#     test_pii_sanitizer.py 5 层 sanitized 覆盖 (TestSourceContentSanitized +
+#     TestSqliteSanitized + TestChromaSanitized + TestFTS5Sanitized + TestRAGResultSanitized).
+echo "  [data-release] Gate 4: PII-7a 真实 KB FTS5 leak check (NJX 7/30 PR #5)..."
+REAL_AOG_DB="$BACKEND/data/aog.db"
+if [ -f "$REAL_AOG_DB" ]; then
+    PII7A_OUT="$(cd "$PIPELINE" && "$AOG_WEB/backend/.venv/bin/python" -u -m scripts.pii_7a_check \
+        --aog-db "$REAL_AOG_DB" \
+        --fts5-db "$RELEASE_DIR/fts5_index.db" \
+        --max-samples 100 2>&1 | tail -20)" || true
+    echo "$PII7A_OUT" | tail -10
+    if ! echo "$PII7A_OUT" | grep -q "PII-7a PASS"; then
+        echo "  ✗ FAIL Gate 4: PII-7a 真实 KB 泄漏 (non-public phone/email 在 FTS5 chunks_fts_content 命中)" >&2
+        echo "  详查: $PII7A_OUT" >&2
+        exit 6
+    fi
+    echo "  ✓ Gate 4 PASS: PII-7a 真实 KB FTS5 0 命中 (non-public phone/email 全部 REDACTED)"
+else
+    # Fixture 模式: 没真 aog.db, 跑 pii_sanitizer 5 层测试 (TestSourceContentSanitized +
+    # TestSqliteSanitized + TestChromaSanitized + TestFTS5Sanitized + TestRAGResultSanitized).
+    # 严禁当 PII-7a 真实 KB gate 用, 但作为 sanitizer unit 验证, 配合 owner 真 KB
+    # staging release 前人工跑 (NJX 7/30 D-051 教训: fixture 通常太干净, 真实数据 review
+    # 必要).
+    echo "  ⚠️  Gate 4: owner 真 aog.db 不在 $REAL_AOG_DB, 走 fixture 模式 (test_pii_sanitizer.py 5 层)"
+    PII7A_FIXTURE_OUT="$(cd "$AOG_WEB" && "$AOG_WEB/backend/.venv/bin/python" -m pytest \
+        pipeline/tests/test_pii_sanitizer.py -v --tb=short 2>&1 | tail -25)" || true
+    echo "$PII7A_FIXTURE_OUT" | tail -15
+    PII7A_FIXTURE_PASS="$(echo "$PII7A_FIXTURE_OUT" | grep -cE 'PASSED' || echo 0)"
+    PII7A_FIXTURE_FAIL="$(echo "$PII7A_FIXTURE_OUT" | grep -cE 'FAILED' || echo 0)"
+    if [ "${PII7A_FIXTURE_FAIL:-0}" -gt 0 ] || [ "${PII7A_FIXTURE_PASS:-0}" -lt 14 ]; then
+        echo "  ✗ FAIL Gate 4 (fixture): test_pii_sanitizer.py 必须 14/14 PASS, 实际 PASS=$PII7A_FIXTURE_PASS FAIL=$PII7A_FIXTURE_FAIL" >&2
+        exit 6
+    fi
+    echo "  ✓ Gate 4 (fixture): test_pii_sanitizer.py 14/14 PASS, sanitizer 5 层生效"
+    echo "  ⚠️  提醒: fixture 模式 ≠ 真实 KB Gate. owner 真 KB release 前必须重跑 PII-7a (有真 aog.db 时)"
+fi
+
 # ====== 4. 输出 release-manifest.json ======
 TIMESTAMP="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
 RELEASE_MANIFEST="$RELEASE_DIR/release-manifest.json"

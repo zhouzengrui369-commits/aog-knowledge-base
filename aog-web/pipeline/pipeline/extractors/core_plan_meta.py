@@ -153,11 +153,16 @@ def extract_core_plan(path: PathLike, knowledge_base_root: PathLike | None = Non
     else:
         source_path = str(p)
 
+    # ★ NJX 7/30 PR #5 严令: core_plan 写入前调用 sanitizer
+    # content_md 可能含 phone/email (vendor / 站点 / 库房)
+    from .pii_sanitizer import sanitize_text
+    content_md = sanitize_text(content_md)
+
     return CorePlan(
         id=cid,
         title=title,
         type=ctype,
-        content_md=content_md,
+        content_md=content_md,  # ★ PR #5: 已 sanitize
         source_path=source_path,
         updated_at=datetime.now(timezone.utc).isoformat(),
     )

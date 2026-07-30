@@ -153,6 +153,12 @@ def extract_experience(path: PathLike, knowledge_base_root: PathLike | None = No
     summary = _summary_from_text(content_md)
     related_pn = _extract_pns(content_md)
 
+    # ★ NJX 7/30 PR #5 严令: experience 写入前调用 sanitizer
+    # content_md / summary / title 都可能含 phone/email (vendor / 站点 / 库房)
+    from .pii_sanitizer import sanitize_text
+    content_md = sanitize_text(content_md)
+    summary = sanitize_text(summary)
+
     # tags
     tags: list[str] = []
     for kw in ["B787", "A320", "A321", "A330", "A350"]:
@@ -180,7 +186,7 @@ def extract_experience(path: PathLike, knowledge_base_root: PathLike | None = No
         status=status,
         tags=tags,
         summary=summary,
-        content_md=content_md,
+        content_md=content_md,  # ★ PR #5: 已 sanitize
         related_pn=related_pn,
         source_path=source_path,
         updated_at=datetime.now(timezone.utc).isoformat(),

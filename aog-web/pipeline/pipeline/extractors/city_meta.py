@@ -608,6 +608,14 @@ def extract_city(path: PathLike, knowledge_base_root: PathLike | None = None) ->
     )
     pii_classification = "confidential" if has_contact_with_pii else "none"
 
+    # ★ NJX 7/30 PR #5 严令: extract_city 写入前调用 sanitizer
+    # content_md 是 phone/email 泄漏主要源 (vendor info / 站点地址 / 库房电话)
+    # 严禁: 保留原值进 aog.db / chroma / FTS5
+    from .pii_sanitizer import sanitize_text
+    md_text_sanitized = sanitize_text(md_text)
+    # 严禁 sanitize contacts JSON (permission 合同不同, _build_contacts_chunk 自己处理)
+    # 严禁 sanitize id / code / source_path (技术字段)
+
     return City(
         code=code,
         name=name,
@@ -622,7 +630,7 @@ def extract_city(path: PathLike, knowledge_base_root: PathLike | None = None) ->
         contacts=contacts,
         warehouse=warehouse,
         logistics=logistics,
-        content_md=md_text,
+        content_md=md_text_sanitized,  # ★ PR #5: 写前 sanitize
         source_path=source_path,
         updated_at=updated_at,
         # ★ P0-5: 10 字段

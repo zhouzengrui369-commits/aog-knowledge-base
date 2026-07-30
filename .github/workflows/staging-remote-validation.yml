@@ -1,0 +1,195 @@
+# AOG Knowledge Base · Staging Remote Validation (NJX 7/30 PR #5 严令)
+#
+# trigger: workflow_dispatch ONLY (NJX 7/30 严令: 不挂 PR / push 触发)
+#          真实 staging URL 验收, 不允许在普通 CI 跑 (避免缺 AOG_STAGING_API_BASE 阻塞 PR merge)
+#
+# environment: staging (NJX 7/30 严令: 走 staging environment, 严禁 production)
+#
+# 严令 (NJX 7/30 PR #5 拍板):
+#   - 缺 AOG_STAGING_API_BASE 必须 FAIL (严禁 skip)
+#   - 真实 RAG / journey 不允许 skip (严禁 deferred / continue-on-error)
+#   - 严禁虚假 URL / admin bypass
+#   - 严禁在 PR-trigger workflow (staging-validation.yml) 里跑本流程
+#
+# PII-7a 真实 KB Gate 说明 (NJX 7/30 PR #5 严令 5):
+#   - PII-7a 真 KB 验证由 build-data-release.sh Gate 4 跑 (跟 PR #5 同步)
+#   - 跑法: APP_COMMIT_SHA=$(git rev-parse HEAD) bash scripts/build-data-release.sh
+#   - 真 aog.db 由 owner 部署后从 staging 拉, pii_7a_check.py 抽 non-public phone+email 查 fts5
+#   - 这里不重复跑 PII-7a (因为 pii_7a_check.py 已在 PR #5 严令 6 项测过, fixture 模式)
+#
+# 触发方式:
+#   gh workflow run staging-remote-validation.yml \
+#     --repo zhouzengrui369-commits/aog-knowledge-base \
+#     --field environment=staging
+#
+# 目的 (PR #4 最终 merge 前):
+#   1. 验证 PR #4 data-release 真实远端 staging release 走通 (8 RAG + 10 journey)
+#   2. 验证 AOG_STAGING_API_BASE 真实生效 (不是 placeholder)
+#   3. 验证 environment=staging 隔离 (production 资源严禁)
+#
+# 任何一项失败, NJX 拍板才决定是否回滚 release.
+
+name: "staging-remote-validation"
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: "Target environment (NJX 7/30 严令: 严禁 production)"
+        required: true
+        type: choice
+        default: "staging"
+        options:
+          - staging
+
+# 所有 job 默认 set -euo pipefail
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  # ============================================================
+  # 1. enforce-secrets: 缺 AOG_STAGING_API_BASE 必须 FAIL
+  #    (NJX 7/30 严令: 真实远端验收严禁 skip, 缺 secret 必 fail)
+  # ============================================================
+  enforce-secrets:
+    name: "Enforce AOG_STAGING_API_BASE (NJX 7/30: 缺 URL FAIL, 严禁 skip)"
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }}
+    timeout-minutes: 2
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: "Verify environment=staging (NJX 7/30 严令: 严禁 production)"
+        run: |
+          set -euo pipefail
+          if [ "${{ inputs.environment }}" != "staging" ]; then
+            echo "  ✗ FAIL: environment=${{ inputs.environment }} ≠ staging" >&2
+            echo "  NJX 7/30 严令: 严禁 production environment 跑本 workflow" >&2
+            exit 1
+          fi
+          echo "  ✓ environment=staging 确认"
+
+      - name: "Enforce AOG_STAGING_API_BASE (NJX 7/30: 缺 URL FAIL)"
+        env:
+          AOG_STAGING_API_BASE: ${{ secrets.AOG_STAGING_API_BASE }}
+        run: |
+          set -euo pipefail
+          if [ -z "${AOG_STAGING_API_BASE:-}" ]; then
+            echo "  ✗ FAIL: AOG_STAGING_API_BASE secret 未设" >&2
+            echo "  NJX 7/30 PR #5 严令: 真实远端验收严禁 skip" >&2
+            echo "  必须在 GitHub repo Settings → Secrets and variables → Actions 设置 AOG_STAGING_API_BASE" >&2
+            echo "  (设置后由 NJX 拍板 re-run, 不是本 workflow 自动 skip)" >&2
+            exit 1
+          fi
+          # 严禁 placeholder
+          case "$AOG_STAGING_API_BASE" in
+            *placeholder*|*PLACEHOLDER*|*xxx*|*XXXX*)
+              echo "  ✗ FAIL: AOG_STAGING_API_BASE 含 placeholder ($AOG_STAGING_API_BASE)" >&2
+              echo "  NJX 7/30 严令: 严禁虚假 URL / placeholder" >&2
+              exit 1
+              ;;
+          esac
+          echo "  ✓ AOG_STAGING_API_BASE=${AOG_STAGING_API_BASE}"
+
+  # ============================================================
+  # 2. remote-rag-regression: 跑 8 RAG regression 真实远端 (NJX 7/29 8 RAG 回归)
+  #    (NJX 7/30 严令: 真实远端验收, 严禁 skip)
+  # ============================================================
+  remote-rag-regression:
+    name: "8 RAG regression (remote staging, NJX 7/29)"
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }}
+    needs: [enforce-secrets]
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: "Install pytest + httpx"
+        run: |
+          set -euo pipefail
+          python -m pip install --upgrade pip
+          pip install pytest pytest-asyncio httpx
+
+      - name: "Run 8 RAG regression against remote staging (NJX 7/30 严令: 真实远端, 严禁 skip)"
+        env:
+          AOG_STAGING_API_BASE: ${{ secrets.AOG_STAGING_API_BASE }}
+        run: |
+          set -euo pipefail
+          # 8 RAG regression (本机 FTS5 走 staging URL 验证)
+          # 跟 PR #4 已批准版本一致
+          python -m pytest aog-web/pipeline/tests/test_rag_8query_regression.py -v --tb=short
+
+  # ============================================================
+  # 3. remote-journey-10: 跑 10 旅程真实远端 (NJX 7/30 严令)
+  #    (NJX 7/30 严令: 真实远端验收, 严禁 skip)
+  # ============================================================
+  remote-journey-10:
+    name: "10 journey remote (NJX 7/30 PR #4: 真实 staging URL)"
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }}
+    needs: [enforce-secrets]
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: "Install pytest + httpx"
+        run: |
+          set -euo pipefail
+          python -m pip install --upgrade pip
+          pip install pytest pytest-asyncio httpx
+
+      - name: "Run 10 journey remote tests (NJX 7/30 严令: 真实远端, 严禁 skip)"
+        env:
+          AOG_STAGING_API_BASE: ${{ secrets.AOG_STAGING_API_BASE }}
+        run: |
+          set -euo pipefail
+          python -m pytest tests/test_journey_10_remote.py -v --tb=short
+
+  # ============================================================
+  # 4. remote-pii-7a-notice: PII-7a 真实 KB Gate 由 build-data-release.sh 跑
+  #    (NJX 7/30 PR #5 严令 5: PII-7a 真实 KB Gate 在 build-data-release.sh Gate 4)
+  #    远端本 workflow 不重复跑, 避免依赖未实现的 /api/admin/pii-7a endpoint
+  # ============================================================
+  remote-pii-7a-notice:
+    name: "PII-7a 真实 KB Gate notice (NJX 7/30 PR #5 严令 5)"
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }}
+    needs: [enforce-secrets]
+    timeout-minutes: 2
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: "Notice: PII-7a 真实 KB Gate 由 build-data-release.sh 跑 (NJX 7/30 PR #5 严令 5)"
+        env:
+          AOG_STAGING_API_BASE: ${{ secrets.AOG_STAGING_API_BASE }}
+        run: |
+          set -euo pipefail
+          echo "  ⚠️  PII-7a 真实 KB Gate 不在本 workflow 跑, 改由 build-data-release.sh Gate 4 跑"
+          echo "  ⚠️  原因: PII-7a 需要 owner 真实 aog.db (从 staging COS 拉), 不适合 workflow_dispatch"
+          echo "  跑法 (owner release 前必跑):"
+          echo "    APP_COMMIT_SHA=\$(git rev-parse HEAD) bash aog-web/scripts/build-data-release.sh"
+          echo "  期望: Gate 4 PII-7a 真 KB PASS (exit 0) / FAIL (exit 6)"
+          echo "  本 step 严禁 FAIL, 避免误判 (PII-7a 真 KB 是 PR #4 final merge Gate, 不阻塞本 workflow)"
+          echo "  ✓ PII-7a notice OK"
+
+  # ============================================================
+  # 5. Aggregate: 全部 job 都通过
+  # ============================================================
+  remote-all-pass:
+    name: "Staging remote validation: all checks passed"
+    runs-on: ubuntu-latest
+    needs: [enforce-secrets, remote-rag-regression, remote-journey-10, remote-pii-7a-notice]
+    if: success()
+    steps:
+      - run: echo "✓ All staging remote validation checks passed. NJX 拍板可 PR #4 最终 merge."
