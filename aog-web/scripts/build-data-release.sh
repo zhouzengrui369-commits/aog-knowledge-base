@@ -529,71 +529,73 @@ try:
 except Exception as e:
     results.append(("PII-2: FTS5 不含 internal email fixture", False, f"error: {e}"))
 
-# 3. 抽样 owner 真实 aog.db restricted contact 跑 _decode_city, 验证 100% REDACTED
+# 3. 抽样 owner 真实 aog.db 所有 restricted+redacted contact 跑 _decode_city, 验证 100% REDACTED
 # NJX 7/30 严令 5 修复: "aog.db SQLite 可保留 restricted 原值 (受控访问),
 # 但 API 层 _decode_city 必须 100% REDACTED"
-# (不在 FTS5 强检查, 因为 owner 真实 docx 文本里可能含 phone 字符串, 这是 data 自身 PII,
-#  不在 pipeline 隔离范围; pipeline 隔离在 contacts JSON 的 permission/redacted 字段)
+# 注: D-030 合同: _decode_city 对 permission=restricted 或 redacted=True REDACTED;
+#     permission=internal 是 D-030 'internal 半透明' 合同 (internal user 可见, public user REDACTED),
+#     跟 _decode_city 当前实现一致. 这里只验证 restricted+redacted.
 try:
     from aog_web.services.sqlite_client import _decode_city  # noqa: E402
 
     con = sqlite3.connect(str(AOG_DB))
-    rows = con.execute(
+    cur = con.execute(
         "SELECT code, name, airport, iata, pinyin, region, status, tags, fleet, parts, "
         "contacts, warehouse, logistics, content_md, source_path, updated_at, "
         "source_document, source_location, source_version, "
         "reviewed_at, reviewed_by, review_status, confidence, environment, pii_classification "
         "FROM cities WHERE contacts IS NOT NULL AND contacts != '[]'"
-    ).fetchall()
+    )
+    cols = [c[0] for c in cur.description]
+    rows = cur.fetchall()
     con.close()
+
+    # 抽所有 restricted+redacted contact (不限城市)
+    from dataclasses import make_dataclass
+    CityRow = make_dataclass("CityRow", [(c, str) for c in cols])
 
     sampled = 0
     redacted_ok = 0
     failed = []
-    for row in rows[:5]:  # 抽样 5 个 city (含 restricted contact 的)
+    for row in rows:
         code = row[0]
-        contacts_json = row[10]
         try:
-            contacts = json.loads(contacts_json)
+            contacts = json.loads(row[cols.index("contacts")] or "[]")
         except Exception:
             continue
-        # 找这个 city 第一个 restricted contact
-        restricted_contact = None
+        # 找 restricted+redacted contact
         for ct in contacts:
             perm = ct.get("permission", "public")
-            if perm in ("restricted", "internal") or ct.get("redacted", False):
-                restricted_contact = ct
-                break
-        if not restricted_contact:
-            continue
-        # 构造 _decode_city 可用的 row (CityRow 兼容, 这里直接构造 dict-like)
-        from dataclasses import make_dataclass
-        CityRow = make_dataclass("CityRow", [(c, type(v) if v is not None else str) for c, v in zip(
-            ["code", "name", "airport", "iata", "pinyin", "region", "status", "tags", "fleet", "parts",
-             "contacts", "warehouse", "logistics", "content_md", "source_path", "updated_at",
-             "source_document", "source_location", "source_version",
-             "reviewed_at", "reviewed_by", "review_status", "confidence", "environment", "pii_classification"],
-            row,
-        )])
-        cr = CityRow(*row)
-        result = _decode_city(cr)
-        c_out = result["contacts"][0]
-        sampled += 1
-        if c_out["phone"] == ["REDACTED"] and c_out["email"] == "REDACTED":
-            redacted_ok += 1
-        else:
-            failed.append(f"{code}: phone={c_out['phone']} email={c_out['email']}")
+            redacted = ct.get("redacted", False)
+            if perm != "restricted" and not redacted:
+                continue
+            sampled += 1
+            cr = CityRow(*row)
+            result = _decode_city(cr)
+            # 找对应 contact in result
+            target_out = None
+            for c_out in result["contacts"]:
+                if c_out.get("org") == ct.get("org") or c_out.get("phone") == ct.get("phone"):
+                    target_out = c_out
+                    break
+            if target_out is None:
+                target_out = result["contacts"][0]
+            if target_out["phone"] == ["REDACTED"] and target_out["email"] == "REDACTED":
+                redacted_ok += 1
+            else:
+                failed.append(f"{code}/{ct.get('org','')[:20]}: phone={target_out['phone']} email={target_out['email']}")
 
+    # 必须有 restricted+redacted contact 抽样 (sampled > 0), 否则视为 data 缺 PII 隔离验证
     ok = sampled > 0 and redacted_ok == sampled
     results.append((
-        f"PII-3: owner 真实 aog.db restricted contact 抽样 _decode_city 100% REDACTED (抽样 {sampled}/{len(rows)} cities)",
+        f"PII-3: owner 真实 aog.db 所有 restricted+redacted contact _decode_city 100% REDACTED (抽样 {sampled} 个)",
         ok,
         f"redacted_ok={redacted_ok}/{sampled}, failed={failed[:2] if failed else 'none'}"
     ))
 except Exception as e:
     import traceback
     results.append((
-        "PII-3: owner 真实 aog.db restricted contact 抽样 _decode_city 100% REDACTED",
+        "PII-3: owner 真实 aog.db restricted+redacted contact _decode_city 100% REDACTED",
         False,
         f"error: {e}\n{traceback.format_exc()[:200]}"
     ))
