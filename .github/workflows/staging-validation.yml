@@ -320,77 +320,64 @@ jobs:
           # dry-run 模式 (无 ALLOW_STAGING_DEPLOY 必 fail, 但 frontend-build 不需要它, 这里仅 verify)
           echo "  ✓ deploy-frontend-staging.sh + frontend package.json 全 ready"
 
-  # ============================================================
-  # 5.5 data-release-contract: 跑 tests/test_build_data_release_contract.py
-  #     (NJX 7/30 PR #4 严令: 15 项 contract test 必须 GitHub success)
-  #     12 原有 (12/12) + 3 新增 (Fix 2/3/4+5) = 15 项.
-  #     严禁 skip 关键合同测试, fail = PR 阻断.
-  # ============================================================
+  # data-release-contract: 跑 tests/test_build_data_release_contract.py 15 项
+  # NJX 7/30 PR #4 严令: 12 原有 (12/12) + 3 新增 (Fix 2/3/4+5) = 15 项
+  # fail = PR 阻断, 严禁 skip 关键合同测试
   data-release-contract:
-    name: "Data release contract (NJX 7/30 PR #4 严令 12/12 + 3 新 = 15/15)"
+    name: "data-release-contract"
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
 
-      - name: Setup Python
+      - name: "Setup Python 3.11"
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
 
-      - name: Install pytest + python-docx (fixture 需)
+      - name: "Install pytest + python-docx"
         run: |
           set -euo pipefail
           python -m pip install --upgrade pip
-          pip install pytest pytest-asyncio
-          # python-docx 是 test_build_data_release_contract.py fixture 用的 (B-北京大兴.docx 等)
-          pip install python-docx
+          pip install pytest pytest-asyncio python-docx
 
-      - name: Verify test file + count 15 items
+      - name: "Verify test file + count 15 items"
         run: |
           set -euo pipefail
           if [ ! -f "tests/test_build_data_release_contract.py" ]; then
-            echo "  ✗ FAIL: tests/test_build_data_release_contract.py 不存在 (NJX 7/30 PR #4 严令)" >&2
+            echo "FAIL: test file missing" >&2
             exit 1
           fi
           test_count=$(grep -cE "^def test_[0-9]" tests/test_build_data_release_contract.py || true)
           if [ "$test_count" -lt 15 ]; then
-            echo "  ✗ FAIL: contract tests 应 ≥15 项 (12 原有 + 3 新), 实际 $test_count 项" >&2
-            echo "  NJX 7/30 PR #4 严令: Fix 2/3/4+5 各 1 新测试" >&2
+            echo "FAIL: contract tests should be at least 15, got $test_count" >&2
             exit 1
           fi
-          echo "  ✓ tests/test_build_data_release_contract.py 含 $test_count 项 contract test"
+          echo "OK: $test_count contract tests found"
 
-      - name: "Run 15 contract tests (NJX 7/30 PR #4 严令 12/12 + 3 新)"
-        # 严禁 skip 关键合同测试: --no-skip-on-git-clean-check 用 fixture 自管的 SKIP
-        # 严令 fail-on-skip: 如果 fixture 因为 git 不 clean skip, CI 应该视为 fail
-        # 但 git_clean_check 在 CI 跑前 PR 已 merge, working tree clean, 不会 skip
+      - name: "Run 15 contract tests"
         run: |
           set -euo pipefail
-          # 严禁加 -rs / -v 隐藏 skip, 加 --tb=long 显示完整 traceback
           python -m pytest tests/test_build_data_release_contract.py \
             -v --tb=long --no-header -ra 2>&1 | tee /tmp/data-release-contract.log
-          # 解析 12/12 校验 (12 原有 + 3 新 = 15/15)
           passed=$(grep -cE "PASSED" /tmp/data-release-contract.log || echo 0)
           failed=$(grep -cE "FAILED" /tmp/data-release-contract.log || echo 0)
           skipped=$(grep -cE "SKIPPED" /tmp/data-release-contract.log || echo 0)
           echo
-          echo "  === data-release-contract summary ==="
-          echo "  PASSED=$passed  FAILED=$failed  SKIPPED=$skipped"
+          echo "data-release-contract summary: PASSED=$passed  FAILED=$failed  SKIPPED=$skipped"
           if [ "$failed" -gt 0 ]; then
-            echo "  ✗ FAIL: $failed 项 contract test 失败" >&2
+            echo "FAIL: $failed contract tests failed" >&2
             exit 1
           fi
           if [ "$skipped" -gt 0 ]; then
-            echo "  ✗ FAIL: $skipped 项 contract test 被 SKIP (NJX 7/30 PR #4 严令: 严禁 skip 关键合同测试)" >&2
-            echo "  通常是 git_clean_check 失败 → working tree 不 clean, CI 不应发生" >&2
+            echo "FAIL: $skipped contract tests SKIPPED (NJX 7/30 PR #4 严令: 严禁 skip)" >&2
             exit 1
           fi
           if [ "$passed" -lt 15 ]; then
-            echo "  ✗ FAIL: 期望 ≥15 PASS, 实际 $passed PASS" >&2
+            echo "FAIL: expected at least 15 PASS, got $passed" >&2
             exit 1
           fi
-          echo "  ✓ data-release-contract: $passed/15 全过 (NJX 7/30 PR #4 严令 12/12 + 3 新 = 15/15 PASS)"
+          echo "OK: data-release-contract $passed/15 PASS"
 
   # ============================================================
   # 6. remote-validation: 真实远端验收 (NJX 7/30 PR #5 严令)
