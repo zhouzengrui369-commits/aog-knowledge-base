@@ -228,16 +228,18 @@ def test_01_no_backend_data_copy(git_clean_check, app_commit_sha):
     ]
     code_text = "\n".join(code_lines)
 
-    # 实际 cp / read 操作 (排除 echo 警告 — 用 negative lookbehind for echo / ⚠️ / 严禁)
+    # 实际 cp / read 操作 (排除 echo 警告 — 用 line-anchored 排除 echo 行)
+    # 思路: 真正的 cp 命令在行首 (或跟 shell operator), echo 警告的 cp 嵌在 echo 字符串里
+    # 用 ^(?!.*\becho\b) 排除 echo 行
     for forbidden_pattern in [
-        r"(?<!echo\s)\bcp\s+[^&|;]*backend/data/aog\.db",  # cp backend/data/aog.db (排除 echo "...")
-        r"(?<!echo\s)\bcp\s+-r\s+[^&|;]*backend/data/",  # cp -r backend/data/ (排除 echo "...")
+        r"^(?!.*\becho\b)(?!.*echo\s+\")[^\n]*\bcp\s+[^&|;\n]*backend/data/aog\.db",  # 行首 cp (排除 echo 行)
+        r"^(?!.*\becho\b)(?!.*echo\s+\")[^\n]*\bcp\s+-r\s+[^&|;\n]*backend/data/",  # 行首 cp -r
         r"\bopen\([^)]*backend/data/aog\.db",  # open(backend/data/aog.db)
         r"\bsqlite3\.connect\([^)]*backend/data/aog\.db",  # sqlite3.connect(...)
     ]:
-        hits = _re_test01.findall(forbidden_pattern, code_text)
+        hits = _re_test01.findall(forbidden_pattern, code_text, _re_test01.MULTILINE)
         assert not hits, (
-            f"build-data-release.sh 非注释行有 cp/read backend/data/aog.db: 匹配 {forbidden_pattern!r}\n"
+            f"build-data-release.sh 非注释非 echo 行有 cp/read backend/data/aog.db: 匹配 {forbidden_pattern!r}\n"
             f"hits: {hits[:3]}"
         )
 
