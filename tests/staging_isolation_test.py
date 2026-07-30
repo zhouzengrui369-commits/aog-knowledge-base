@@ -887,7 +887,12 @@ def test_24_HTTP_ROUTE_SCRIPT_READY():
 
 
 def test_25_FRONTEND_STAGING_SCRIPT_READY():
-    """25. FRONTEND_STAGING_SCRIPT_READY: build-data-release.sh + test_journey_10_remote.py 完整"""
+    """25. FRONTEND_STAGING_SCRIPT_READY: build-data-release.sh + test_journey_10_remote.py 完整
+    (NJX 7/30 PR #4 严令 7.1/7.2/7.3 更新):
+      - Gate 3: 旧 pii_redaction informational → 新 pii_gate 6 项真实验证
+      - staging-validation.yml remote-validation: 缺 URL fail → 缺 URL skip
+      - staging-remote-validation.yml 新增 workflow_dispatch 真实远端
+    """
     # 1. build-data-release.sh 存在 + 可执行 + 3 gates
     bdr = REPO_ROOT / "aog-web" / "scripts" / "build-data-release.sh"
     assert bdr.exists(), "build-data-release.sh 必须存在 (NJX 7/30 修 7)"
@@ -899,8 +904,9 @@ def test_25_FRONTEND_STAGING_SCRIPT_READY():
     assert "Gate 2" in bdr_content and "rag_8_query" in bdr_content, (
         "build-data-release.sh 必须含 Gate 2: 8 RAG query 验证"
     )
-    assert "Gate 3" in bdr_content and "pii_redaction" in bdr_content, (
-        "build-data-release.sh 必须含 Gate 3: PII redaction 验证"
+    # NJX 7/30 PR #4 严令 5 修复: Gate 3 改用 pii_gate (不是 pii_redaction informational)
+    assert "Gate 3" in bdr_content and "pii_gate" in bdr_content and "PII Gate" in bdr_content, (
+        "build-data-release.sh 必须含 Gate 3: pii_gate 6 项真实验证 (NJX 7/30 严令 5 修复, 禁 informational)"
     )
     assert "release-manifest.json" in bdr_content, "build-data-release.sh 必须输出 release-manifest.json"
     # 2. test_journey_10_remote.py 存在 + 缺 URL skip
@@ -915,8 +921,18 @@ def test_25_FRONTEND_STAGING_SCRIPT_READY():
     assert "frontend-build:" in sw_content, "staging-validation.yml 必须含 frontend-build job"
     assert "remote-validation:" in sw_content, "staging-validation.yml 必须含 remote-validation job"
     assert "AOG_STAGING_API_BASE" in sw_content, "staging-validation.yml 必须设 AOG_STAGING_API_BASE env"
-    assert "缺 URL FAIL" in sw_content or "FAIL_REQUIRED" in sw_content, (
-        "staging-validation.yml remote-validation 必须强制 AOG_STAGING_API_BASE 存在 (NJX 7/30 严令)"
+    # NJX 7/30 PR #4 严令 7.1/7.2: 缺 URL 应 skip, 不再 FAIL
+    assert "缺 URL skip" in sw_content or "缺 URL" in sw_content, (
+        "staging-validation.yml remote-validation 缺 URL 应 skip (NJX 7/30 严令 7.1/7.2, 禁缺 URL fail)"
+    )
+    # 4. staging-remote-validation.yml 新增 (NJX 7/30 严令 7.3)
+    remote_wf = REPO_ROOT / ".github" / "workflows" / "staging-remote-validation.yml"
+    assert remote_wf.exists(), "staging-remote-validation.yml 必须存在 (NJX 7/30 严令 7.3 独立 workflow_dispatch)"
+    remote_wf_content = remote_wf.read_text(encoding="utf-8")
+    assert "workflow_dispatch" in remote_wf_content, "staging-remote-validation.yml trigger 必须是 workflow_dispatch"
+    assert "test_rag_8query_remote" in remote_wf_content, "staging-remote-validation.yml 必须跑 test_rag_8query_remote"
+    assert "test_journey_10_remote" in remote_wf_content, "staging-remote-validation.yml 必须跑 test_journey_10_remote"
+    assert "AOG_STAGING_API_BASE" in remote_wf_content, "staging-remote-validation.yml 缺 URL 必须 FAIL"
     )
     print(f"  ✓ FRONTEND_STAGING_SCRIPT_READY: build-data-release.sh 3 gates + test_journey_10_remote.py + remote-validation job 强制 URL")
 
