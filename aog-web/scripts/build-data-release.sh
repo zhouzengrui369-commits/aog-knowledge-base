@@ -569,21 +569,40 @@ try:
             redacted = ct.get("redacted", False)
             if perm != "restricted" and not redacted:
                 continue
+            # 原 contact phone/email 字段
+            orig_phone = ct.get("phone") or []
+            orig_email = ct.get("email", "")
             sampled += 1
             cr = CityRow(*row)
             result = _decode_city(cr)
-            # 找对应 contact in result
+            # 找对应 contact in result (按 org 或 phone 匹配)
             target_out = None
             for c_out in result["contacts"]:
-                if c_out.get("org") == ct.get("org") or c_out.get("phone") == ct.get("phone"):
+                if c_out.get("org") == ct.get("org") or c_out.get("phone") == orig_phone:
                     target_out = c_out
                     break
             if target_out is None:
                 target_out = result["contacts"][0]
-            if target_out.get("phone") == ["REDACTED"] and target_out.get("email") == "REDACTED":
+
+            # 判定: D-030 合同
+            #   - 原 contact 有 phone → _decode_city 后应是 ["REDACTED"]
+            #   - 原 contact 无 phone → _decode_city 后应是 []
+            #   - 原 contact 有 email → _decode_city 后应是 "REDACTED"
+            #   - 原 contact 无 email → _decode_city 后应是 "" (无变化)
+            expected_phone = ["REDACTED"] if orig_phone else []
+            expected_email = "REDACTED" if orig_email else ""
+            actual_phone = target_out.get("phone", [])
+            actual_email = target_out.get("email", "")
+
+            if actual_phone == expected_phone and actual_email == expected_email:
                 redacted_ok += 1
             else:
-                failed.append(f"{code}/{ct.get('org','')[:20]}: phone={target_out.get('phone')} email={target_out.get('email', '<no email>')}")
+                failed.append(
+                    f"{code}/{ct.get('org','')[:20]}: "
+                    f"orig_phone={orig_phone} orig_email={orig_email!r} → "
+                    f"actual_phone={actual_phone} actual_email={actual_email!r} "
+                    f"(expected phone={expected_phone} email={expected_email!r})"
+                )
 
     # 必须有 restricted+redacted contact 抽样 (sampled > 0), 否则视为 data 缺 PII 隔离验证
     ok = sampled > 0 and redacted_ok == sampled
