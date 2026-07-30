@@ -445,8 +445,8 @@ RAG_PASS_COUNT=$(grep -cE "PASSED" "$RAG_LOG" 2>/dev/null) || RAG_PASS_COUNT=0
 RAG_FAIL_COUNT=$(grep -cE "FAILED" "$RAG_LOG" 2>/dev/null) || RAG_FAIL_COUNT=0
 RAG_PASS_COUNT="${RAG_PASS_COUNT:-0}"
 RAG_FAIL_COUNT="${RAG_FAIL_COUNT:-0}"
-# summary 标记 "8/8 PASS"
-RAG_SUMMARY=$(grep -E "^[0-9]+/[0-9]+ PASS" "$RAG_LOG" | tail -1 || echo "")
+# summary 标记 "8/8 PASS" (test_rag_8query_summary 输出 "=== 8/8 PASS, 0 FAIL ===")
+RAG_SUMMARY=$(grep -E "=== 8/8 PASS" "$RAG_LOG" | tail -1 || echo "")
 
 echo "  RAG_EXIT=$RAG_EXIT  PASS=$RAG_PASS_COUNT  FAIL=$RAG_FAIL_COUNT  summary='$RAG_SUMMARY'"
 tail -8 "$RAG_LOG" | sed 's/^/    /'
