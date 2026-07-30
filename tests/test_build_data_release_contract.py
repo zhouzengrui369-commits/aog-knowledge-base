@@ -211,15 +211,29 @@ def test_01_no_backend_data_copy(git_clean_check, app_commit_sha, tmp_path):
     """1. 不允许复制 backend/data/aog.db
 
     验证: 跑通完整 release 后, 临时删除 backend/data/aog.db 也能跑通 (脚本不依赖它)
-    """
-    backend_aog_db = REPO_ROOT / "aog-web" / "backend" / "data" / "aog.db"
-    if not backend_aog_db.exists():
-        pytest.skip("backend/data/aog.db 不存在, 跳过此测试 (CI 默认无此文件)")
 
-    # 备份 + 临时 rename
-    backup = backend_aog_db.with_suffix(".db.test01_backup")
-    shutil.move(str(backend_aog_db), str(backup))
+    NJX 7/30 PR #4 严令: 不允许 skip 关键合同测试.
+    修法: 如果 backend/data/aog.db 不存在, 创建 dummy aog.db (空 SQLite + 1 city row)
+    让测试自包含, CI 必跑. 然后 cleanup restore.
+    """
+    import sqlite3 as _sqlite3
+    backend_aog_db = REPO_ROOT / "aog-web" / "backend" / "data" / "aog.db"
+    backend_aog_db.parent.mkdir(parents=True, exist_ok=True)
+    was_created = False
+    if not backend_aog_db.exists():
+        # 创建 dummy aog.db (1 city row + 空 schema, 跟 build_index 兼容)
+        con = _sqlite3.connect(str(backend_aog_db))
+        # minimal schema (跟 owner aog.db 兼容, build_index scan_cities 用)
+        con.execute("CREATE TABLE IF NOT EXISTS cities (code TEXT PRIMARY KEY, name TEXT, content_md TEXT, contacts TEXT DEFAULT '[]', source_path TEXT DEFAULT 'fixture', updated_at TEXT DEFAULT '')")
+        con.execute("INSERT OR IGNORE INTO cities (code, name, content_md) VALUES ('T-FIXTURE', 'Fixture', 'fixture content for test_01')")
+        con.commit()
+        con.close()
+        was_created = True
+    backup = None
     try:
+        # 备份 + 临时 rename
+        backup = backend_aog_db.with_suffix(".db.test01_backup")
+        shutil.move(str(backend_aog_db), str(backup))
         kb_root = tmp_path / "fixture_kb"
         _build_minimal_kb(kb_root)
         r = _run_build_data_release(tmp_path, app_commit_sha=app_commit_sha, kb_root=kb_root)
@@ -233,7 +247,10 @@ def test_01_no_backend_data_copy(git_clean_check, app_commit_sha, tmp_path):
             f"build-data-release.sh 不应做 mtime freshness check: {combined[:500]}"
         )
     finally:
-        shutil.move(str(backup), str(backend_aog_db))
+        if backup and backup.exists():
+            shutil.move(str(backup), str(backend_aog_db))
+        elif was_created and backend_aog_db.exists():
+            backend_aog_db.unlink()
 
 
 def test_02_no_mtime_freshness_check(git_clean_check, app_commit_sha):

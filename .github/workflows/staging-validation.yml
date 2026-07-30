@@ -378,9 +378,11 @@ jobs:
           set -euo pipefail
           python -m pytest tests/test_build_data_release_contract.py \
             -v --tb=long --no-header -ra 2>&1 | tee /tmp/data-release-contract.log
-          passed=$(grep -cE "PASSED" /tmp/data-release-contract.log || echo 0)
-          failed=$(grep -cE "FAILED" /tmp/data-release-contract.log || echo 0)
-          skipped=$(grep -cE "SKIPPED" /tmp/data-release-contract.log || echo 0)
+          # 关键 (NJX 7/30 PR #4 fix): 只 grep test result 行 (tests/...py::test_xx STATUS [  x%]),
+          # 严禁 grep 整行 (会匹配 "SKIPPED [1] tests/..." 摘要行, false positive)
+          passed=$(grep -cE "tests/.*PASSED \[" /tmp/data-release-contract.log || echo 0)
+          failed=$(grep -cE "tests/.*FAILED \[" /tmp/data-release-contract.log || echo 0)
+          skipped=$(grep -cE "tests/.*SKIPPED \[" /tmp/data-release-contract.log || echo 0)
           echo
           echo "data-release-contract summary: PASSED=$passed  FAILED=$failed  SKIPPED=$skipped"
           if [ "$failed" -gt 0 ]; then
@@ -388,7 +390,7 @@ jobs:
             exit 1
           fi
           if [ "$skipped" -gt 0 ]; then
-            echo "FAIL: $skipped contract tests SKIPPED (NJX 7/30 PR #4 严令: 严禁 skip)" >&2
+            echo "FAIL: $skipped contract tests SKIPPED (NJX 7/30 PR #4 严令: 严禁 skip 关键合同测试)" >&2
             exit 1
           fi
           if [ "$passed" -lt 15 ]; then
