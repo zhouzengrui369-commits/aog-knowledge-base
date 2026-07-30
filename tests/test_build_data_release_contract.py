@@ -238,14 +238,32 @@ def test_01_no_backend_data_copy(git_clean_check, app_commit_sha, tmp_path):
         _build_minimal_kb(kb_root)
         r = _run_build_data_release(tmp_path, app_commit_sha=app_commit_sha, kb_root=kb_root)
         # 不验证 exit 0 (sentence-transformers 首次可能慢/失败),
-        # 关键是: 脚本不报 "cp backend/data/aog.db" 错误
+        # 关键是: 脚本不真正 cp / read backend/data/aog.db
+        # 严禁用 substring 包含判断 (会误匹配警告文案 "严禁 cp / read backend/data/aog.db ...")
+        # 修法 (NJX 7/30 PR #4): 用更精确的 regex, 只匹配真正操作
+        import re as _re_test01
         combined = r.stdout + r.stderr
-        assert "backend/data/aog.db" not in combined, (
-            f"build-data-release.sh 提到 backend/data/aog.db (应不读): {combined[:500]}"
-        )
-        assert "source aog.db" not in combined.lower() or "mtime" not in combined.lower(), (
-            f"build-data-release.sh 不应做 mtime freshness check: {combined[:500]}"
-        )
+        # 实际 cp / read 操作 (排除 "严禁" / "warning" 警告)
+        for forbidden_pattern in [
+            r"\bcp\s+[^|]*backend/data/aog\.db",  # cp backend/data/aog.db ...
+            r"\bcp\s+[^|]*backend/data/",  # cp -r backend/data/ ...
+            r"open\([^)]*backend/data/aog\.db",  # open(backend/data/aog.db) / read
+            r"sqlite3\.connect\([^)]*backend/data/aog\.db",  # sqlite3.connect(backend/data/aog.db)
+        ]:
+            hits = _re_test01.findall(forbidden_pattern, combined)
+            assert not hits, (
+                f"build-data-release.sh 实际 cp/read backend/data/aog.db: 匹配 {forbidden_pattern!r} → {hits[:2]}\n"
+                f"output[:500]: {combined[:500]}"
+            )
+        # 严禁 mtime freshness (排除 "严禁" 警告文案)
+        for forbidden_mtime in [
+            r"\bstat\s+-f\s+%m\s+",  # stat -f %m (macOS mtime)
+            r"\bstat\s+-c\s+%Y\s+",  # stat -c %Y (Linux mtime)
+        ]:
+            hits = _re_test01.findall(forbidden_mtime, combined)
+            assert not hits, (
+                f"build-data-release.sh 实际读 mtime: 匹配 {forbidden_mtime!r} → {hits[:2]}"
+            )
     finally:
         if backup and backup.exists():
             shutil.move(str(backup), str(backend_aog_db))
