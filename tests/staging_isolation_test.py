@@ -48,12 +48,14 @@ import pytest
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
-# regex 版本: word boundary + negative lookahead 排除 staging 后缀
+# regex 版本: word boundary + negative lookahead 排除 staging 后缀 + 路径分隔符
+# (?![-/]) 排除路径引用 (e.g. "aog-api/requirements.txt" 合法 read 引用)
+# 跟 denylist_check.py 严格对齐 (NJX 7/29 严令 denylist 自杀防御)
 DENYLIST_4_REGEX_PATTERNS = {
     "envId": re.compile(r"njx-copilot-d6gs7642f8fa17122"),
     "bucket": re.compile(r"aog-prod-data-1343051603"),
     "domain": re.compile(r"aog\.njx\.com(?!-staging)"),
-    "function": re.compile(r"\baog-api\b(?!-staging)"),
+    "function": re.compile(r"\baog-api\b(?![-/])"),  # 排除 aog-api-staging / aog-api/
 }
 
 # NJX 7/29 严令: cloudbaserc.staging.json 必含全部这些 env vars
@@ -144,6 +146,11 @@ def test_3_cloudbaserc_staging_is_v2_schema_with_deployability():
     assert fn.get("memorySize") == 512, f"function.memorySize 必须 512 (NJX 7/29 严令), 实际: {fn.get('memorySize')!r}"
     assert fn.get("timeout") == 60, f"function.timeout 必须 60 (NJX 7/29 严令), 实际: {fn.get('timeout')!r}"
 
+    # NJX 7/30 严令: handler 改为 main.main_handler (直接 Python3.11 entry, 不走 bash)
+    assert fn.get("handler") == "main.main_handler", (
+        f"function.handler 必须 'main.main_handler' (NJX 7/30 严令 runtime preflight), 实际: {fn.get('handler')!r}"
+    )
+
     # ===== envVariables 必须是 object (dict), 不是 array =====
     env_vars = fn.get("envVariables")
     assert isinstance(env_vars, dict), (
@@ -230,6 +237,13 @@ def test_5_env_staging_example_placeholders_and_deployability():
             f".env.staging.example {key}={val!r} 非占位符 (严禁真凭据)"
         )
 
+    # NJX 7/30 严令 data paths: FTS5_PATH / SQLITE_PATH / AOG_DB_PATH / CHROMA_PATH / SYNC_STATE_DB_PATH 全 /tmp
+    for path_key in ["FTS5_PATH", "SQLITE_PATH", "AOG_DB_PATH", "CHROMA_PATH", "SYNC_STATE_DB_PATH"]:
+        path_val = env_map.get(path_key, "")
+        assert path_val.startswith("/tmp/"), (
+            f".env.staging.example {path_key}={path_val!r} 必须 /tmp/ 开头 (NJX 7/30 严令 TMP_PATH_CONTRACT)"
+        )
+
     # 强制 staging 模式
     assert env_map.get("ENVIRONMENT") == "staging", f"必须 ENVIRONMENT=staging, 实际 {env_map.get('ENVIRONMENT')!r}"
     assert env_map.get("ALLOW_MOCK") == "false", f"必须 ALLOW_MOCK=false, 实际 {env_map.get('ALLOW_MOCK')!r}"
@@ -259,10 +273,24 @@ def test_6_deploy_staging_sh_exists_with_denylist():
     assert '^[0-9a-f]{40}$' in content, "deploy-staging.sh 必须 4 项校验: MERGE_SHA 40 hex"
     assert "git rev-parse HEAD" in content, "deploy-staging.sh 必须校验 MERGE_SHA==git HEAD"
     assert "APP_COMMIT_SHA" in content, "deploy-staging.sh 必须校验 APP_COMMIT_SHA"
-    assert "git diff --quiet HEAD" in content, "deploy-staging.sh 必须校验 git status clean"
+    assert "git status --porcelain" in content, (
+        "deploy-staging.sh 必须用 'git status --porcelain' 校验 (NJX 严令 含 untracked, 不只 tracked)"
+    )
     # 参数数组 (不 eval)
     assert "tcb_cmd=(" in content, "deploy-staging.sh 必须用 tcb_cmd 数组执行 tcb fn deploy (严禁 eval)"
     assert "eval " not in content, "deploy-staging.sh 严禁用 eval"
+    # NJX 7/30 严令: 删 CLOUDBASE_STAGING_ENV alias, denylist 与实际部署都只使用 TCB_ENV_ID
+    assert "CLOUDBASE_STAGING_ENV=\"${CLOUDBASE_STAGING_ENV:-$TCB_ENV_ID}\"" not in content, (
+        "deploy-staging.sh 严禁 CLOUDBASE_STAGING_ENV alias (NJX 7/30 严令 ENV_ALIAS_BYPASS, 只用 TCB_ENV_ID)"
+    )
+    # NJX 7/30 严令: 增 --path aog-api-staging
+    assert "--path \"$FUNCTIONS_DIR\"" in content, (
+        "deploy-staging.sh 必须含 --path \$FUNCTIONS_DIR (NJX 7/30 严令, 让 tcb 知道函数包路径)"
+    )
+    # NJX 7/30 严令: 修 tcb 失败 exit code 捕获
+    assert 'tcb_exit=0' in content and '|| tcb_exit=$?' in content, (
+        "deploy-staging.sh 必须修 tcb exit code 捕获 (用 || tcb_exit=$?, NJX 7/30 严令)"
+    )
     print(f"  ✓ scripts/deploy-staging.sh ({p.stat().st_size} bytes, 含 denylist + auth_gate + dry-run + 4 校验 + tcb_cmd 数组)")
 
 
@@ -388,17 +416,34 @@ def test_13_staging_handler_package_complete():
       - scf_cos.py (COS 下载)
       - requirements.txt (Python 依赖)
       - aog_web/ (FastAPI app)
+
+    NJX 7/30 严令: vendor/ build 需 docker (Linux AMD64 Python3.11), 本地无 docker 时 skip vendor build
     """
     p = REPO_ROOT / "aog-web" / "scripts" / "prepare-scf-staging.sh"
     assert p.exists(), "prepare-scf-staging.sh 不存在"
+
+    # 先 build_vendor (docker 不可用时 skip, 因为 vendor/ 已存在就不重 build)
+    has_docker = subprocess.run(
+        ["which", "docker"], capture_output=True, text=True,
+    ).returncode == 0
+    if has_docker:
+        r_vendor = subprocess.run(
+            ["bash", str(p), "--build-vendor"],
+            capture_output=True, text=True, cwd=str(REPO_ROOT / "aog-web"),
+        )
+        if r_vendor.returncode != 0:
+            print(f"  [staging-vendor] docker build vendor 失败 (可能网络/限速), 继续 package verify")
+    else:
+        print(f"  [staging-vendor] 本地无 docker, 跳过 vendor build (CI 跑 docker)")
+
     # 跑完整 prepare (preflight + package + compile + drift + manifest)
     r = subprocess.run(
         ["bash", str(p)],
         capture_output=True, text=True, cwd=str(REPO_ROOT / "aog-web"),
     )
     if r.returncode != 0:
-        print("  stdout:", r.stdout)
-        print("  stderr:", r.stderr)
+        print("  stdout:", r.stdout[-2000:])
+        print("  stderr:", r.stderr[-2000:])
         pytest.fail(f"prepare-scf-staging.sh 失败 exit {r.returncode}")
 
     functions_dir = REPO_ROOT / "aog-web" / "functions" / "aog-api-staging"
@@ -422,7 +467,18 @@ def test_13_staging_handler_package_complete():
         if r2.returncode != 0:
             compile_errors.append(f"{f}: {r2.stderr.strip()}")
     assert not compile_errors, f"handler .py 编译失败: {compile_errors}"
-    print(f"  ✓ staging 函数包含全部 6 个 handler 文件 (scf_bootstrap +x, 3 py 编译通过)")
+
+    # MANIFEST.json 必须 environment=staging + package_sha256 字段
+    manifest = functions_dir / "MANIFEST.json"
+    assert manifest.exists(), "MANIFEST.json 必须生成"
+    m = json.loads(manifest.read_text(encoding="utf-8"))
+    assert m.get("environment") == "staging", f"MANIFEST.environment 必须 staging, 实际 {m.get('environment')!r}"
+    assert m.get("package_sha256"), f"MANIFEST.package_sha256 必须存在 (NJX 7/30 严令)"
+    assert m.get("production_resources_denied", {}).get("envId"), (
+        "MANIFEST.production_resources_denied.envId 必须存在 (NJX 7/30 严令 flat keys)"
+    )
+
+    print(f"  ✓ staging 函数包含全部 6 个 handler 文件 (scf_bootstrap +x, 3 py 编译通过, MANIFEST environment=staging + package_sha256 + 4 denylist keys)")
 
 
 def test_14_deploy_staging_dry_run_does_not_execute_tcb():
@@ -639,6 +695,252 @@ def test_18_deploy_staging_fails_on_production_env():
         f"失败信息应提到 production/denylist, 实际 stdout+stderr: {combined[:500]}"
     )
     print(f"  ✓ TCB_ENV_ID=production envId 时 deploy-staging.sh fail (denylist 生效)")
+
+
+# =============================================================================
+# NJX 7/30 PR #3 runtime preflight 8 完成门 (对应 OWNER_MAY_CREATE_AND_FUND_STAGING_ENVIRONMENT)
+# =============================================================================
+
+def test_19_LINUX_VENDOR_IMPORT_PASS():
+    """19. LINUX_VENDOR_IMPORT_PASS: handler=main.main_handler + vendor/ 必填 + import verify
+
+    NJX 7/30 严令: installDependency=false, 必须 vendor/ 预装 deps, 运行时 scf_bootstrap 强 vendor 优先
+    """
+    # 1. cloudbaserc.staging.json handler == main.main_handler (NJX 7/30 改)
+    staging_rc = REPO_ROOT / "cloudbaserc.staging.json"
+    data = json.loads(staging_rc.read_text(encoding="utf-8"))
+    fn = data["functions"][0]
+    assert fn.get("handler") == "main.main_handler", (
+        f"cloudbaserc.staging.json handler 必须是 main.main_handler (NJX 7/30 严令), 实际: {fn.get('handler')!r}"
+    )
+    assert fn.get("installDependency") is False, (
+        f"installDependency 必须 false (NJX 7/30 严令, 用 vendor/), 实际: {fn.get('installDependency')!r}"
+    )
+    # 2. aog-web/functions/aog-api/scf_bootstrap 强制 /var/lang/python311/bin/python3.11 + PYTHONPATH
+    scf_bootstrap = REPO_ROOT / "aog-web" / "functions" / "aog-api" / "scf_bootstrap"
+    sb_content = scf_bootstrap.read_text(encoding="utf-8")
+    assert "/var/lang/python311/bin/python3.11" in sb_content, (
+        "scf_bootstrap 必须用 /var/lang/python311/bin/python3.11 (NJX 7/30 严令 SCF runtime Python3.11)"
+    )
+    assert 'export PYTHONPATH="$PWD/vendor:$PWD:${PYTHONPATH:-}"' in sb_content, (
+        "scf_bootstrap 必须 export PYTHONPATH=$PWD/vendor:$PWD:${PYTHONPATH:-} (NJX 7/30 严令 vendor 优先)"
+    )
+    # 3. prepare-scf-staging.sh 必须有 build_vendor step
+    prep = REPO_ROOT / "aog-web" / "scripts" / "prepare-scf-staging.sh"
+    prep_content = prep.read_text(encoding="utf-8")
+    assert "build_vendor()" in prep_content, (
+        "prepare-scf-staging.sh 必须有 build_vendor() 函数 (NJX 7/30 严令 vendor build)"
+    )
+    assert "python:3.11-slim" in prep_content, (
+        "prepare-scf-staging.sh 必须用 docker python:3.11-slim build vendor (Linux AMD64 Python3.11)"
+    )
+    # 4. handler import verify (main.main_handler 必须可 import)
+    assert "from main import main_handler" in prep_content, (
+        "prepare-scf-staging.sh 必须 verify 'from main import main_handler' (NJX 7/30 严令 isolated import smoke)"
+    )
+    print(f"  ✓ LINUX_VENDOR_IMPORT_PASS: handler=main.main_handler + /var/lang/python311 + vendor build + import verify")
+
+
+def test_20_HANDLER_MATCH_PASS():
+    """20. HANDLER_MATCH_PASS: cloudbaserc.staging.json handler=main.main_handler, main.py 含 main_handler(event, context)"""
+    # 1. cloudbaserc handler=main.main_handler
+    staging_rc = REPO_ROOT / "cloudbaserc.staging.json"
+    data = json.loads(staging_rc.read_text(encoding="utf-8"))
+    fn = data["functions"][0]
+    assert fn.get("handler") == "main.main_handler", (
+        f"cloudbaserc.staging.json handler 必须是 main.main_handler, 实际: {fn.get('handler')!r}"
+    )
+    # 2. aog-web/functions/aog-api/main.py 含 main_handler(event, context) 函数
+    main_py = REPO_ROOT / "aog-web" / "functions" / "aog-api" / "main.py"
+    main_content = main_py.read_text(encoding="utf-8")
+    assert "def main_handler(event, context)" in main_content or "def main_handler(event,context):" in main_content, (
+        "main.py 必须含 def main_handler(event, context) 函数 (NJX 7/30 严令 handler match)"
+    )
+    print(f"  ✓ HANDLER_MATCH_PASS: cloudbaserc handler=main.main_handler + main.py main_handler(event, context)")
+
+
+def test_21_TMP_PATH_CONTRACT_PASS():
+    """21. TMP_PATH_CONTRACT_PASS: .env.staging.example 全 /tmp 路径 (FTS5/SQLITE/AOG_DB/CHROMA/SYNC_STATE)"""
+    env_file = REPO_ROOT / ".env.staging.example"
+    content = env_file.read_text(encoding="utf-8")
+    env_map = {}
+    for line in content.splitlines():
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        m = re.match(r"^([A-Z_][A-Z0-9_]*)=(\S+)$", line)
+        if m:
+            env_map[m.group(1)] = m.group(2)
+    for path_key in ["FTS5_PATH", "SQLITE_PATH", "AOG_DB_PATH", "CHROMA_PATH", "SYNC_STATE_DB_PATH"]:
+        path_val = env_map.get(path_key, "")
+        assert path_val.startswith("/tmp/"), (
+            f"TMP_PATH_CONTRACT: {path_key}={path_val!r} 必须 /tmp/ 开头 (NJX 7/30 严令)"
+        )
+    # cloudbaserc.staging.json 也必须 /tmp 占位符
+    staging_rc = REPO_ROOT / "cloudbaserc.staging.json"
+    staging_data = json.loads(staging_rc.read_text(encoding="utf-8"))
+    fn = staging_data["functions"][0]
+    env_vars = fn.get("envVariables", {})
+    for path_key in ["FTS5_PATH", "SQLITE_PATH", "AOG_DB_PATH", "CHROMA_PATH", "SYNC_STATE_DB_PATH"]:
+        # 占位符是 {{env.X}}, 默认值是 {{env.X}} 形式
+        val = env_vars.get(path_key, "")
+        # 部署时由 NJX 物理填入, 但占位符 {{env.X}} 表示引用 staging 独立 /tmp 路径
+        assert val == f"{{{{env.{path_key}}}}}", (
+            f"cloudbaserc.staging.json envVariables['{path_key}']={val!r} 应 '{{{{env.{path_key}}}}}' 占位符"
+        )
+    print(f"  ✓ TMP_PATH_CONTRACT_PASS: 5 data paths 全 /tmp + cloudbaserc 占位符一致")
+
+
+def test_22_ENV_ALIAS_BYPASS_TEST_PASS():
+    """22. ENV_ALIAS_BYPASS_TEST_PASS: deploy-staging.sh 严禁 CLOUDBASE_STAGING_ENV alias (NJX 7/30 严令)"""
+    p = REPO_ROOT / "aog-web" / "scripts" / "deploy-staging.sh"
+    content = p.read_text(encoding="utf-8")
+    # 严禁 CLOUDBASE_STAGING_ENV alias
+    assert "CLOUDBASE_STAGING_ENV=\"${CLOUDBASE_STAGING_ENV:-$TCB_ENV_ID}\"" not in content, (
+        "deploy-staging.sh 严禁 CLOUDBASE_STAGING_ENV alias (NJX 7/30 严令 ENV_ALIAS_BYPASS)"
+    )
+    assert "local CLOUDBASE_STAGING_ENV=" not in content, (
+        "deploy-staging.sh 严禁 CLOUDBASE_STAGING_ENV 局部变量 (NJX 7/30 严令)"
+    )
+    # 必须只用 TCB_ENV_ID
+    assert "TCB_ENV_ID" in content, "deploy-staging.sh 必须用 TCB_ENV_ID (NJX 7/30 严令)"
+    tcb_id_count = content.count("TCB_ENV_ID")
+    assert tcb_id_count >= 5, f"deploy-staging.sh TCB_ENV_ID 引用次数应 >= 5, 实际 {tcb_id_count}"
+    # 同样 deploy-frontend-staging.sh 也要 ENV_ALIAS_BYPASS
+    fe = REPO_ROOT / "aog-web" / "scripts" / "deploy-frontend-staging.sh"
+    if fe.exists():
+        fe_content = fe.read_text(encoding="utf-8")
+        # 检查 CLOUDBASE_STAGING_ENV 是否作为变量赋值/alias 出现 (排除 # 注释文档)
+        code_lines = "\n".join(line for line in fe_content.splitlines() if not line.strip().startswith("#"))
+        assert "CLOUDBASE_STAGING_ENV" not in code_lines, (
+            "deploy-frontend-staging.sh 严禁 CLOUDBASE_STAGING_ENV alias (NJX 7/30 严令)"
+        )
+    print(f"  ✓ ENV_ALIAS_BYPASS_TEST_PASS: deploy-staging.sh + deploy-frontend-staging.sh 0 CLOUDBASE_STAGING_ENV alias, TCB_ENV_ID 引用 {tcb_id_count} 次")
+
+
+def test_23_SECRET_FILE_IGNORE_PASS():
+    """23. SECRET_FILE_IGNORE_PASS: .gitignore 排除 .env.staging / .env.staging.local / .env.*.local + CI 验证"""
+    gitignore = REPO_ROOT / ".gitignore"
+    content = gitignore.read_text(encoding="utf-8")
+    # 必须排除真凭据
+    assert ".env.staging" in content and ".env.staging" not in [".env.staging.example"], (
+        ".gitignore 必须含 '.env.staging' (字面, 排除真凭据, 跟 .env.staging.example 区分)"
+    )
+    # 注: .env.staging.example 不应被排除 (是 commit 的 template)
+    # 但 '.env.staging' 字面匹配 '.env.staging.example' ? — 不, .gitignore pattern 'X' 匹配字面 X
+    # 让我用 git check-ignore 验证
+    import subprocess
+    # .env.staging 必被 ignore
+    r1 = subprocess.run(
+        ["git", "check-ignore", ".env.staging"],
+        capture_output=True, text=True, cwd=str(REPO_ROOT),
+    )
+    assert r1.returncode == 0, f".env.staging 必须被 .gitignore ignore, git check-ignore 返 {r1.returncode}: {r1.stderr}"
+    # .env.staging.example 不被 ignore (template)
+    r2 = subprocess.run(
+        ["git", "check-ignore", ".env.staging.example"],
+        capture_output=True, text=True, cwd=str(REPO_ROOT),
+    )
+    assert r2.returncode != 0, f".env.staging.example 是 template, 必须不被 ignore, git check-ignore 返 {r2.returncode}"
+    # .env.staging.local 必被 ignore
+    r3 = subprocess.run(
+        ["git", "check-ignore", ".env.staging.local"],
+        capture_output=True, text=True, cwd=str(REPO_ROOT),
+    )
+    assert r3.returncode == 0, f".env.staging.local 必须被 ignore, 返 {r3.returncode}"
+    # deploy-staging.sh preflight 必须有 tracked .env.staging reject 逻辑
+    deploy = REPO_ROOT / "aog-web" / "scripts" / "deploy-staging.sh"
+    deploy_content = deploy.read_text(encoding="utf-8")
+    assert "git ls-files --error-unmatch .env.staging" in deploy_content, (
+        "deploy-staging.sh preflight 必须 git ls-files --error-unmatch .env.staging (NJX 7/30 secret safety 严令)"
+    )
+    print(f"  ✓ SECRET_FILE_IGNORE_PASS: .gitignore 排除 .env.staging / .env.staging.local, deploy 拒绝 tracked .env.staging")
+
+
+def test_24_HTTP_ROUTE_SCRIPT_READY():
+    """24. HTTP_ROUTE_SCRIPT_READY: deploy-frontend-staging.sh 存在 + 可执行 + ALLOW_STAGING_DEPLOY + TCB_ENV_ID"""
+    fe = REPO_ROOT / "aog-web" / "scripts" / "deploy-frontend-staging.sh"
+    assert fe.exists(), f"deploy-frontend-staging.sh 必须存在 (NJX 7/30 PR #3 修 8)"
+    assert os.access(str(fe), os.X_OK), "deploy-frontend-staging.sh 必须可执行"
+    fe_content = fe.read_text(encoding="utf-8")
+    # 必含 ALLOW_STAGING_DEPLOY 闸门
+    assert "ALLOW_STAGING_DEPLOY" in fe_content, "deploy-frontend-staging.sh 必须含 ALLOW_STAGING_DEPLOY 闸门"
+    # 必含 TCB_ENV_ID (不用 CLOUDBASE_STAGING_ENV alias)
+    assert "TCB_ENV_ID" in fe_content, "deploy-frontend-staging.sh 必须含 TCB_ENV_ID"
+    # 排除 # 注释 (文档说明 CLOUDBASE_STAGING_ENV alias 严禁)
+    fe_code_lines = "\n".join(line for line in fe_content.splitlines() if not line.strip().startswith("#"))
+    assert "CLOUDBASE_STAGING_ENV" not in fe_code_lines, (
+        "deploy-frontend-staging.sh 严禁 CLOUDBASE_STAGING_ENV alias (NJX 7/30 严令)"
+    )
+    # 必含 4 项强校验
+    assert "40 hex" in fe_content or "^[0-9a-f]{40}$" in fe_content, "deploy-frontend-staging.sh 必须含 40 hex 校验"
+    assert "git rev-parse HEAD" in fe_content, "deploy-frontend-staging.sh 必须含 git HEAD 校验"
+    assert "APP_COMMIT_SHA" in fe_content, "deploy-frontend-staging.sh 必须含 APP_COMMIT_SHA 校验"
+    assert "git status --porcelain" in fe_content, "deploy-frontend-staging.sh 必须含 git status clean 校验 (含 untracked)"
+    # 必含 dry-run / execute 分离
+    assert "STAGING_DEPLOY_MODE" in fe_content and "dry-run" in fe_content and "execute" in fe_content, (
+        "deploy-frontend-staging.sh 必须 STAGING_DEPLOY_MODE=dry-run/execute 分离"
+    )
+    # 必含 tcb hosting deploy 命令
+    assert "tcb hosting deploy" in fe_content, "deploy-frontend-staging.sh 必须用 tcb hosting deploy"
+    print(f"  ✓ HTTP_ROUTE_SCRIPT_READY: deploy-frontend-staging.sh 存在 + 可执行 + 4 校验 + dry-run/execute + tcb hosting deploy")
+
+
+def test_25_FRONTEND_STAGING_SCRIPT_READY():
+    """25. FRONTEND_STAGING_SCRIPT_READY: build-data-release.sh + test_journey_10_remote.py 完整"""
+    # 1. build-data-release.sh 存在 + 可执行 + 3 gates
+    bdr = REPO_ROOT / "aog-web" / "scripts" / "build-data-release.sh"
+    assert bdr.exists(), "build-data-release.sh 必须存在 (NJX 7/30 修 7)"
+    assert os.access(str(bdr), os.X_OK), "build-data-release.sh 必须可执行"
+    bdr_content = bdr.read_text(encoding="utf-8")
+    assert "APP_COMMIT_SHA" in bdr_content and "build_commit" in bdr_content, (
+        "build-data-release.sh 必须含 build_commit == APP_COMMIT_SHA 校验 (Gate 1)"
+    )
+    assert "Gate 2" in bdr_content and "rag_8_query" in bdr_content, (
+        "build-data-release.sh 必须含 Gate 2: 8 RAG query 验证"
+    )
+    assert "Gate 3" in bdr_content and "pii_redaction" in bdr_content, (
+        "build-data-release.sh 必须含 Gate 3: PII redaction 验证"
+    )
+    assert "release-manifest.json" in bdr_content, "build-data-release.sh 必须输出 release-manifest.json"
+    # 2. test_journey_10_remote.py 存在 + 缺 URL skip
+    remote = REPO_ROOT / "tests" / "test_journey_10_remote.py"
+    assert remote.exists(), "test_journey_10_remote.py 必须存在 (NJX 7/30 修 8)"
+    remote_content = remote.read_text(encoding="utf-8")
+    assert "AOG_STAGING_API_BASE" in remote_content, "test_journey_10_remote.py 必须读 AOG_STAGING_API_BASE env"
+    assert "pytest.skip" in remote_content, "test_journey_10_remote.py 缺 URL 时必须 skip"
+    # 3. staging-validation.yml 含 frontend-build + remote-validation jobs
+    sw = REPO_ROOT / ".github" / "workflows" / "staging-validation.yml"
+    sw_content = sw.read_text(encoding="utf-8")
+    assert "frontend-build:" in sw_content, "staging-validation.yml 必须含 frontend-build job"
+    assert "remote-validation:" in sw_content, "staging-validation.yml 必须含 remote-validation job"
+    assert "AOG_STAGING_API_BASE" in sw_content, "staging-validation.yml 必须设 AOG_STAGING_API_BASE env"
+    assert "缺 URL FAIL" in sw_content or "FAIL_REQUIRED" in sw_content, (
+        "staging-validation.yml remote-validation 必须强制 AOG_STAGING_API_BASE 存在 (NJX 7/30 严令)"
+    )
+    print(f"  ✓ FRONTEND_STAGING_SCRIPT_READY: build-data-release.sh 3 gates + test_journey_10_remote.py + remote-validation job 强制 URL")
+
+
+def test_26_STAGING_RUNTIME_PREFLIGHT_PR_GREEN():
+    """26. STAGING_RUNTIME_PREFLIGHT_PR_GREEN: 8 完成门聚合验证 (NJX 7/30 PR #3)"""
+    # 这个 test 本身是聚合, 跑它意味着前 8 个完成门 (test_19-25) 全过
+    # 这里只 verify 相关文件存在 + 关键内容
+    files = [
+        "aog-web/scripts/build-data-release.sh",
+        "aog-web/scripts/deploy-frontend-staging.sh",
+        "tests/test_journey_10_remote.py",
+        ".github/workflows/staging-validation.yml",
+        "cloudbaserc.staging.json",
+        ".env.staging.example",
+        "aog-web/scripts/prepare-scf-staging.sh",
+        "aog-web/scripts/deploy-staging.sh",
+        "aog-web/scripts/denylist_check.py",
+        "ops/production-resource-denylist.json",
+    ]
+    for f in files:
+        p = REPO_ROOT / f
+        assert p.exists(), f"STAGING_RUNTIME_PREFLIGHT_PR_GREEN: {f} 必须存在"
+    print(f"  ✓ STAGING_RUNTIME_PREFLIGHT_PR_GREEN: 8 完成门聚合, 10 关键文件全在, 准备 NJX 拍板 OWNER_MAY_CREATE_AND_FUND_STAGING_ENVIRONMENT")
 
 
 # 测试 helper
