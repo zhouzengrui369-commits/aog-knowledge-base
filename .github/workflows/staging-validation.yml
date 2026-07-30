@@ -361,7 +361,7 @@ jobs:
           fi
           echo "  ✓ tests/test_build_data_release_contract.py 含 $test_count 项 contract test"
 
-      - name: Run 15 contract tests (NJX 7/30 PR #4 严令 12/12 + 3 新)
+      - name: "Run 15 contract tests (NJX 7/30 PR #4 严令 12/12 + 3 新)"
         # 严禁 skip 关键合同测试: --no-skip-on-git-clean-check 用 fixture 自管的 SKIP
         # 严令 fail-on-skip: 如果 fixture 因为 git 不 clean skip, CI 应该视为 fail
         # 但 git_clean_check 在 CI 跑前 PR 已 merge, working tree clean, 不会 skip
@@ -369,8 +369,7 @@ jobs:
           set -euo pipefail
           # 严禁加 -rs / -v 隐藏 skip, 加 --tb=long 显示完整 traceback
           python -m pytest tests/test_build_data_release_contract.py \
-            -v --tb=long --no-header \
-            --no-header -ra 2>&1 | tee /tmp/data-release-contract.log
+            -v --tb=long --no-header -ra 2>&1 | tee /tmp/data-release-contract.log
           # 解析 12/12 校验 (12 原有 + 3 新 = 15/15)
           passed=$(grep -cE "PASSED" /tmp/data-release-contract.log || echo 0)
           failed=$(grep -cE "FAILED" /tmp/data-release-contract.log || echo 0)
