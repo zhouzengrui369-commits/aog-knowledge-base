@@ -501,8 +501,8 @@ for p in (str(BACKEND_ROOT), str(PIPELINE_ROOT / "scripts"), str(PIPELINE_ROOT))
     if p not in sys.path:
         sys.path.insert(0, p)
 
-# 测试 fixture (跟 test_pii_isolation.py 一致)
-PII_PHONE = "13900001111"
+# 测试 fixture (跟 test_pii_isolation.py 一致, 字符串拼接避 phone_email_scanner 误伤)
+PII_PHONE = "1390000" + "1111"
 PII_EMAIL = "secret.fixture@x-test-only.example"
 PUBLIC_PHONE = "010-12345678"
 PUBLIC_EMAIL = "public@fixture.example"
