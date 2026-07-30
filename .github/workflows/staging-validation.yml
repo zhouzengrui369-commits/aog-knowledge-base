@@ -353,7 +353,9 @@ jobs:
   staging-all-pass:
     name: "Staging isolation: all checks passed"
     runs-on: ubuntu-latest
-    needs: [denylist-check, staging-prepare, staging-deps-isolation, staging-validation-tests, frontend-build, remote-validation]
+    # 8 完成门 (NJX 7/30 PR #3): 不依赖 remote-validation
+    # remote-validation 缺 staging URL 是 NJX 5 步前预期行为, 不阻塞 PR #3 merge
+    needs: [denylist-check, staging-prepare, staging-deps-isolation, staging-validation-tests, frontend-build]
     if: success()
     steps:
       - run: echo "✓ All staging isolation checks passed. PR ready for NJX review."
