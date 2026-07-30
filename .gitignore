@@ -36,6 +36,11 @@ aog-web/functions/aog-api-staging/
 .env.local
 .env.production
 .env.development
+# NJX 7/30 secret safety 严令: 真凭据文件 (deploy 前 reject tracked)
+# .env.staging.example 是 commit 的 (template, 占位符), 这里不排除
+.env.staging
+.env.staging.local
+.env.*.local
 
 # 大文件
 *.zip

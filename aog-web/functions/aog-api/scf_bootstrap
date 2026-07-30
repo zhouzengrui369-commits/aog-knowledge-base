@@ -1,22 +1,30 @@
 #!/bin/bash
-# AOG API - SCF Web Function 启动脚本
+# AOG API - SCF Web Function 启动脚本 (NJX 7/30 严令 runtime preflight)
+#
+# NJX 7/30 严令:
+#   - installDependency=false, 必须 vendor/ 已预装 deps (避免运行时 pip install 不稳定)
+#   - 强制使用 /var/lang/python311/bin/python3.11 (SCF Linux Python3.11 runtime)
+#   - export PYTHONPATH="$PWD/vendor:$PWD:${PYTHONPATH:-}" (vendor 优先, 当前 dir 次之)
+#
 # SCF 平台调用此脚本启动 uvicorn 监听 9000 端口 (SCF HTTP 函数标准)
-# 依赖通过 vendor/ 目录 vendor 进来 (避开 installDependency 不稳定)
 
 set -e
-# 优先用 python3 (PATH 已配), 找不到再 fallback
-if command -v python3 >/dev/null 2>&1; then
-    PYTHON=python3
-elif [ -x /var/lang/python311/bin/python3.11 ]; then
-    PYTHON=/var/lang/python311/bin/python3.11
-elif [ -x /var/lang/python310/bin/python3.10 ]; then
-    PYTHON=/var/lang/python310/bin/python3.10
-elif [ -x /var/lang/python39/bin/python3.9 ]; then
-    PYTHON=/var/lang/python39/bin/python3.9
-else
-    echo "[scf_bootstrap] no python found" >&2
+
+# 强制使用 SCF runtime Python3.11 (NJX 7/30 严令: 不用系统 python, 不用 pyenv)
+PYTHON="/var/lang/python311/bin/python3.11"
+if [ ! -x "$PYTHON" ]; then
+    echo "[scf_bootstrap] FATAL: SCF Python3.11 not found at $PYTHON" >&2
+    echo "[scf_bootstrap] 期望 SCF runtime 提供 Python 3.11 (ap-shanghai region)" >&2
     exit 1
 fi
 echo "[scf_bootstrap] using python: $PYTHON" >&2
+
+# 优先 vendor/ (NJX 7/30 严令: installDependency=false, vendor/ 必须预 build)
+# vendor/ 包含 fastapi/uvicorn/pydantic/httpx/sqlalchemy 等所有 deps
+# 顺序: $PWD/vendor > $PWD (main.py / aog_web 在当前 dir) > 系统 PYTHONPATH
+export PYTHONPATH="$PWD/vendor:$PWD:${PYTHONPATH:-}"
 echo "[scf_bootstrap] PYTHONPATH=$PYTHONPATH" >&2
-exec $PYTHON -m uvicorn aog_web.main:app --host 0.0.0.0 --port 9000 --log-level info
+
+# 启动 uvicorn (NJX 7/30 handler=main.main_handler, 但这里仍然 uvicorn + ASGI app)
+# CloudBase v2 也可以直接 handler=main.main_handler, 但 uvicorn 提供完整 FastAPI lifespan
+exec "$PYTHON" -m uvicorn aog_web.main:app --host 0.0.0.0 --port 9000 --log-level info

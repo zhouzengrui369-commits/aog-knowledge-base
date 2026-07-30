@@ -271,12 +271,89 @@ jobs:
           python -m pytest tests/staging_isolation_test.py -v --tb=short
 
   # ============================================================
-  # 5. Aggregate: 全部 job 都通过
+  # 5. frontend-build: 验证 deploy-frontend-staging.sh 脚本完整 + package.json 存在
+  #    (NJX 7/30 PR #3 frontend and remote validation 完成门)
+  # ============================================================
+  frontend-build:
+    name: "Frontend staging script ready (NJX 7/30)"
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Verify deploy-frontend-staging.sh + package.json
+        run: |
+          set -euo pipefail
+          local_script="aog-web/scripts/deploy-frontend-staging.sh"
+          if [ ! -f "$local_script" ]; then
+            echo "  ✗ FAIL: $local_script 不存在 (NJX 7/30 严令)" >&2
+            exit 1
+          fi
+          if [ ! -x "$local_script" ]; then
+            echo "  ✗ FAIL: $local_script 不可执行" >&2
+            exit 1
+          fi
+          echo "  ✓ $local_script 存在且可执行"
+          if [ ! -f "aog-web/frontend/package.json" ]; then
+            echo "  ✗ FAIL: aog-web/frontend/package.json 不存在" >&2
+            exit 1
+          fi
+          echo "  ✓ aog-web/frontend/package.json 存在"
+          # dry-run 模式 (无 ALLOW_STAGING_DEPLOY 必 fail, 但 frontend-build 不需要它, 这里仅 verify)
+          echo "  ✓ deploy-frontend-staging.sh + frontend package.json 全 ready"
+
+  # ============================================================
+  # 6. remote-validation: 跑 8 RAG + 10 旅程真实远端验收
+  #    (NJX 7/30 严令: 缺 staging URL 必须 FAIL, 普通 CI 可 skip)
+  # ============================================================
+  remote-validation:
+    name: "Remote RAG + journey validation (NJX 7/30 强制 URL)"
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install pytest + httpx
+        run: |
+          set -euo pipefail
+          python -m pip install --upgrade pip
+          pip install pytest pytest-asyncio httpx
+
+      - name: "Enforce AOG_STAGING_API_BASE (NJX 7/30: 缺 URL FAIL)"
+        env:
+          AOG_STAGING_API_BASE: ${{ secrets.AOG_STAGING_API_BASE }}
+        run: |
+          set -euo pipefail
+          if [ -z "${AOG_STAGING_API_BASE:-}" ]; then
+            echo "  ✗ FAIL: AOG_STAGING_API_BASE secret 未设" >&2
+            echo "  NJX 7/30 严令: staging-validation workflow 缺 URL 必须 FAIL" >&2
+            echo "  必须在 GitHub repo Settings → Secrets and variables → Actions 设置 AOG_STAGING_API_BASE" >&2
+            exit 1
+          fi
+          echo "  ✓ AOG_STAGING_API_BASE=${AOG_STAGING_API_BASE}"
+
+      - name: Run 8 RAG regression + 10 journey remote tests
+        env:
+          AOG_STAGING_API_BASE: ${{ secrets.AOG_STAGING_API_BASE }}
+        run: |
+          set -euo pipefail
+          # 8 RAG regression (本机 FTS5)
+          python -m pytest aog-web/pipeline/tests/test_rag_8query_regression.py -v --tb=short
+          # 10 journey remote (远程 staging URL)
+          python -m pytest tests/test_journey_10_remote.py -v --tb=short
+
+  # ============================================================
+  # 7. Aggregate: 全部 job 都通过
   # ============================================================
   staging-all-pass:
     name: "Staging isolation: all checks passed"
     runs-on: ubuntu-latest
-    needs: [denylist-check, staging-prepare, staging-deps-isolation, staging-validation-tests]
+    needs: [denylist-check, staging-prepare, staging-deps-isolation, staging-validation-tests, frontend-build, remote-validation]
     if: success()
     steps:
       - run: echo "✓ All staging isolation checks passed. PR ready for NJX review."

@@ -1,9 +1,9 @@
 {
-  "_comment": "AOG Knowledge Base · Staging CloudBase v2 部署配置 (NJX 7/29 严令 staging 隔离 + 7/29 严令 DEPLOYABILITY 修)",
+  "_comment": "AOG Knowledge Base · Staging CloudBase v2 部署配置 (NJX 7/29 严令 + 7/30 PR #3 runtime preflight 修)",
   "_isolated_from_production": true,
-  "_first_phase_use_default_domain": "第一轮 staging 使用 CloudBase 默认域名, 不配自定义 CNAME. CNAME 是远端验收通过后的可选项, 非当前 PR 必填 (见 STAGING_ISOLATION_SPEC.md §2).",
+  "_first_phase_use_default_domain": "第一轮 staging 使用 CloudBase 默认域名, 不配自定义 CNAME",
   "_denylist_source": "ops/production-resource-denylist.json (仅作 denylist reference, 严禁 staging 引用)",
-  "_deployability_contract_NJX_729": "envVariables 用 object 形式 (key→value), type=HTTP, installDependency=false, memorySize=512, timeout=60, region=ap-shanghai, 必含 ENV/MINIMAX/COS/AOG_DB_PATH/AOG_VIEW_PASSWORD/JWT_SECRET 等全部运行 env vars (见 staging_isolation_test.py test_3 / test_5 验证)",
+  "_deployability_contract_NJX_730": "handler=main.main_handler (NJX 7/30 严令, 直接 Python3.11 entry, 不走 bash scf_bootstrap), data paths 全 /tmp, SYNC_STATE_DB_PATH 必填, envVariables 仍为 object, installDependency=false (用 vendor/)",
   "version": "2.0",
   "envId": "{{env.TCB_ENV_ID}}",
   "region": "ap-shanghai",
@@ -12,7 +12,7 @@
     {
       "name": "aog-api-staging",
       "runtime": "Python3.11",
-      "handler": "scf_bootstrap.main_handler",
+      "handler": "main.main_handler",
       "type": "HTTP",
       "memorySize": 512,
       "timeout": 60,
@@ -42,7 +42,8 @@
         "STAGING_HOSTING_ORIGIN": "{{env.STAGING_HOSTING_ORIGIN}}",
         "KNOWLEDGE_BASE_PATH": "{{env.KNOWLEDGE_BASE_PATH}}",
         "RAW_PATH": "{{env.RAW_PATH}}",
-        "CORS_ALLOW_ORIGINS": "{{env.CORS_ALLOW_ORIGINS}}"
+        "CORS_ALLOW_ORIGINS": "{{env.CORS_ALLOW_ORIGINS}}",
+        "SYNC_STATE_DB_PATH": "{{env.SYNC_STATE_DB_PATH}}"
       }
     }
   ]
