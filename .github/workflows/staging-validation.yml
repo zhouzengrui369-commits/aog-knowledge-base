@@ -250,6 +250,21 @@ jobs:
           python -m pip install --upgrade pip
           pip install pytest
 
+      - name: Prepare staging function package (NJX 7/30 PR #3 fix #2)
+        # NJX 7/30 严令: unit tests job 需 MANIFEST.json 才能跑 test_15/16 (deploy-staging.sh preflight 要求)
+        # staging-prepare job 跑的是另一台 ephemeral runner, 不共享文件系统
+        # 必须在本 job 内独立跑 prepare-scf-staging.sh, 创建 MANIFEST.json + vendor/ + aog_web/
+        working-directory: aog-web
+        run: |
+          set -euo pipefail
+          chmod +x scripts/prepare-scf-staging.sh
+          bash scripts/prepare-scf-staging.sh 2>&1 | tail -20
+          if [ ! -f functions/aog-api-staging/MANIFEST.json ]; then
+            echo "  ✗ FAIL: MANIFEST.json 未生成" >&2
+            exit 1
+          fi
+          echo "  ✓ MANIFEST.json 已生成 (test_15/16 preflight 需要)"
+
       - name: Setup fake tcb CLI (NJX 7/29 DEPLOYABILITY 严令 fake tcb 验证 execute 模式)
         run: |
           set -euo pipefail

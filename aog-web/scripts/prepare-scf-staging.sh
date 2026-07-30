@@ -326,6 +326,13 @@ echo "source_branch=$SOURCE_BRANCH"
 echo "staging_dir=$FUNCTIONS_DIR"
 echo
 
+# NJX 7/30 PR #3 fix (CI 7/30 fail #1): 必须先 mkdir staging 目录并归当前用户,
+# 否则 docker run -v $FUNCTIONS_DIR:/app 会把 $FUNCTIONS_DIR 自动创建为 root:root,
+# 后续步骤 (rm vendor + cp handlers + write MANIFEST) 全部 "Permission denied".
+# CI 跑 runner user, 本地 macOS 跑 njx; docker 永远以 root 跑, 必须先 mkdir.
+mkdir -p "$FUNCTIONS_DIR"
+echo "[staging-init] ✓ mkdir -p $FUNCTIONS_DIR (current user owns it)"
+
 echo "[1/6] denylist preflight..."
 preflight
 echo
