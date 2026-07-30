@@ -163,8 +163,22 @@ EXPECTED_SCHEMA_VERSION = "v30-d038-d043"  # 升级时改这里 + 触发 rebuild
 
 
 def _get_git_commit() -> str:
-    """读当前 git commit SHA (短) — 失败返 'unknown'"""
+    """读当前 git commit SHA — NJX 7/30 PR #4 严令 4 项: 优先 APP_COMMIT_SHA env, 兜底 git rev-parse
+
+    优先级 (NJX 7/30 PR #4 严令):
+      1. APP_COMMIT_SHA env (build-data-release.sh 1.7 校验必须 = git HEAD)
+      2. git rev-parse HEAD (兜底, 给 dev 环境用)
+      3. "unknown" (兜底, 极端情况)
+
+    严禁: 严禁让 export_fts5 自行 git rev-parse 写出与 APP_COMMIT_SHA 不同的 commit,
+    否则 build_manifest.build_commit != APP_COMMIT_SHA, 破坏 NJX 7/30 PR #4 严令 4 项
+    "build_manifest.build_commit == APP_COMMIT_SHA" 合同.
+    """
+    import os
     import subprocess
+    app_commit_sha = os.environ.get("APP_COMMIT_SHA", "").strip()
+    if app_commit_sha:
+        return app_commit_sha
     try:
         r = subprocess.run(
             ["git", "rev-parse", "HEAD"],

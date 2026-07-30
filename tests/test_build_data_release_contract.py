@@ -1,4 +1,4 @@
-"""test_build_data_release_contract.py — build-data-release.sh 12 项合同测试 (NJX 7/30 严令)
+"""test_build_data_release_contract.py — build-data-release.sh 合同测试 (NJX 7/30 严令)
 
 NJX 7/30 严令 12 项 (PR #4 BLOCKED → fix 后必须全过):
   1. 不允许复制 backend/data/aog.db
@@ -13,6 +13,11 @@ NJX 7/30 严令 12 项 (PR #4 BLOCKED → fix 后必须全过):
  10. release-manifest hash 与实际产物一致
  11. source manifest 与实际源文件一致
  12. source 文件被 touch 但内容未变, 不得被解释为 rebuild
+
+NJX 7/30 PR #4 严令 3 新增 (Fix 2/3/4+5 合同强化):
+ 13. index_stats.json 必须 Python json.load 解析, 3 条一致性强制
+ 14. PII Gate 7 项必须含 PII-7 (枚举 + FTS5 + RAG + hash 化日志)
+ 15. build_manifest build_commit == APP_COMMIT_SHA + source_manifest_hash == sha256(aog.db)
 
 设计: 用 pytest tmp_path_factory 提供最小 fixture KB (5 文件, 含 04_课件 应被 SKIP),
 跑 build-data-release.sh + 验证行为. 不访问 owner 私有知识库.
@@ -451,3 +456,159 @@ def test_12_touch_no_rebuild_interpretation(git_clean_check, app_commit_sha, min
     assert "严禁" in content and ("touch" in content or "mtime" in content.lower()), (
         "build-data-release.sh 应明确禁止 touch / mtime 操作"
     )
+
+
+def test_13_index_stats_json_load_enforced(git_clean_check, app_commit_sha):
+    """13. (NJX 7/30 PR #4 严令 Fix 2) index_stats.json 必须 Python json.load 解析, 严禁 grep
+
+    验证:
+      - 脚本不允许用 grep 解析 files_failed (会漏掉有空格/换行的 array, 假绿)
+      - 必须 Python json.load + 3 条一致性强制:
+        a) failed_count == 0
+        b) files_scanned == files_indexed
+        c) files_scanned == source-files-manifest.json total_files
+      - 失败时 exit 2 (build 失败)
+    """
+    content = SCRIPT_PATH.read_text(encoding="utf-8")
+
+    # 严禁: 脚本里不能用 grep -o 解析 files_failed
+    # 注意: 也允许 grep 解析我们自己的 SCANNED=... 输出 (那是合法的 key=value)
+    # 我们只禁止 grep -o '"files_failed"' 这种
+    forbidden_greps = [
+        'grep -o \'"files_failed"',
+        "grep -o '\"files_failed\"",
+        'grep -o \'"files_scanned"',
+        "grep -o '\"files_scanned\"",
+    ]
+    for forbidden in forbidden_greps:
+        assert forbidden not in content, (
+            f"build-data-release.sh 含禁止的 grep 解析 {forbidden!r}; "
+            f"NJX 7/30 PR #4 严令 Fix 2: 必须 Python json.load, 严禁 grep"
+        )
+
+    # 必须有 inline Python json.load 调用
+    assert "json.load" in content, (
+        "build-data-release.sh 必须用 Python json.load 解析 index_stats.json "
+        "(NJX 7/30 PR #4 严令 Fix 2: 严禁 grep 解析 JSON)"
+    )
+
+    # 必须验证 files_failed 字段名
+    assert "files_failed" in content, "build-data-release.sh 必须读 index_stats.json files_failed 字段"
+
+    # 必须有 3 条一致性校验
+    for keyword in ["failed_count != 0", "files_scanned != files_indexed", "files_scanned != manifest_total"]:
+        assert keyword in content, (
+            f"build-data-release.sh 缺一致性校验 {keyword!r}; "
+            f"NJX 7/30 PR #4 严令 Fix 2: 3 条一致性 (failed=0 / scanned=indexed / scanned=source_manifest.file_count)"
+        )
+
+    # 必须有 exit 2 (build 失败)
+    # 找到一致性校验失败时的 exit 2 (json.load 解析失败也是 exit 2)
+    assert "exit 2" in content, "index_stats.json 一致性校验失败必须 exit 2"
+
+    # 严禁把 grep 作为 fallback (NJX 7/30 严令: 严禁退化到 grep)
+    # 允许 grep 解析 key=value 输出, 但不允许 grep 解析 index_stats.json
+    assert "grep -o '\"relative_path\"'" not in content, (
+        "build-data-release.sh 不应用 grep 解析 source manifest file count "
+        "(NJX 7/30 PR #4 严令: 必须用 manifest_total 复用)"
+    )
+
+
+def test_14_pii_gate_enumeration_and_hash(git_clean_check, app_commit_sha):
+    """14. (NJX 7/30 PR #4 严令 Fix 3) PII Gate 必须枚举 + FTS5 + RAG + hash 化日志
+
+    验证:
+      - 必须有 PII-7 (从真实 aog.db 枚举所有 non-public/redacted phone/email)
+      - 统一 internal 权限合同: internal 跟 restricted/redacted 一样视为 non-public
+      - 对每个实际原值验证 FTS5 零命中
+      - 验证正常 RAG context/reference 零命中
+      - 日志只输出原值 sha256 hash, 严禁明文
+      - PII-5 必须同时测 restricted + internal
+    """
+    content = SCRIPT_PATH.read_text(encoding="utf-8")
+
+    # 1. 必须有 PII-7 (新增强项, NJX 7/30 PR #4 严令 Fix 3)
+    assert "PII-7" in content, (
+        "build-data-release.sh 必须含 PII-7 (从真实 aog.db 枚举 non-public/redacted 原值, FTS5 + RAG 零命中)"
+    )
+    # PII-7 应明确分 7a/7b/7c (FTS5 零命中 / RAG context 零命中 / 抽样校验)
+    for sub in ["PII-7a", "PII-7b", "PII-7c"]:
+        assert sub in content, f"build-data-release.sh PII-7 应分 3 子项 ({sub})"
+
+    # 2. 统一 internal 权限合同: internal 视为 non-public
+    # 严禁有 "permission=internal 是 D-030 'internal 半透明' 合同" 之类的旧描述
+    forbidden_internal_descriptions = [
+        "internal 半透明",
+        "internal '半透明'",
+        "internal 半透明合同",
+    ]
+    for forbidden in forbidden_internal_descriptions:
+        assert forbidden not in content, (
+            f"build-data-release.sh 含过时的 internal 描述 {forbidden!r}; "
+            f"NJX 7/30 PR #4 严令 Fix 3: 统一 internal 权限合同, internal 跟 restricted 一样 REDACTED"
+        )
+
+    # 3. PII-3 应明确 non-public (含 internal) 而不只是 restricted+redacted
+    # 严禁旧判定: "if perm != \"restricted\" and not redacted"
+    assert 'if perm != "restricted" and not redacted' not in content, (
+        "build-data-release.sh PII-3 含过时的 restricted-only 判定; "
+        "NJX 7/30 PR #4 严令 Fix 3: 必须 perm == 'public' and not redacted 才 skip"
+    )
+
+    # 4. 日志只 hash, 不明文 (NJX 7/30 PR #4 严令)
+    # PII-3 + PII-7 应有 hashlib.sha256 原值 hash
+    assert "hashlib.sha256" in content, (
+        "build-data-release.sh PII Gate 日志必须用 hashlib.sha256 输出原值 hash, 严禁明文 "
+        "(NJX 7/30 PR #4 严令 Fix 3)"
+    )
+
+    # 5. PII-5 必须同时测 restricted + internal
+    # (PII-5 子项 5a restricted + 5b internal)
+    assert "_MockRowInternal" in content, (
+        "build-data-release.sh PII-5 必须测 internal permission 同样 REDACTED "
+        "(NJX 7/30 PR #4 严令 Fix 3: 统一 internal 权限合同)"
+    )
+
+
+def test_15_build_manifest_identity_enforced(git_clean_check, app_commit_sha):
+    """15. (NJX 7/30 PR #4 严令 Fix 4+5) build_manifest 身份必须严格匹配
+
+    验证:
+      - build_manifest.build_commit == APP_COMMIT_SHA (env 注入, export_fts5 优先)
+      - build_manifest.source_manifest_hash == sha256(release aog.db) on disk
+      - 严禁让 export_fts5 自行 git rev-parse 写出与 APP_COMMIT_SHA 不同的 commit
+    """
+    # 1. build-data-release.sh 必须校验 build_manifest.build_commit == APP_COMMIT_SHA
+    content = SCRIPT_PATH.read_text(encoding="utf-8")
+    assert "build_manifest.build_commit" in content, (
+        "build-data-release.sh 必须校验 build_manifest.build_commit == APP_COMMIT_SHA "
+        "(NJX 7/30 PR #4 严令 Fix 4)"
+    )
+    assert "APP_COMMIT_SHA" in content, "build-data-release.sh 必须有 APP_COMMIT_SHA 校验"
+
+    # 2. 必须校验 build_manifest.source_manifest_hash == sha256(aog.db) on disk
+    assert "source_manifest_hash" in content, (
+        "build-data-release.sh 必须校验 build_manifest.source_manifest_hash"
+    )
+    # 必须实际算 sha256(aog.db) 然后比较
+    assert "hashlib.sha256" in content and "aog.db" in content, (
+        "build-data-release.sh 必须实际算 sha256(aog.db) 然后与 build_manifest.source_manifest_hash 比较 "
+        "(NJX 7/30 PR #4 严令 Fix 5)"
+    )
+
+    # 3. export_fts5.py 必须支持 APP_COMMIT_SHA env (优先于 git rev-parse)
+    export_fts5_path = REPO_ROOT / "aog-web" / "pipeline" / "scripts" / "export_fts5.py"
+    export_content = export_fts5_path.read_text(encoding="utf-8")
+    assert "APP_COMMIT_SHA" in export_content, (
+        "export_fts5.py 必须支持 APP_COMMIT_SHA env (NJX 7/30 PR #4 严令 Fix 4: "
+        "build_manifest.build_commit 优先读 APP_COMMIT_SHA, 兜底 git rev-parse)"
+    )
+    # 严禁 export_fts5 走 git rev-parse 兜底后没有 APP_COMMIT_SHA 优先
+    # 验证: 必须在读 APP_COMMIT_SHA 之前不调 git rev-parse (或至少 APP_COMMIT_SHA 优先)
+    app_commit_idx = export_content.find("APP_COMMIT_SHA")
+    git_rev_idx = export_content.find("git rev-parse")
+    if app_commit_idx != -1 and git_rev_idx != -1:
+        assert app_commit_idx < git_rev_idx, (
+            "export_fts5.py 中 APP_COMMIT_SHA 必须在 git rev-parse 之前检查 "
+            "(NJX 7/30 PR #4 严令 Fix 4: env 优先)"
+        )
