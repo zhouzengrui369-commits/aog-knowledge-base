@@ -81,13 +81,14 @@ if [ -z "$RELEASE_DIR" ]; then
     exit 1
 fi
 
-# 1.5 RELEASE_DIR 必须在 /tmp 下
-case "$RELEASE_DIR" in
-    /tmp/*|/tmp)
+# 1.5 RELEASE_DIR 必须在 /tmp 下 (含 macOS /tmp = /private/tmp symlink 解析)
+REAL_RELEASE_DIR="$("$BACKEND/.venv/bin/python" -c "import os,sys; print(os.path.realpath(sys.argv[1]))" "$RELEASE_DIR" 2>/dev/null || echo "$RELEASE_DIR")"
+case "$REAL_RELEASE_DIR" in
+    /tmp|/tmp/*)
         ;;
     *)
-        echo "  ✗ FAIL: RELEASE_DIR='$RELEASE_DIR' 不在 /tmp 下" >&2
-        echo "  (NJX 7/30 严令: 必须全新且为空的 /tmp 子目录)" >&2
+        echo "  ✗ FAIL: RELEASE_DIR='$RELEASE_DIR' (realpath='$REAL_RELEASE_DIR') 不在 /tmp 下" >&2
+        echo "  (NJX 7/30 严令: 必须全新且为空的 /tmp 子目录, 含 /private/tmp symlink)" >&2
         exit 1
         ;;
 esac
