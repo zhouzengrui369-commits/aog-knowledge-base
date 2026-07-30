@@ -469,21 +469,22 @@ def test_13_index_stats_json_load_enforced(git_clean_check, app_commit_sha):
         c) files_scanned == source-files-manifest.json total_files
       - 失败时 exit 2 (build 失败)
     """
+    import re as _re
     content = SCRIPT_PATH.read_text(encoding="utf-8")
 
-    # 严禁: 脚本里不能用 grep -o 解析 files_failed
-    # 注意: 也允许 grep 解析我们自己的 SCANNED=... 输出 (那是合法的 key=value)
-    # 我们只禁止 grep -o '"files_failed"' 这种
-    forbidden_greps = [
-        'grep -o \'"files_failed"',
-        "grep -o '\"files_failed\"",
-        'grep -o \'"files_scanned"',
-        "grep -o '\"files_scanned\"",
+    # 严禁: 脚本里不能用 grep -o 解析 files_failed / files_scanned
+    # 逐行检查 (NJX 7/30 PR #4 严令: 严禁 grep 解析 JSON 字段, 必须 Python json.load)
+    forbidden_field_patterns = [
+        _re.compile(r"grep.*['\"]files_failed['\"]"),
+        _re.compile(r"grep.*['\"]files_scanned['\"]"),
+        _re.compile(r"grep.*['\"]files_indexed['\"]"),
     ]
-    for forbidden in forbidden_greps:
-        assert forbidden not in content, (
-            f"build-data-release.sh 含禁止的 grep 解析 {forbidden!r}; "
-            f"NJX 7/30 PR #4 严令 Fix 2: 必须 Python json.load, 严禁 grep"
+    for pat in forbidden_field_patterns:
+        hit = [line for line in content.splitlines() if pat.search(line)]
+        assert not hit, (
+            f"build-data-release.sh 含禁止的 grep 解析 JSON 字段 (匹配 {pat.pattern!r}); "
+            f"NJX 7/30 PR #4 严令 Fix 2: 必须 Python json.load, 严禁 grep\n"
+            f"命中行: {hit[:3]}"
         )
 
     # 必须有 inline Python json.load 调用
@@ -503,11 +504,10 @@ def test_13_index_stats_json_load_enforced(git_clean_check, app_commit_sha):
         )
 
     # 必须有 exit 2 (build 失败)
-    # 找到一致性校验失败时的 exit 2 (json.load 解析失败也是 exit 2)
     assert "exit 2" in content, "index_stats.json 一致性校验失败必须 exit 2"
 
-    # 严禁把 grep 作为 fallback (NJX 7/30 严令: 严禁退化到 grep)
-    # 允许 grep 解析 key=value 输出, 但不允许 grep 解析 index_stats.json
+    # 严禁把 grep 解析 source manifest file_count 作为 fallback
+    # (NJX 7/30 PR #4 严令: 必须用 manifest_total 复用, 不允许二次 grep)
     assert "grep -o '\"relative_path\"'" not in content, (
         "build-data-release.sh 不应用 grep 解析 source manifest file count "
         "(NJX 7/30 PR #4 严令: 必须用 manifest_total 复用)"
