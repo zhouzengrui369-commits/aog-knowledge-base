@@ -17,9 +17,9 @@ name: "staging-validation"
 
 on:
   push:
-    branches: [ops/staging-isolation, ops/staging-runtime-preflight]
+    branches: [ops/staging-isolation, ops/staging-runtime-preflight, ops/staging-release-rehearsal-r1]
   pull_request:
-    branches: [main, ops/staging-isolation, ops/staging-runtime-preflight]
+    branches: [main, ops/staging-isolation, ops/staging-runtime-preflight, ops/staging-release-rehearsal-r1]
 
 # 所有 job 默认 set -euo pipefail
 defaults:
