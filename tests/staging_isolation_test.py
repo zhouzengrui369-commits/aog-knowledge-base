@@ -933,7 +933,7 @@ def test_25_FRONTEND_STAGING_SCRIPT_READY():
     assert "test_rag_8query_remote" in remote_wf_content, "staging-remote-validation.yml 必须跑 test_rag_8query_remote"
     assert "test_journey_10_remote" in remote_wf_content, "staging-remote-validation.yml 必须跑 test_journey_10_remote"
     assert "AOG_STAGING_API_BASE" in remote_wf_content, "staging-remote-validation.yml 缺 URL 必须 FAIL"
-    )
+    print(f"  ✓ FRONTEND_STAGING_SCRIPT_READY: build-data-release.sh 3 gates + test_journey_10_remote.py + remote-validation job 强制 URL")
     print(f"  ✓ FRONTEND_STAGING_SCRIPT_READY: build-data-release.sh 3 gates + test_journey_10_remote.py + remote-validation job 强制 URL")
 
 
