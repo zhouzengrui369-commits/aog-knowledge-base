@@ -1,0 +1,22 @@
+{
+  "schema_version": "1.0.0",
+  "project_id": "aog",
+  "scope": "当前 MVP / staging 验收",
+  "mode": "weighted_gates",
+  "source": "STATUS.md + PR #3 merge",
+  "confidence": "high",
+  "confidence_label": "高可信",
+  "updated_at": "2026-07-30",
+  "gates": [
+    {"id": "truth", "title": "工程真相", "weight": 5, "status": "done"},
+    {"id": "api", "title": "API 路径修复", "weight": 10, "status": "done"},
+    {"id": "rag", "title": "RAG / FTS5", "weight": 15, "status": "done"},
+    {"id": "provider", "title": "Provider fail-closed", "weight": 10, "status": "done"},
+    {"id": "trust", "title": "数据可信度合同", "weight": 15, "status": "done"},
+    {"id": "samples", "title": "三个样板", "weight": 10, "status": "done"},
+    {"id": "pii", "title": "PII 与权限", "weight": 10, "status": "done"},
+    {"id": "convergence", "title": "主线收敛", "weight": 5, "status": "done"},
+    {"id": "staging", "title": "独立 staging 部署", "weight": 10, "status": "blocked"},
+    {"id": "remote", "title": "远程验收", "weight": 10, "status": "blocked"}
+  ]
+}
