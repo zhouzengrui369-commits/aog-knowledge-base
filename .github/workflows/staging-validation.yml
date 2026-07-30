@@ -376,17 +376,25 @@ jobs:
       - name: "Run 15 contract tests"
         run: |
           set -euo pipefail
+          # NJX 7/30 PR #4 fix: 用固定 log 路径 + 先确保目录存在, 严禁依赖默认 /tmp
+          LOG_DIR="$RUNNER_TEMP/data-release-contract"
+          mkdir -p "$LOG_DIR"
+          LOG_FILE="$LOG_DIR/log.txt"
+          # 跑 pytest, 同时 capture 到 log 文件
           python -m pytest tests/test_build_data_release_contract.py \
-            -v --tb=long --no-header -ra 2>&1 | tee /tmp/data-release-contract.log
+            -v --tb=long --no-header -ra > "$LOG_FILE" 2>&1 || PYTEST_EXIT=$?
+          PYTEST_EXIT="${PYTEST_EXIT:-0}"
+          echo "pytest exit code: $PYTEST_EXIT"
           # 关键 (NJX 7/30 PR #4 fix): 只 grep test result 行 (tests/...py::test_xx STATUS [  x%]),
           # 严禁 grep 整行 (会匹配 "SKIPPED [1] tests/..." 摘要行, false positive)
-          passed=$(grep -cE "tests/.*PASSED \[" /tmp/data-release-contract.log || echo 0)
-          failed=$(grep -cE "tests/.*FAILED \[" /tmp/data-release-contract.log || echo 0)
-          skipped=$(grep -cE "tests/.*SKIPPED \[" /tmp/data-release-contract.log || echo 0)
+          passed=$(grep -cE "tests/.*PASSED \[" "$LOG_FILE" 2>/dev/null || echo 0)
+          failed=$(grep -cE "tests/.*FAILED \[" "$LOG_FILE" 2>/dev/null || echo 0)
+          skipped=$(grep -cE "tests/.*SKIPPED \[" "$LOG_FILE" 2>/dev/null || echo 0)
           echo
-          echo "data-release-contract summary: PASSED=$passed  FAILED=$failed  SKIPPED=$skipped"
-          if [ "$failed" -gt 0 ]; then
-            echo "FAIL: $failed contract tests failed" >&2
+          echo "data-release-contract summary: PASSED=$passed  FAILED=$failed  SKIPPED=$skipped  (pytest exit=$PYTEST_EXIT)"
+          if [ "$failed" -gt 0 ] || [ "$PYTEST_EXIT" -ne 0 ]; then
+            echo "FAIL: $failed contract tests failed (pytest exit=$PYTEST_EXIT)" >&2
+            tail -30 "$LOG_FILE" >&2
             exit 1
           fi
           if [ "$skipped" -gt 0 ]; then
