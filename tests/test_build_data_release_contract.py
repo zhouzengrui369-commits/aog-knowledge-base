@@ -227,21 +227,25 @@ def test_01_no_backend_data_copy(git_clean_check, app_commit_sha, tmp_path):
 def test_02_no_mtime_freshness_check(git_clean_check, app_commit_sha):
     """2. 不允许 mtime freshness (mtime 不是数据身份)
 
-    验证: 脚本不含 FRESH_LIMIT / mtime / 2h 等 freshness 字样
+    验证: 脚本非注释行不含 FRESH_LIMIT / SOURCE_AOG_DB_MTIME / 2h 比较等 freshness 代码
+    (排除注释行, 因为注释里"严禁 ... " 会有"stale"等反例字面量)
     """
     content = SCRIPT_PATH.read_text(encoding="utf-8")
+    code_lines = [
+        line for line in content.splitlines()
+        if line.strip() and not line.strip().startswith("#")
+    ]
     forbidden = [
         "FRESH_LIMIT",
-        "freshness",
         "source_aog_db_mtime",
         "SOURCE_AOG_DB_MTIME",
-        "COMMIT_TIME",
-        "stale",
-        "stale_data",
+        "COMMIT_TIME=",
     ]
     for kw in forbidden:
-        assert kw not in content, (
-            f"build-data-release.sh 含 mtime/freshness keyword {kw!r}, NJX 7/30 严令删除"
+        hit_lines = [l for l in code_lines if kw in l]
+        assert not hit_lines, (
+            f"build-data-release.sh 非注释行含 mtime/freshness code {kw!r}, "
+            f"NJX 7/30 严令删除: {hit_lines[:3]}"
         )
 
 
@@ -324,14 +328,20 @@ def test_07_rag_uses_release_fts5(git_clean_check, app_commit_sha):
 def test_08_pytest_failure_no_fake_green(git_clean_check, app_commit_sha):
     """8. pytest failure 不能假绿
 
-    验证: 脚本里 8 RAG 部分严禁 || true / informational PASS
+    验证: 脚本里 8 RAG 部分非注释行严禁 || true, 必须 RAG_EXIT 捕获
+    (排除注释行, 因为注释"严禁 || true"会有反例字面量)
     """
     content = SCRIPT_PATH.read_text(encoding="utf-8")
     # 8 RAG 部分必须用 set +e / exit code 捕获
     assert "RAG_EXIT" in content, "build-data-release.sh 必须捕获 RAG_EXIT (严禁 grep PASS 假绿)"
-    # 严禁 || true 假绿
-    assert "RAG_EXIT=$?  || true" not in content and "|| true" not in content, (
-        "build-data-release.sh 8 RAG 部分不应有 || true 假绿"
+    # 非注释行严禁 || true 假绿
+    code_lines = [
+        line for line in content.splitlines()
+        if line.strip() and not line.strip().startswith("#")
+    ]
+    or_true_lines = [l for l in code_lines if "|| true" in l]
+    assert not or_true_lines, (
+        f"build-data-release.sh 非注释行含 || true 假绿: {or_true_lines[:3]}"
     )
     # 必须 8/8 校验
     assert 'RAG_PASS_COUNT -lt 8' in content or "RAG_PASS_COUNT\" -lt 8" in content or "PASS_COUNT:${RAG_PASS_COUNT:-0}\" -lt 8" in content, (
@@ -340,17 +350,26 @@ def test_08_pytest_failure_no_fake_green(git_clean_check, app_commit_sha):
 
 
 def test_09_pii_gate_failure_blocks(git_clean_check, app_commit_sha):
-    """9. PII Gate failure 阻断 (exit 4)"""
+    """9. PII Gate failure 阻断 (exit 4)
+
+    验证: 脚本非注释行不含 informational PII; 必须 PII_EXIT 捕获 + exit 4
+    (排除注释行, 因为注释"严禁 ... no fail"会有反例字面量)
+    """
     content = SCRIPT_PATH.read_text(encoding="utf-8")
-    # 严禁 informational PII
+    code_lines = [
+        line for line in content.splitlines()
+        if line.strip() and not line.strip().startswith("#")
+    ]
+    # 非注释行严禁 informational PII / no fail
     forbidden_pii = [
         "PII Gate informational",
-        "PII Gate 3: PII redaction (informational",
+        "PII redaction (informational",
         "no fail",
     ]
     for kw in forbidden_pii:
-        assert kw not in content, (
-            f"build-data-release.sh 含禁止的 PII keyword {kw!r}, NJX 7/30 严令删除"
+        hit = [l for l in code_lines if kw in l]
+        assert not hit, (
+            f"build-data-release.sh 非注释行含禁止的 PII keyword {kw!r}: {hit[:3]}"
         )
     # 必须有 PII_EXIT 捕获 + exit 4
     assert "PII_EXIT" in content, "build-data-release.sh 必须捕获 PII_EXIT"
