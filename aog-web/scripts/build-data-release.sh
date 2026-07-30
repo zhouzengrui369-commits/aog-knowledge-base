@@ -580,10 +580,10 @@ try:
                     break
             if target_out is None:
                 target_out = result["contacts"][0]
-            if target_out["phone"] == ["REDACTED"] and target_out["email"] == "REDACTED":
+            if target_out.get("phone") == ["REDACTED"] and target_out.get("email") == "REDACTED":
                 redacted_ok += 1
             else:
-                failed.append(f"{code}/{ct.get('org','')[:20]}: phone={target_out['phone']} email={target_out['email']}")
+                failed.append(f"{code}/{ct.get('org','')[:20]}: phone={target_out.get('phone')} email={target_out.get('email', '<no email>')}")
 
     # 必须有 restricted+redacted contact 抽样 (sampled > 0), 否则视为 data 缺 PII 隔离验证
     ok = sampled > 0 and redacted_ok == sampled
