@@ -265,6 +265,11 @@ def curate_one(code: str, name: str, docx_path: Path, topic: str = "故障树") 
         logger.warning("wiki content too short for %s: %d chars", code, len(content))
         return None
 
+    # ★ NJX 7/30 PR #5 严令: wiki ingestion sanitizer
+    # LLM 可能在 wiki text 里重写 phone/email (虽然 prompt 禁), 落盘前再 redact 一遍兜底
+    from pipeline.extractors.pii_sanitizer import sanitize_text
+    content = sanitize_text(content)
+
     now = datetime.now(timezone.utc).isoformat()
     title = f"{name} ({code}) — {topic}"
     return WikiPage(
@@ -272,7 +277,7 @@ def curate_one(code: str, name: str, docx_path: Path, topic: str = "故障树") 
         name=name,
         topic=topic,
         title=title,
-        content=content,
+        content=content,  # ★ PR #5: 已 sanitize
         source_path=str(docx_path.relative_to(KB_ROOT.parent)),
         generated_at=now,
         llm_model="minimax-m3",
