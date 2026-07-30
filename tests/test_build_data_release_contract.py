@@ -163,12 +163,19 @@ def _run_build_data_release(
     extra_env: dict | None = None,
     env_overrides: dict | None = None,
 ) -> subprocess.CompletedProcess:
-    """跑 build-data-release.sh, return CompletedProcess"""
+    """跑 build-data-release.sh, return CompletedProcess
+
+    重要 (NJX 7/30 PR #4 fix for CI): 当 release_dir 显式传入时, fixture 不删 (让 test_05
+    真正测试 "non-empty" 而不是误打误撞靠 macOS /private/var/folders 跟 /tmp 不 match 触发).
+    原来 fixture 一律 rmtree, 导致 test_05 在 Linux CI 删掉 old.txt → script 跑通 empty check
+    → RAG 失败 exit 5 → 跟测试期望 exit 1 不符.
+    """
     if release_dir is None:
         release_dir = tmp_path / "release_dir"
-    if release_dir.exists():
-        shutil.rmtree(release_dir)
-    release_dir.mkdir(parents=True)
+        if release_dir.exists():
+            shutil.rmtree(release_dir)
+        release_dir.mkdir(parents=True)
+    # release_dir 显式传入时不删, 让调用方决定 (test_05 用 old.txt 测 non-empty)
 
     env = os.environ.copy()
     env["APP_COMMIT_SHA"] = app_commit_sha
@@ -281,18 +288,22 @@ def test_04_release_dir_not_in_tmp_fails(git_clean_check, app_commit_sha, minima
 
 def test_05_release_dir_not_empty_fails(git_clean_check, app_commit_sha, minimal_kb):
     """5. RELEASE_DIR 非空 fail (exit 1)"""
+    import tempfile as _tempfile
     kb_root, _ = minimal_kb
-    release_dir = kb_root.parent / "non_empty_release"
-    release_dir.mkdir(parents=True)
+    # 必须用 /tmp 下子目录 (NJX 7/30 严令), pytest tmp_path 在 macOS /private/var/folders/... 不通过 /tmp check
+    # 修法 (NJX 7/30 PR #4): release_dir 用 tempfile.mkdtemp(dir="/tmp") + old.txt, _run 不删 (修 fixture)
+    release_dir = Path(_tempfile.mkdtemp(prefix="aog-test-05-", dir="/tmp"))
     (release_dir / "old.txt").write_text("old content", encoding="utf-8")
-
-    r = _run_build_data_release(
-        tmp_path=kb_root.parent,
-        app_commit_sha=app_commit_sha,
-        kb_root=kb_root,
-        release_dir=release_dir,
-    )
-    assert r.returncode == 1, f"RELEASE_DIR 非空应 exit 1, 实际 {r.returncode}\n{r.stdout + r.stderr}"
+    try:
+        r = _run_build_data_release(
+            tmp_path=kb_root.parent,
+            app_commit_sha=app_commit_sha,
+            kb_root=kb_root,
+            release_dir=release_dir,
+        )
+        assert r.returncode == 1, f"RELEASE_DIR 非空应 exit 1, 实际 {r.returncode}\n{r.stdout + r.stderr}"
+    finally:
+        shutil.rmtree(release_dir, ignore_errors=True)
 
 
 def test_06_chunks_meta_required_fails(git_clean_check, app_commit_sha, minimal_kb):
