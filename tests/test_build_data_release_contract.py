@@ -399,38 +399,40 @@ def test_11_source_manifest_matches_actual_files(git_clean_check, app_commit_sha
     的 entries 数量 = fixture KB 的可索引文件数 (4, 不含 04_课件 那个)
     """
     kb_root, expected_sha = minimal_kb
-    r = _run_build_data_release(
-        tmp_path=kb_root.parent,
-        app_commit_sha=app_commit_sha,
-        kb_root=kb_root,
-    )
-    # 不强制 exit 0 (sentence-transformers 首次可能慢/失败),
-    # 但 source-files-manifest.json 必须先写出来 (在 [3/8] 步骤)
-    # 如果 build 步骤 fail, 看是否 source-manifest 写了
-    release_dir_maybe = None
-    # 找 source-files-manifest.json
-    candidates = list(kb_root.parent.glob("*/source-files-manifest.json"))
-    if not candidates:
-        # 检查 release_dir 默认值
-        # 脚本不写时, 报 fail
-        pytest.fail(
-            f"build-data-release.sh 未生成 source-files-manifest.json\n"
-            f"stdout: {r.stdout[:1000]}\nstderr: {r.stderr[:1000]}"
+    # 必须用 /tmp 下子目录 (NJX 7/30 严令), pytest tmp_path 在 macOS /private/var/folders/... 不通过
+    import tempfile
+    release_dir = Path(tempfile.mkdtemp(prefix="aog-test-11-", dir="/tmp"))
+    try:
+        r = _run_build_data_release(
+            tmp_path=kb_root.parent,
+            app_commit_sha=app_commit_sha,
+            kb_root=kb_root,
+            release_dir=release_dir,
         )
-    manifest_path = candidates[0]
-    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-    # 04_课件 应被 SKIP_DIRS 排除, 实际 4 个可索引文件
-    assert manifest["total_files"] == 4, (
-        f"source manifest 应有 4 个文件 (2 city_docx + 1 exp_md + 1 cp_md), "
-        f"实际 {manifest['total_files']}: {[e['relative_path'] for e in manifest['entries']]}"
-    )
-    # SHA256 匹配
-    for entry in manifest["entries"]:
-        rel = entry["relative_path"]
-        assert rel in expected_sha, f"manifest 含未知文件 {rel}"
-        assert entry["sha256"] == expected_sha[rel], (
-            f"{rel} SHA256 不一致: manifest={entry['sha256']} actual={expected_sha[rel]}"
+        # 不强制 exit 0 (sentence-transformers 首次可能慢/失败),
+        # 但 source-files-manifest.json 必须先写出来 (在 [3/8] 步骤)
+        # 如果 build 步骤 fail, 看是否 source-manifest 写了
+        manifest_path = release_dir / "source-files-manifest.json"
+        if not manifest_path.exists():
+            pytest.fail(
+                f"build-data-release.sh 未生成 source-files-manifest.json\n"
+                f"stdout: {r.stdout[:1000]}\nstderr: {r.stderr[:1000]}"
+            )
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        # 04_课件 应被 SKIP_DIRS 排除, 实际 4 个可索引文件
+        assert manifest["total_files"] == 4, (
+            f"source manifest 应有 4 个文件 (2 city_docx + 1 exp_md + 1 cp_md), "
+            f"实际 {manifest['total_files']}: {[e['relative_path'] for e in manifest['entries']]}"
         )
+        # SHA256 匹配
+        for entry in manifest["entries"]:
+            rel = entry["relative_path"]
+            assert rel in expected_sha, f"manifest 含未知文件 {rel}"
+            assert entry["sha256"] == expected_sha[rel], (
+                f"{rel} SHA256 不一致: manifest={entry['sha256']} actual={expected_sha[rel]}"
+            )
+    finally:
+        shutil.rmtree(release_dir, ignore_errors=True)
 
 
 def test_12_touch_no_rebuild_interpretation(git_clean_check, app_commit_sha, minimal_kb):
