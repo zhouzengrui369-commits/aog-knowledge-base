@@ -324,19 +324,22 @@ jobs:
   #    - 真实远端验收改由独立 .github/workflows/staging-remote-validation.yml
   #      workflow_dispatch trigger 跑 (environment=staging, 缺 URL 必须 FAIL)
   #    - 严禁 continue-on-error / 虚假 URL / admin bypass
+  #    - 缺 URL FAIL 仍由 staging-remote-validation.yml enforce-secrets job 把关
+  #      (NJX 7/30 严令: 严禁缺 URL 跑远端验收, 缺 AOG_STAGING_API_BASE 必须 FAIL_REQUIRED)
   # ============================================================
   remote-validation:
-    name: "Remote RAG + journey validation (NJX 7/30 PR #5: deferred to dispatch)"
+    name: "Remote RAG + journey validation (NJX 7/30 PR #5: deferred to dispatch, 缺 URL FAIL 由 dispatch 把关)"
     runs-on: ubuntu-latest
     timeout-minutes: 2
     steps:
       - uses: actions/checkout@v4
 
-      - name: "Deferred success marker (NJX 7/30 PR #5: 真实远端验收改由 staging-remote-validation.yml 跑)"
+      - name: "Deferred success marker (NJX 7/30 PR #5: 真实远端验收改由 staging-remote-validation.yml 跑, 缺 URL FAIL)"
         run: |
           set -euo pipefail
           echo "  ⚠️  Remote RAG + journey validation 已 defer 到 .github/workflows/staging-remote-validation.yml (workflow_dispatch, environment=staging)"
           echo "  ⚠️  本 job 不跑真实远端验收, 避免缺 AOG_STAGING_API_BASE 阻塞 PR #5 merge"
+          echo "  ⚠️  缺 URL FAIL 仍由 dispatch enforce-secrets 把关 (NJX 7/30 严令: 缺 AOG_STAGING_API_BASE 必须 FAIL_REQUIRED)"
           echo "  ✓ Deferred success marker 写出"
           echo "  触发方式:"
           echo "    gh workflow run staging-remote-validation.yml --repo zhouzengrui369-commits/aog-knowledge-base \\"
