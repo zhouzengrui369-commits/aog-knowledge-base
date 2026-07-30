@@ -925,16 +925,24 @@ def test_25_FRONTEND_STAGING_SCRIPT_READY():
     assert "缺 URL skip" in sw_content or "缺 URL" in sw_content, (
         "staging-validation.yml remote-validation 缺 URL 应 skip (NJX 7/30 严令 7.1/7.2, 禁缺 URL fail)"
     )
-    # 4. staging-remote-validation.yml 新增 (NJX 7/30 严令 7.3)
+    # 4. staging-remote-validation.yml 新增 (NJX 7/30 严令 7.3 + PR #5 严令更新)
     remote_wf = REPO_ROOT / ".github" / "workflows" / "staging-remote-validation.yml"
     assert remote_wf.exists(), "staging-remote-validation.yml 必须存在 (NJX 7/30 严令 7.3 独立 workflow_dispatch)"
     remote_wf_content = remote_wf.read_text(encoding="utf-8")
     assert "workflow_dispatch" in remote_wf_content, "staging-remote-validation.yml trigger 必须是 workflow_dispatch"
-    assert "test_rag_8query_remote" in remote_wf_content, "staging-remote-validation.yml 必须跑 test_rag_8query_remote"
-    assert "test_journey_10_remote" in remote_wf_content, "staging-remote-validation.yml 必须跑 test_journey_10_remote"
+    # NJX 7/30 PR #5 严令: PII-7a 真 KB Gate 不在 workflow_dispatch 跑, 改由 build-data-release.sh Gate 4 跑
+    # staging-remote-validation.yml 仅 echo PII-7a notice, 不强制 test_rag_8query_remote / test_journey_10_remote
     assert "AOG_STAGING_API_BASE" in remote_wf_content, "staging-remote-validation.yml 缺 URL 必须 FAIL"
+    assert "PII-7a" in remote_wf_content, "staging-remote-validation.yml 必须含 PII-7a notice (NJX 7/30 PR #5 严令)"
+    assert "build-data-release.sh" in remote_wf_content and "Gate 4" in remote_wf_content, (
+        "staging-remote-validation.yml 必须指向 build-data-release.sh Gate 4 跑 PII-7a (NJX 7/30 PR #5 严令)"
+    )
+    # NJX 7/30 PR #4 严令保留: enforce-secrets job 缺 AOG_STAGING_API_BASE → FAIL (严禁 skip)
+    assert "enforce-secrets" in remote_wf_content or "enforce-credentials" in remote_wf_content, (
+        "staging-remote-validation.yml 必须有 enforce-secrets/enforce-credentials job (缺 URL 必须 FAIL)"
+    )
     print(f"  ✓ FRONTEND_STAGING_SCRIPT_READY: build-data-release.sh 3 gates + test_journey_10_remote.py + remote-validation job 强制 URL")
-    print(f"  ✓ FRONTEND_STAGING_SCRIPT_READY: build-data-release.sh 3 gates + test_journey_10_remote.py + remote-validation job 强制 URL")
+    print(f"  ✓ FRONTEND_STAGING_SCRIPT_READY: PII-7a notice in staging-remote-validation.yml (NJX 7/30 PR #5 严令)")
 
 
 def test_26_STAGING_RUNTIME_PREFLIGHT_PR_GREEN():
