@@ -437,9 +437,9 @@ if [ ! -d "$SOURCE_WIKI_DIR" ]; then
 fi
 
 set +e
-"$BACKEND/.venv/bin/python" -u -m scripts.sanitize_wiki_release \
+(cd "$PIPELINE" && "$BACKEND/.venv/bin/python" -u -m scripts.sanitize_wiki_release \
     --source-wiki "$SOURCE_WIKI_DIR" \
-    --release-dir "$RELEASE_DIR" 2>&1 | tail -15
+    --release-dir "$RELEASE_DIR") 2>&1 | tail -15
 SANITIZE_EXIT=${PIPESTATUS[0]}
 set -e
 
