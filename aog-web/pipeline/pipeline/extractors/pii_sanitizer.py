@@ -79,6 +79,23 @@ PHONE_PATTERNS = [
         r"[\-\.]\d{3,4}"                    # -XXXX
         r"(?!\d)"
     ),
+    # 6. D-053: 国际 00 + 1-3位区号 + 7-8位号码 (00853-88984060 澳门 / 0044-... 英国)
+    #   旧 P5 需 4 段分隔, 不 match 00XX-XXXX-XXXX 3 段
+    #   D-053 严令 1 (NJX 7/31 拍板): 覆盖 国际 00 + 1-3位区号 + 7-8位号码 格式
+    re.compile(
+        r"(?<!\d)"
+        r"00\d{1,3}"                        # 00国家码
+        r"[\-\.]\d{7,8}"                    # -XXXXXXX (7-8 digit 号码)
+        r"(?!\d)"
+    ),
+    # 7. D-053: 国际 00 + 1-4位区号 (括号) + 7-8位号码 (0049(0)61053208410 德国)
+    re.compile(
+        r"(?<!\d)"
+        r"00"                                 # 00国际拨号
+        r"\(\d{1,4}\)"                       # (国家码) 括号
+        r"\d{6,}"                            # 6+ 数字 (实际 7-8+)
+        r"(?!\d)"
+    ),
 ]
 
 # === Email pattern (NJX 7/30 PR #5 严令: 标准 email + aog.* sub-domain) ===
@@ -137,6 +154,34 @@ def sanitize_text(text: str) -> str:
     # 再 phone (数字 + -/. / 空格)
     text = sanitize_phone(text)
     return text
+
+
+def is_valid_phone(phone: str) -> bool:
+    """D-053 严令 3: phone 字段 valid 判断 (NJX 7/31 拍板).
+
+    用法: city_meta._extract_contacts 拆黏连后, 每个 phone 单独 validate.
+      - 命中至少一个 PHONE_PATTERNS → valid → 保留原值 (public contact) 或 REDACTED (non-public)
+      - 不命中 → invalid → fail-closed 丢弃 (不进 phone 字段, 避免 owner data 异常污染 PII-7a)
+
+    严禁: 把不 valid phone 当 valid (owner data 异常 phone 漏 pattern 会污染 FTS5, 触发 PII-7a LEAK)
+    严禁: 把 valid phone REDACTED 同时 public 保留 (矛盾, public valid phone 保留是 NJX 严令 3)
+    严禁: 把黏连 (中间含空格 + 数字) 当 valid (D-053 严令 2: 禁止整体 regex 吞掉多个号码)
+    """
+    if not phone or not isinstance(phone, str):
+        return False
+    phone = phone.strip()
+    if not phone:
+        return False
+    # D-053 严令 2: 黏连 (含空格分隔的多个 phone) 整体不 valid
+    # 严禁整体 regex 吞掉多个号码 — 单 phone 不应有空格 + 数字的黏连
+    import re as _re
+    if _re.search(r"\d\s+\d", phone):
+        return False
+    # 用 sanitize_phone 测: valid = 命中 PII pattern (会被 REDACTED)
+    sanitized = sanitize_phone(phone)
+    # 命中 PII pattern 时 sanitize_phone 会 REDACTED, sanitized != phone
+    # 不命中 PII pattern 时 sanitized == phone (没动)
+    return sanitized != phone
 
 
 def sanitize_dict(d: dict, fields: list[str]) -> dict:

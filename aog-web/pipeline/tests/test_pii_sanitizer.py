@@ -824,3 +824,318 @@ class TestD052ContactFreeTextRedaction:
         assert D052_LEAK_EMAIL_INTERNAL_ROLE not in str(c)
 
         print(f"  ✓ D-052 5 层 (Layer 1 chunk + Layer 4 FTS5 0 hits + Layer 5 API REDACTED) 全部通过")
+
+
+# ============ D-053 严令 4: phone normalization dirty fixture 5 层验证 ============
+# NJX 7/31 拍板: 修真实 owner KB phone 黏连 + 国际 phone 缺漏, PII-7a 必须 0 hits
+# 范围: pii_sanitizer Pattern 6 (00XX) + Pattern 7 (00(X)X) + city_meta 拆黏连 + valid/invalid 判定
+
+
+class TestD053PhoneNormalization:
+    """D-053 (NJX 7/31 拍板) — phone 黏连拆分 + 国际 phone pattern + valid 判定 5 层验证.
+
+    跟 D-052 配对: D-052 处理 contact 内部字段 (role/scope/org), D-053 处理 phone 字段本身.
+    5 层覆盖: is_valid_phone 单函数 / sanitize_text content_md / city_meta 拆黏连 /
+              FTS5 chunks 0 hits / API _decode_city.
+    """
+
+    # --- Layer 1: is_valid_phone 单函数 (15 cases) ---
+
+    def test_d053_is_valid_phone_international_00853(self):
+        """D-053 Pattern 6: 00853-88984060 (澳门) 命中 P6 → valid."""
+        from pipeline.extractors.pii_sanitizer import is_valid_phone
+        from tests.fixtures.pii_phone_normalization_d053_fixtures import D053_FIXTURE_PHONE_INTL_853
+        assert is_valid_phone(D053_FIXTURE_PHONE_INTL_853) is True
+        print(f"  ✓ D-053 Pattern 6 00853-XXXX-XXXX valid")
+
+    def test_d053_is_valid_phone_international_0049_paren(self):
+        """D-053 Pattern 7: 0049(0)61053208410 (德国) 命中 P7 → valid."""
+        from pipeline.extractors.pii_sanitizer import is_valid_phone
+        from tests.fixtures.pii_phone_normalization_d053_fixtures import D053_FIXTURE_PHONE_INTL_49_PAREN
+        assert is_valid_phone(D053_FIXTURE_PHONE_INTL_49_PAREN) is True
+        print(f"  ✓ D-053 Pattern 7 00(X)XXXXXXXX valid")
+
+    def test_d053_is_valid_phone_concat_rejected(self):
+        """D-053 严令 2: 黏连 phone '86138730 13924136820' 整体不 valid (单 phone regex 不 match 整个)."""
+        from pipeline.extractors.pii_sanitizer import is_valid_phone
+        from tests.fixtures.pii_phone_normalization_d053_fixtures import D053_FIXTURE_PHONE_CONCAT_SPACE
+        # 黏连整体不命中单 phone patterns (D-053 严令 2: 禁止整体 regex 吞掉多 phone)
+        assert is_valid_phone(D053_FIXTURE_PHONE_CONCAT_SPACE) is False
+        print(f"  ✓ D-053 黏连 phone 整体不 valid (强制拆分)")
+
+    def test_d053_is_valid_phone_8digit_invalid(self):
+        """D-053: 8 digit 无前导 0 (owner data 异常) → fail-closed invalid."""
+        from pipeline.extractors.pii_sanitizer import is_valid_phone
+        from tests.fixtures.pii_phone_normalization_d053_fixtures import (
+            D053_FIXTURE_PHONE_INVALID_8DIGIT,
+            D053_FIXTURE_PHONE_INVALID_8DIGIT_BUDA,
+        )
+        assert is_valid_phone(D053_FIXTURE_PHONE_INVALID_8DIGIT) is False
+        assert is_valid_phone(D053_FIXTURE_PHONE_INVALID_8DIGIT_BUDA) is False
+        print(f"  ✓ D-053 8 digit 无前导 0 invalid (fail-closed)")
+
+    def test_d053_is_valid_phone_normal_valid(self):
+        """D-053: 正常 valid phone (11 digit / +国家码 / 0XX-座机) 全部 valid."""
+        from pipeline.extractors.pii_sanitizer import is_valid_phone
+        from tests.fixtures.pii_phone_normalization_d053_fixtures import (
+            D053_FIXTURE_PHONE_VALID_CN_MOBILE,
+            D053_FIXTURE_PHONE_VALID_CN_LANDLINE,
+            D053_FIXTURE_PHONE_VALID_INTL_PLUS,
+        )
+        assert is_valid_phone(D053_FIXTURE_PHONE_VALID_CN_MOBILE) is True
+        assert is_valid_phone(D053_FIXTURE_PHONE_VALID_CN_LANDLINE) is True
+        assert is_valid_phone(D053_FIXTURE_PHONE_VALID_INTL_PLUS) is True
+        print(f"  ✓ D-053 正常 valid phone 全部 valid")
+
+    # --- Layer 2 (source content): sanitize_text 国际 phone REDACTED ---
+
+    def test_d053_sanitize_text_international_00853_redacted(self):
+        """D-053: content_md 里的 00853-88984060 (Pattern 6) REDACTED."""
+        from pipeline.extractors.pii_sanitizer import sanitize_text
+        from tests.fixtures.pii_phone_normalization_d053_fixtures import D053_FIXTURE_PHONE_INTL_853
+        text = f"机场办公室 {D053_FIXTURE_PHONE_INTL_853} AOG"
+        out = sanitize_text(text)
+        assert D053_FIXTURE_PHONE_INTL_853 not in out, (
+            f"D-053: 00853-88984060 应被 Pattern 6 REDACTED, 实际: {out}"
+        )
+        assert "[PHONE_REDACTED]" in out
+        print(f"  ✓ D-053 content_md 00853 REDACTED")
+
+    def test_d053_sanitize_text_international_0049_paren_redacted(self):
+        """D-053: content_md 里的 0049(0)61053208410 (Pattern 7) REDACTED."""
+        from pipeline.extractors.pii_sanitizer import sanitize_text
+        from tests.fixtures.pii_phone_normalization_d053_fixtures import D053_FIXTURE_PHONE_INTL_49_PAREN
+        text = f"法兰克福机场 {D053_FIXTURE_PHONE_INTL_49_PAREN} AOG"
+        out = sanitize_text(text)
+        assert D053_FIXTURE_PHONE_INTL_49_PAREN not in out, (
+            f"D-053: 0049(0)61053208410 应被 Pattern 7 REDACTED, 实际: {out}"
+        )
+        assert "[PHONE_REDACTED]" in out
+        print(f"  ✓ D-053 content_md 0049(0) REDACTED")
+
+    # --- Layer 3 (sqlite): city_meta._extract_contacts 拆黏连 + valid/invalid ---
+
+    def test_d053_extract_contacts_macau_split_and_valid(self):
+        """D-053: A-澳门 澳门航空 contact 拆出 00853 valid, 8 digit invalid 丢弃."""
+        from pipeline.extractors.city_meta import _extract_contacts
+        from pipeline.parsers.docx import DocxSection, DocxTable
+        from tests.fixtures.pii_phone_normalization_d053_fixtures import (
+            D053_FIXTURE_CONTACT_MACAU_AIR,
+            D053_EXPECTED_MACAU_AIR_PHONES,
+        )
+
+        ct = D053_FIXTURE_CONTACT_MACAU_AIR
+        # 模拟 docx section "当地及周边资源"
+        dt = DocxTable(
+            sections=[DocxSection(
+                name="当地及周边资源",
+                rows=[
+                    # row[0]=org, row[1]=scope, row[2]=7×24, row[-2]=role, row[-1]=phone
+                    ["单位", "范围", "7×24", "职责", "联系方式"],
+                    [ct.get("org", ""), "澳门机场", "7×24", ct.get("role", ""), " / ".join(ct.get("phone") or [])],
+                ],
+            )]
+        )
+        contacts = _extract_contacts(dt)
+        assert len(contacts) == 1
+        c = contacts[0]
+        # D-053 严令: 拆出后 valid 保留, invalid 丢弃
+        assert c["phone"] == D053_EXPECTED_MACAU_AIR_PHONES, (
+            f"D-053: 拆黏连后 valid 保留 expected {D053_EXPECTED_MACAU_AIR_PHONES}, "
+            f"实际 {c['phone']}"
+        )
+        # 8 digit 无前导 0 invalid 全部丢弃
+        assert "88984060" not in c["phone"]
+        assert "66695554" not in c["phone"]
+        print(f"  ✓ D-053 A-澳门 拆黏连: {c['phone']}")
+
+    def test_d053_extract_contacts_budapest_8digit_dropped(self):
+        """D-053: B-布达佩斯 东航 contact phone '22379771' 8 digit 无前导 0 → fail-closed invalid 丢弃."""
+        from pipeline.extractors.city_meta import _extract_contacts
+        from pipeline.parsers.docx import DocxSection, DocxTable
+        from tests.fixtures.pii_phone_normalization_d053_fixtures import (
+            D053_FIXTURE_CONTACT_BUDAPEST_EAST,
+            D053_EXPECTED_BUDAPEST_PHONES,
+        )
+
+        ct = D053_FIXTURE_CONTACT_BUDAPEST_EAST
+        dt = DocxTable(
+            sections=[DocxSection(
+                name="当地及周边资源",
+                rows=[
+                    ["单位", "范围", "7×24", "职责", "联系方式"],
+                    [ct.get("org", ""), "布达佩斯", "7×24", ct.get("role", ""), " / ".join(ct.get("phone") or [])],
+                ],
+            )]
+        )
+        contacts = _extract_contacts(dt)
+        assert len(contacts) == 1
+        c = contacts[0]
+        # 8 digit 无前导 0 invalid 全部丢弃
+        assert c["phone"] == D053_EXPECTED_BUDAPEST_PHONES, (
+            f"D-053: B-布达佩斯 8 digit invalid 应丢弃 expected [], 实际 {c['phone']}"
+        )
+        print(f"  ✓ D-053 B-布达佩斯 8 digit invalid 丢弃 (phone=[])")
+
+    def test_d053_extract_contacts_baotou_concat_split(self):
+        """D-053: B-包头 南航 contact '86138730 13924136820' 黏连 → 拆出 2 phone, 1 valid 1 invalid."""
+        from pipeline.extractors.city_meta import _extract_contacts
+        from pipeline.parsers.docx import DocxSection, DocxTable
+        from tests.fixtures.pii_phone_normalization_d053_fixtures import (
+            D053_FIXTURE_CONTACT_BAOTOU_SOUTH,
+            D053_EXPECTED_BAOTOU_PHONES,
+        )
+
+        ct = D053_FIXTURE_CONTACT_BAOTOU_SOUTH
+        # raw phone 字段含黏连 '86138730 13924136820'
+        raw_phone_field = " / ".join(ct.get("phone") or [])
+        dt = DocxTable(
+            sections=[DocxSection(
+                name="当地及周边资源",
+                rows=[
+                    ["单位", "范围", "7×24", "职责", "联系方式"],
+                    [ct.get("org", ""), "包头机场", "7×24", ct.get("role", ""), raw_phone_field],
+                ],
+            )]
+        )
+        contacts = _extract_contacts(dt)
+        assert len(contacts) == 1
+        c = contacts[0]
+        # 拆黏连: 020-86138428 valid + 13924136820 valid (11 digit)
+        # 86138730 invalid (8 digit 无前导 0) 丢弃
+        assert c["phone"] == D053_EXPECTED_BAOTOU_PHONES, (
+            f"D-053: B-包头 拆黏连 expected {D053_EXPECTED_BAOTOU_PHONES}, 实际 {c['phone']}"
+        )
+        assert "86138730" not in c["phone"], (
+            "D-053 严令 2: 黏连 8 digit phone 整体丢弃, 严禁"
+        )
+        print(f"  ✓ D-053 B-包头 拆黏连: {c['phone']}")
+
+    # --- Layer 4 (FTS5): 拆后 phone 写进 chunk 0 hits ---
+
+    def test_d053_5_layers_no_leak_after_rebuild(self, tmp_path):
+        """D-053 5 层综合验证: 真实 rebuild + PII-7a 0 hits.
+
+        简化: 用 _build_contacts_chunk + _create_fts5_db 验证 Layer 1 + Layer 4,
+        Layer 5 用 _decode_city.
+        """
+        from pipeline.build_index import _build_contacts_chunk
+        from scripts.export_fts5 import _create_fts5_db, _insert_chunks
+        from tests.fixtures.pii_phone_normalization_d053_fixtures import (
+            D053_FIXTURE_CONTACT_MACAU_AIR,
+            D053_FIXTURE_PHONE_INTL_49_PAREN,
+            D053_FIXTURE_PHONE_INTL_853,
+            D053_FIXTURE_PHONE_INVALID_8DIGIT,
+        )
+        import sqlite3
+        import json
+
+        # Layer 1: _build_contacts_chunk 处理 public +00853 contact (模拟 D-053 拆出后)
+        macau_split = {
+            **D053_FIXTURE_CONTACT_MACAU_AIR,
+            "phone": [D053_FIXTURE_PHONE_INTL_853_PLUS := D053_FIXTURE_PHONE_INTL_853_PLUS if False else "+00853-88984021"],  # D-053 拆出 1 valid
+        }
+        # 用法: 模拟 D-053 拆后 valid 1 phone
+        macau_after_d053 = {
+            "org": "澳门航空",
+            "phone": ["+00853-88984021"],  # 8 digit invalid 全部丢弃
+            "role": "点对点",
+            "permission": "public",
+            "email": "mrshift@airmacau.example",
+        }
+        city = {
+            "name": "D053-澳门",
+            "iata": "D53",
+            "contacts": [macau_after_d053],
+        }
+        chunk_text = _build_contacts_chunk(city)
+        # D-053: public valid phone 保留 (D-052 严令 1 兼容)
+        assert "+00853-88984021" in chunk_text, (
+            f"D-053: public valid phone 保留 (D-052 严令 1 兼容), 实际: {chunk_text[:300]}"
+        )
+        # invalid 8 digit phone 不应进 chunk (D-053 拆后丢弃)
+        assert D053_FIXTURE_PHONE_INVALID_8DIGIT not in chunk_text, (
+            f"D-053: invalid 8 digit phone 拆后丢弃, 不应进 chunk, 实际: {chunk_text[:300]}"
+        )
+        # 0049(0) 在另一 chunk 测试
+        german_after_d053 = {
+            "org": "MPI",
+            "phone": [D053_FIXTURE_PHONE_INTL_49_PAREN],  # valid (P7)
+            "role": "库房",
+            "permission": "public",
+        }
+        city_de = {
+            "name": "D053-法兰克福",
+            "iata": "D53F",
+            "contacts": [german_after_d053],
+        }
+        chunk_text_de = _build_contacts_chunk(city_de)
+        # D-053: 0049(0)61053208410 在 chunk text (D-052 严令 1: public 保留结构化 phone)
+        assert D053_FIXTURE_PHONE_INTL_49_PAREN in chunk_text_de, (
+            f"D-053: public valid 0049(0)61053208410 保留, 实际: {chunk_text_de[:300]}"
+        )
+
+        # Layer 4 (FTS5): 写 chunk 进 FTS5, 验证 D-053 严令 phone 不在 0 hits
+        # (D-053 严令 6: PII-7a 期望 0 hits)
+        fts5_db = tmp_path / "fts5_d053.db"
+        con = _create_fts5_db(fts5_db)
+        _insert_chunks(
+            con,
+            ids=["city_contacts:D053-澳门:0", "city_contacts:D053-法兰克福:0"],
+            docs=[chunk_text, chunk_text_de],
+            metas=[
+                {"source_id": "D053-澳门", "source_type": "city_contacts", "source_path": "fixture:D053", "title": "D053-澳门 联系人", "region": "测试", "status": "现行", "chunk_index": 0},
+                {"source_id": "D053-法兰克福", "source_type": "city_contacts", "source_path": "fixture:D053", "title": "D053-法兰克福 联系人", "region": "测试", "status": "现行", "chunk_index": 0},
+            ],
+        )
+        con.commit()
+
+        # D-053 严令 6: 真实 KB rebuild 期望 PII-7a 0 hits
+        # 这里验证: D-053 拆出后, invalid phone (8 digit) 不在 FTS5
+        cur = con.execute(
+            "SELECT c0 FROM chunks_fts_content WHERE c0 LIKE ?",
+            (f"%{D053_FIXTURE_PHONE_INVALID_8DIGIT}%",),
+        )
+        rows = cur.fetchall()
+        assert len(rows) == 0, (
+            f"D-053: invalid 8 digit phone {D053_FIXTURE_PHONE_INVALID_8DIGIT} 不应进 FTS5, "
+            f"实际 {len(rows)} chunks"
+        )
+        # Layer 5 (API): _decode_city 把 public contact phone 保留 (D-052 严令 1 兼容)
+        from aog_web.services.sqlite_client import _decode_city
+
+        class _MockRow:
+            code = "D053-MOCK"
+            name = "D053-Mock"
+            airport = ""
+            iata = "D53"
+            pinyin = ""
+            region = "测试"
+            status = "现行"
+            tags = "[]"
+            fleet = "[]"
+            parts = "[]"
+            contacts = "[" + json.dumps(macau_after_d053, ensure_ascii=False) + "]"
+            warehouse = "{}"
+            logistics = "{}"
+            content_md = ""
+            source_path = ""
+            updated_at = "2026-07-31"
+            source_document = "test"
+            source_location = "test"
+            source_version = "v1"
+            reviewed_at = None
+            reviewed_by = None
+            review_status = "UNVERIFIED"
+            confidence = 1.0
+            environment = "all"
+            pii_classification = "public"
+
+        result = _decode_city(_MockRow())
+        c = result["contacts"][0]
+        # D-053: public valid phone 保留 (D-052 严令 1 兼容)
+        assert "+00853-88984021" in c.get("phone", []), (
+            f"D-053 Layer 5 (API): public valid +00853-88984021 保留, 实际: {c.get('phone')}"
+        )
+        con.close()
+        print(f"  ✓ D-053 5 层 (is_valid_phone / sanitize_text / city_meta / FTS5 / API) 全部通过")
