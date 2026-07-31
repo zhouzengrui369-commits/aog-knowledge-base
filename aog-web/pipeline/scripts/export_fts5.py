@@ -461,22 +461,127 @@ def _insert_cities_from_sqlite(con: sqlite3.Connection, sqlite_path: Path) -> in
     return len(rows)
 
 
-def _insert_wiki_from_staging(con: sqlite3.Connection, wiki_dir: Path) -> int:
-    """P1-1 治本 (NJX 7/27 14:43 拍 🅰️ 双轨方案): 读 pipeline/data/wiki/*.md 写 chunks_fts
+# === D-056 (NJX 7/31 20:12 拍板): wiki release snapshot fail-loud ===
+# 严守 4 项禁止:
+#   - 禁止静默修: 命中 phone/email 原值立即 FAIL, 不 redact
+#   - 禁止跳过: require_wiki=True 时缺 wiki 立即 FAIL
+#   - 禁止 wiki_count=0 绕过: 0 wiki 视为错误状态
+# 严守 source: 禁止隐式读 pipeline/data/wiki, 必须显式 --wiki-dir + --wiki-manifest
+from pipeline.extractors.pii_sanitizer import sanitize_text as _sanitize_text_d056
+import re as _re_d056
 
-    目的: 让 RAG chat 5 段式 query 召到 wiki 页面 (P1-1 优先)
-    输入: pipeline/data/wiki/MOC-{code}-{topic}.md (frontmatter + markdown 内容)
+# D-056: 复用 pii_sanitizer 严令 patterns (D-051 + D-052 + D-053 + PR #5/6/7 merged)
+_D056_PHONE_RE_LIST = [
+    _re_d056.compile(r"(?<!\d)1[3-9]\d{9}(?!\d)"),  # 11 位手机
+    _re_d056.compile(r"(?<!\d)\+\d{1,3}[\-\.]\d{1,4}[\-\.]\d{3,4}[\-\.]\d{3,4}(?!\d)"),  # +国家码
+    _re_d056.compile(r"(?<!\d)0\d{2,3}[\-\.]\d{7,8}(?!\d)"),  # 座机 0xx-xxxx-xxxx
+    _re_d056.compile(r"(?<!\d)0\d{1,2}[\-\.]\d{7,8}(?!\d)"),  # 座机 0X-XXXXXXX
+    _re_d056.compile(r"(?<!\d)00\d{1,3}[\-\.]\d{7,8}(?!\d)"),  # D-053 国际 00
+    _re_d056.compile(r"(?<!\d)00\(\d{1,4}\)\d{6,}(?!\d)"),  # D-053 国际 00(国家码)
+    _re_d056.compile(r"(?<!\d)\d{7,12}(?!\d)"),  # 通用 7-12 位数字
+]
+_D056_EMAIL_RE = _re_d056.compile(
+    r"(?<![A-Za-z0-9._-])[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}"
+)
+
+
+def _d056_check_pii_residual(text: str, where: str) -> None:
+    """D-056 fail-loud: 扫 text 内 phone/email 原值, 命中立即 raise SystemExit(4).
+
+    Args:
+        text: 待扫的文本
+        where: 错误信息里标注位置 (e.g. 'wiki:MOC-X-西安-故障树')
+    """
+    if not text:
+        return
+    for m in _D056_EMAIL_RE.finditer(text):
+        logger.error("D-056 FAIL: %s 残留 email 原值: %s", where, m.group(0))
+        sys.exit(4)
+    for pat in _D056_PHONE_RE_LIST:
+        for m in pat.finditer(text):
+            v = m.group(0)
+            if v == "[PHONE_REDACTED]":
+                continue
+            logger.error("D-056 FAIL: %s 残留 phone 原值: %s", where, v)
+            sys.exit(4)
+
+
+def _insert_wiki_from_staging(
+    con: sqlite3.Connection,
+    wiki_dir: Path,
+    wiki_manifest_path: Optional[Path] = None,
+    require_wiki: bool = False,
+) -> int:
+    """P1-1 治本 (NJX 7/27 14:43 拍 🅰️ 双轨方案): 读 sanitized wiki snapshot 写 chunks_fts
+
+    D-056 (NJX 7/31 20:12 拍板): release 阶段必走 sanitized snapshot
+      - wiki_dir: $RELEASE_DIR/wiki (sanitize_wiki_release.py 输出)
+      - wiki_manifest_path: $RELEASE_DIR/wiki-release-manifest.json (sha + count 校验)
+      - require_wiki=True: 缺 wiki 立即 FAIL (NJX 7/31 严守 4 禁止)
+      - sanitize fail-loud: 任一 wiki 段含 phone/email 原值立即 SystemExit(4)
+      - 禁止静默修 / 跳过 / wiki_count=0 绕过
+      - 禁止隐式读 pipeline/data/wiki (没传 --wiki-dir 默认值, 调用方必须显式)
+
+    输入: $RELEASE_DIR/wiki/MOC-{code}-{topic}.md (frontmatter + markdown 内容, 已 sanitize)
     输出: 1 个 wiki page = 1 个 chunk (整页 1 chunk, 不再切)
           source_type='wiki' 让 fts5_client 的 where filter 命中
           doc_id='MOC-{code}-{topic}' 用于 href /wiki/{code}
     """
+    # D-056 严守 4 禁止: require_wiki 时 wiki_dir 缺失 → FAIL
     if not wiki_dir.exists():
-        logger.warning("wiki_dir not found: %s, skip wiki_fts", wiki_dir)
+        msg = f"wiki_dir not found: {wiki_dir}"
+        if require_wiki:
+            logger.error("D-056 FAIL: %s (require_wiki=True)", msg)
+            sys.exit(4)
+        logger.warning("%s, skip wiki_fts (legacy mode, 严禁 release 用)", msg)
         return 0
     md_files = sorted(wiki_dir.glob("MOC-*.md"))
     if not md_files:
-        logger.info("no wiki files in %s, skip wiki_fts", wiki_dir)
+        msg = f"no MOC-*.md in {wiki_dir}"
+        if require_wiki:
+            logger.error("D-056 FAIL: %s (require_wiki=True, 严禁 wiki_count=0 绕过)", msg)
+            sys.exit(4)
+        logger.info("%s, skip wiki_fts (legacy mode)", msg)
         return 0
+
+    # D-056 校验 wiki_manifest 存在 + sha 对得上 + source_pages == actual md count
+    if wiki_manifest_path:
+        if not wiki_manifest_path.exists():
+            logger.error("D-056 FAIL: wiki_manifest 不存在: %s", wiki_manifest_path)
+            sys.exit(4)
+        try:
+            import json as _json
+            manifest = _json.loads(wiki_manifest_path.read_text(encoding="utf-8"))
+        except Exception as e:
+            logger.error("D-056 FAIL: wiki_manifest 解析失败: %s: %s", wiki_manifest_path, e)
+            sys.exit(4)
+        manifest_source_pages = manifest.get("wiki_source_pages", 0)
+        manifest_sanitized_pages = manifest.get("wiki_sanitized_pages", 0)
+        manifest_residual = manifest.get("residual_pii_matches", -1)
+        if manifest_residual != 0:
+            logger.error(
+                "D-056 FAIL: wiki_manifest residual_pii_matches=%d (必须 0)", manifest_residual
+            )
+            sys.exit(4)
+        if manifest_source_pages != manifest_sanitized_pages:
+            logger.error(
+                "D-056 FAIL: wiki_manifest source(%d) != sanitized(%d)",
+                manifest_source_pages,
+                manifest_sanitized_pages,
+            )
+            sys.exit(4)
+        if manifest_source_pages != len(md_files):
+            logger.error(
+                "D-056 FAIL: wiki_manifest source_pages(%d) != actual md_files(%d)",
+                manifest_source_pages,
+                len(md_files),
+            )
+            sys.exit(4)
+        logger.info(
+            "D-056 wiki_manifest OK: source=%d sanitized=%d residual=%d",
+            manifest_source_pages, manifest_sanitized_pages, manifest_residual,
+        )
+
     logger.info("loading %d wiki pages from %s ...", len(md_files), wiki_dir)
 
     import frontmatter  # type: ignore  # python-frontmatter 包
@@ -493,13 +598,26 @@ def _insert_wiki_from_staging(con: sqlite3.Connection, wiki_dir: Path) -> int:
             content = post.content
             front_matter = dict(post.metadata or {})
 
+        # D-056 fail-loud: sanitize 后若仍残留 phone/email → 立即 FAIL
+        # 严守: 不静默修, 不跳过, 严禁隐式 redact
+        sanitized_content = _sanitize_text_d056(content)
+        if sanitized_content != content:
+            # 严守: 任一 wiki 段含 phone/email 原值立即 FAIL
+            _d056_check_pii_residual(content, f"wiki:{md.name}")
+            # 上面已 sys.exit(4), 不会到这
+        # 自由文本 metadata 也 fail-loud
+        for k, v in front_matter.items():
+            if isinstance(v, str) and v:
+                _d056_check_pii_residual(v, f"wiki:{md.name}:frontmatter:{k}")
+
         code = front_matter.get("code") or md.stem.split("-", 2)[1]  # MOC-X-西安-故障树 → X-西安
         name = front_matter.get("name") or code.split("-", 1)[-1] if "-" in code else code
         topic = front_matter.get("topic") or (md.stem.split("-", 2)[2] if md.stem.count("-") >= 2 else "故障树")
         source_path = front_matter.get("source") or f"pipeline/data/wiki/{md.name}"
         chunk_id = f"wiki:MOC-{code}-{topic}:0"
+        # 用 sanitized_content (虽然 source 已 sanitize, 这里再保险一次)
         fts_rows.append((
-            content, name, source_path, f"MOC-{code}-{topic}", "wiki", "", "", f"MOC-{code}-{topic}", 0,
+            sanitized_content, name, source_path, f"MOC-{code}-{topic}", "wiki", "", "", f"MOC-{code}-{topic}", 0,
         ))
         meta_rows.append((
             chunk_id, f"MOC-{code}-{topic}", "wiki", source_path, name, "", "", f"MOC-{code}-{topic}", 0,
@@ -605,12 +723,34 @@ def main():
     p.add_argument("--sqlite", type=Path, default=Path("../backend/data/aog.db"), help="aog.db (元数据)")
     p.add_argument("--out", type=Path, default=Path("../backend/data/fts5_index.db"), help="FTS5 db out path")
     p.add_argument("--no-smoke", action="store_true", help="skip smoke test")
+    # D-056 (NJX 7/31 20:12 拍板): wiki release snapshot fail-loud
+    p.add_argument(
+        "--wiki-dir",
+        type=Path,
+        default=None,
+        help="D-056: sanitized wiki 目录 (e.g. $RELEASE_DIR/wiki). 严禁 release 隐式读 pipeline/data/wiki",
+    )
+    p.add_argument(
+        "--wiki-manifest",
+        type=Path,
+        default=None,
+        help="D-056: wiki-release-manifest.json (sha + count 校验, sanitize_wiki_release.py 输出)",
+    )
+    p.add_argument(
+        "--require-wiki",
+        action="store_true",
+        help="D-056: 缺 wiki 立即 FAIL (严禁 wiki_count=0 绕过, release 必须 True)",
+    )
     args = p.parse_args()
 
     started = time.time()
     args.chroma = args.chroma.resolve()
     args.sqlite = args.sqlite.resolve()
     args.out = args.out.resolve()
+    if args.wiki_dir:
+        args.wiki_dir = args.wiki_dir.resolve()
+    if args.wiki_manifest:
+        args.wiki_manifest = args.wiki_manifest.resolve()
 
     if not args.chroma.exists():
         logger.error("chroma path not found: %s", args.chroma)
@@ -631,8 +771,22 @@ def main():
     n_cities = _insert_cities_from_sqlite(con, args.sqlite)
     n_core = _insert_core_plans_from_sqlite(con, args.sqlite)
     # P1-1 治本 (NJX 7/27 14:43 拍 🅰️): wiki staging → fts5
-    wiki_dir = Path(__file__).resolve().parent.parent / "data" / "wiki"
-    n_wiki = _insert_wiki_from_staging(con, wiki_dir)
+    # D-056: release 阶段必走 sanitized snapshot (--wiki-dir 显式传, --require-wiki 强约束)
+    if args.wiki_dir is None:
+        # 兼容旧调用 (非 release 路径, e.g. dev 单测 / 本地 rebuild)
+        # 严禁 release 用, release 必须显式 --wiki-dir
+        wiki_dir = Path(__file__).resolve().parent.parent / "data" / "wiki"
+        logger.warning(
+            "D-056: --wiki-dir 未设, fallback 到 %s (仅供 dev/单测, release 必须显式 --wiki-dir)",
+            wiki_dir,
+        )
+    else:
+        wiki_dir = args.wiki_dir
+    n_wiki = _insert_wiki_from_staging(
+        con, wiki_dir,
+        wiki_manifest_path=args.wiki_manifest,
+        require_wiki=args.require_wiki,
+    )
 
     # 5. 导出 chunks_meta.json
     _export_chunks_meta_json(args.out.parent, ids, metas)

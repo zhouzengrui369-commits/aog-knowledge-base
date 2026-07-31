@@ -4,7 +4,7 @@
 # NJX 7/30 裁决 (PR #4):
 #   1. 真实从 AOG_KB_ROOT 重建 aog.db / fts5_index.db (严禁 cp backend/data)
 #   2. 严禁 mtime/freshness check (mtime 不是数据身份)
-#   3. release bundle 7 件套 (含 chunks_meta.json 必填)
+#   3. release bundle 9 件套 (D-056 加 wiki/ + wiki-release-manifest.json)
 #   4. 真 PII Gate (绑定 AOG_DB_PATH / FTS5_TEST_PATH, 7 项真实验证)
 #   5. release-manifest.json 只在所有 Gate 成功后写 (含 pii_gate.* 真实执行结果)
 #
@@ -24,10 +24,10 @@
 #   release-manifest.json
 #
 # 退出码:
-#   0 = 全过 (前置校验 + build + 7 件套 + 8 RAG + PII Gate 全 PASS)
+#   0 = 全过 (前置校验 + build + 9 件套 + 8 RAG + PII Gate 全 PASS)
 #   1 = 前置校验失败 (参数 / 路径 / git / APP_COMMIT_SHA)
 #   2 = build_index / export_fts5 失败
-#   3 = 7 件套缺失
+#   3 = 9 件套缺失 (D-056 加 wiki/ + wiki-release-manifest.json)
 #   4 = PII Gate 失败 (NJX 7/30 严令)
 #   5 = 8 RAG 回归失败 (任何 query 0 命中)
 
@@ -421,6 +421,71 @@ fi
 
 echo "  ✓ files_failed=[] (0 失败)"
 
+# ====== 4.5 D-056: 构建 sanitized wiki release snapshot (FTS5 前置) ======
+# NJX 7/31 20:12 拍板 D-056_WIKI_RELEASE_SNAPSHOT_BYPASS:
+#   release 阶段先 sanitize wiki, 严禁 export_fts5 隐式读 pipeline/data/wiki
+#   严守 4 禁止: 静默修 / 跳过 / wiki_count=0 绕过 / 隐式读 source
+echo
+echo "[4.5/8] D-056: 构建 sanitized wiki release snapshot..."
+
+# D-056 必填: source wiki 来自 project root (aog-web/pipeline/data/wiki, 跟 KB content 分离)
+SOURCE_WIKI_DIR="$REPO_ROOT/aog-web/pipeline/data/wiki"
+if [ ! -d "$SOURCE_WIKI_DIR" ]; then
+    echo "  ✗ FAIL D-056: source wiki 不存在: $SOURCE_WIKI_DIR" >&2
+    echo "  必须 REPO_ROOT=/abs/path/to/AOG知识库 (项目根目录, 含 aog-web/pipeline/data/wiki)" >&2
+    exit 6
+fi
+
+set +e
+"$BACKEND/.venv/bin/python" -u -m scripts.sanitize_wiki_release \
+    --source-wiki "$SOURCE_WIKI_DIR" \
+    --release-dir "$RELEASE_DIR" 2>&1 | tail -15
+SANITIZE_EXIT=${PIPESTATUS[0]}
+set -e
+
+if [ "$SANITIZE_EXIT" -ne 0 ]; then
+    echo "  ✗ FAIL D-056: sanitize_wiki_release exit $SANITIZE_EXIT" >&2
+    echo "  严守 4 禁止: 静默修 / 跳过 / wiki_count=0 绕过 / 隐式读 source" >&2
+    exit 6
+fi
+
+# D-056 必填: wiki-release-manifest.json
+WIKI_MANIFEST="$RELEASE_DIR/wiki-release-manifest.json"
+if [ ! -f "$WIKI_MANIFEST" ]; then
+    echo "  ✗ FAIL D-056: wiki-release-manifest.json 未生成" >&2
+    exit 6
+fi
+
+# D-056 抽 manifest 字段 (NJX 拍板 4 项: policy_version / wiki_source_pages /
+#   wiki_sanitized_pages / residual_pii_matches=0)
+D056_POLICY_VERSION="$(python3 -c "import json; print(json.load(open('$WIKI_MANIFEST'))['policy_version'])" 2>/dev/null || echo "missing")"
+D056_WIKI_SOURCE_PAGES="$(python3 -c "import json; print(json.load(open('$WIKI_MANIFEST'))['wiki_source_pages'])" 2>/dev/null || echo 0)"
+D056_WIKI_SANITIZED_PAGES="$(python3 -c "import json; print(json.load(open('$WIKI_MANIFEST'))['wiki_sanitized_pages'])" 2>/dev/null || echo 0)"
+D056_RESIDUAL_PII="$(python3 -c "import json; print(json.load(open('$WIKI_MANIFEST'))['residual_pii_matches'])" 2>/dev/null || echo -1)"
+D056_WIKI_MANIFEST_SHA256="$(shasum -a 256 "$WIKI_MANIFEST" | awk '{print $1}')"
+
+if [ "$D056_POLICY_VERSION" != "d056-wiki-release-v1" ]; then
+    echo "  ✗ FAIL D-056: policy_version=$D056_POLICY_VERSION (必须 d056-wiki-release-v1)" >&2
+    exit 6
+fi
+if [ "$D056_RESIDUAL_PII" != "0" ]; then
+    echo "  ✗ FAIL D-056: residual_pii_matches=$D056_RESIDUAL_PII (必须 0)" >&2
+    exit 6
+fi
+if [ "$D056_WIKI_SOURCE_PAGES" != "$D056_WIKI_SANITIZED_PAGES" ]; then
+    echo "  ✗ FAIL D-056: source($D056_WIKI_SOURCE_PAGES) != sanitized($D056_WIKI_SANITIZED_PAGES)" >&2
+    exit 6
+fi
+if [ "$D056_WIKI_SOURCE_PAGES" -le 0 ]; then
+    echo "  ✗ FAIL D-056: wiki_source_pages=$D056_WIKI_SOURCE_PAGES (严禁 wiki_count=0 绕过)" >&2
+    exit 6
+fi
+
+# D-056: 校验 source wiki 未被修改 (sanitize_wiki_release 自身已校验, 这里再冗余一次)
+SOURCE_WIKI_SHA_BEFORE="$(find "$SOURCE_WIKI_DIR" -name "MOC-*.md" -type f -exec shasum -a 256 {} \; | sort | shasum -a 256 | awk '{print $1}')"
+
+echo "  ✓ D-056 sanitized wiki OK: source=$D056_WIKI_SOURCE_PAGES pages, residual=0, manifest=$D056_WIKI_MANIFEST_SHA256[:12]"
+
 # ====== 5. 真重建 fts5_index.db + chunks_meta.json ======
 
 echo
@@ -433,7 +498,10 @@ set +e
 "$PIPELINE/.venv/bin/python" -u -m scripts.export_fts5 \
     --chroma "$RELEASE_DIR/chroma" \
     --sqlite "$RELEASE_DIR/aog.db" \
-    --out "$RELEASE_DIR/fts5_index.db" 2>&1 | tail -25
+    --out "$RELEASE_DIR/fts5_index.db" \
+    --wiki-dir "$RELEASE_DIR/wiki" \
+    --wiki-manifest "$WIKI_MANIFEST" \
+    --require-wiki 2>&1 | tail -25
 EXPORT_FTS5_EXIT=${PIPESTATUS[0]}
 set -e
 
@@ -441,6 +509,14 @@ if [ "$EXPORT_FTS5_EXIT" -ne 0 ]; then
     echo "  ✗ FAIL: export_fts5 exit $EXPORT_FTS5_EXIT" >&2
     exit 2
 fi
+
+# D-056: 校验 source wiki 仍未被修改 (sanitize + export 后都不能动 source)
+SOURCE_WIKI_SHA_AFTER="$(find "$SOURCE_WIKI_DIR" -name "MOC-*.md" -type f -exec shasum -a 256 {} \; | sort | shasum -a 256 | awk '{print $1}')"
+if [ "$SOURCE_WIKI_SHA_BEFORE" != "$SOURCE_WIKI_SHA_AFTER" ]; then
+    echo "  ✗ FAIL D-056: source wiki 哈希变更 (严禁 sanitize/export 期间动 source)" >&2
+    exit 6
+fi
+echo "  ✓ D-056 source wiki 未被修改 (sha256 校验 OK)"
 
 # export_fts5 会把 chunks_meta.json 写到 out.parent = $RELEASE_DIR
 if [ ! -f "$RELEASE_DIR/fts5_index.db" ]; then
@@ -487,10 +563,10 @@ print(f'  ✓ build_manifest 身份: build_commit={row[1][:12]} src_hash={row[5]
 con.close()
 "
 
-# ====== 6. 7 件套 release bundle 必填校验 ======
+# ====== 6. 9 件套 release bundle 必填校验 (D-056 加 wiki/ + wiki-release-manifest.json) ======
 
 echo
-echo "[6/8] 7 件套 release bundle 必填校验..."
+echo "[6/8] 9 件套 release bundle 必填校验 (D-056 加 wiki)..."
 
 declare -a REQUIRED_ARTIFACTS=(
     "aog.db"
@@ -498,6 +574,7 @@ declare -a REQUIRED_ARTIFACTS=(
     "chunks_meta.json"
     "index_stats.json"
     "source-files-manifest.json"
+    "wiki-release-manifest.json"
 )
 MISSING_COUNT=0
 for art in "${REQUIRED_ARTIFACTS[@]}"; do
@@ -510,11 +587,21 @@ if [ ! -d "$RELEASE_DIR/chroma" ]; then
     echo "  ✗ FAIL: 缺 $RELEASE_DIR/chroma/ 目录" >&2
     MISSING_COUNT=$((MISSING_COUNT + 1))
 fi
+if [ ! -d "$RELEASE_DIR/wiki" ]; then
+    echo "  ✗ FAIL: 缺 $RELEASE_DIR/wiki/ 目录 (D-056 必填)" >&2
+    MISSING_COUNT=$((MISSING_COUNT + 1))
+fi
 if [ "$MISSING_COUNT" -gt 0 ]; then
     echo "  ✗ FAIL: release bundle 缺 $MISSING_COUNT 件, 严禁发布" >&2
     exit 3
 fi
-echo "  ✓ 6 文件 + 1 目录 (7 件套) 全在"
+# D-056: 校验 wiki/ 目录里 MOC-*.md 数 == wiki-release-manifest.json 声明数
+WIKI_ACTUAL_COUNT="$(ls "$RELEASE_DIR/wiki/MOC-*.md" 2>/dev/null | wc -l | tr -d ' ')"
+if [ "$WIKI_ACTUAL_COUNT" != "$D056_WIKI_SANITIZED_PAGES" ]; then
+    echo "  ✗ FAIL: wiki/ 实际 MOC-*.md ($WIKI_ACTUAL_COUNT) != manifest 声明 ($D056_WIKI_SANITIZED_PAGES)" >&2
+    exit 3
+fi
+echo "  ✓ 7 文件 + 2 目录 (9 件套) 全在, wiki/ MOC-*.md=$WIKI_ACTUAL_COUNT"
 
 # ====== 7. 8 RAG 回归 (绑定 FTS5_TEST_PATH=$RELEASE_DIR/fts5_index.db) ======
 
@@ -1207,6 +1294,20 @@ cat > "$RELEASE_MANIFEST" <<EOF
       "path": "$RELEASE_DIR/source-files-manifest.json",
       "sha256": "$SOURCE_MANIFEST_SHA256"
     },
+    "wiki/": {
+      "path": "$RELEASE_DIR/wiki",
+      "type": "directory",
+      "policy_version": "d056-wiki-release-v1",
+      "page_count": $D056_WIKI_SANITIZED_PAGES
+    },
+    "wiki-release-manifest.json": {
+      "path": "$RELEASE_DIR/wiki-release-manifest.json",
+      "sha256": "$D056_WIKI_MANIFEST_SHA256",
+      "policy_version": "d056-wiki-release-v1",
+      "wiki_source_pages": $D056_WIKI_SOURCE_PAGES,
+      "wiki_sanitized_pages": $D056_WIKI_SANITIZED_PAGES,
+      "residual_pii_matches": $D056_RESIDUAL_PII
+    },
     "chroma/": {
       "path": "$RELEASE_DIR/chroma",
       "type": "directory"
@@ -1231,11 +1332,19 @@ cat > "$RELEASE_MANIFEST" <<EOF
       "forbidden_hits": $PII7A_FORBIDDEN_HITS,
       "conflicted_values": $PII7A_CONFLICTED_VALUES,
       "values_checked": $PII7A_VALUES_CHECKED
+    },
+    "d056_wiki_release": {
+      "policy_version": "$D056_POLICY_VERSION",
+      "wiki_manifest_sha256": "$D056_WIKI_MANIFEST_SHA256",
+      "wiki_source_pages": $D056_WIKI_SOURCE_PAGES,
+      "wiki_sanitized_pages": $D056_WIKI_SANITIZED_PAGES,
+      "residual_pii_matches": $D056_RESIDUAL_PII
     }
   },
   "deploy_contract": {
     "next_step": "Local release rehearsal PASS. NJX review 15 receipt items + approve OWNER_PHYSICAL_OPS (CloudBase env / COS bucket / MINIMAX_API_KEY / 充值). Then NJX upload to staging COS bucket + deploy aog-api-staging.",
-    "blocked_action": "严禁回退到 /data 路径或 cp backend/data; 必须用 /tmp 真实从 AOG_KB_ROOT 重建"
+    "blocked_action": "严禁回退到 /data 路径或 cp backend/data; 必须用 /tmp 真实从 AOG_KB_ROOT 重建",
+    "d056_wiki_release": "D-056 (NJX 7/31 20:12 拍板): release 必走 sanitized wiki snapshot, 严守 4 禁止 (静默修 / 跳过 / wiki_count=0 绕过 / 隐式读 source). source wiki 严禁修改. 详查 gates_passed.d056_wiki_release + artifacts.wiki-release-manifest.json."
   }
 }
 EOF
@@ -1243,7 +1352,7 @@ EOF
 echo "  ✓ release-manifest.json 已写: $RELEASE_MANIFEST"
 echo
 echo "=== build-data-release.sh 全过, 8 gates PASS ==="
-echo "  artifacts: 7 件套 (aog.db + chroma/ + fts5_index.db + chunks_meta.json + index_stats.json + source-files-manifest.json + release-manifest.json)"
+echo "  artifacts: 9 件套 (aog.db + chroma/ + fts5_index.db + chunks_meta.json + index_stats.json + source-files-manifest.json + release-manifest.json + wiki/ + wiki-release-manifest.json)"
 echo "  next: NJX review 15 receipt items + approve OWNER_PHYSICAL_OPS"
 echo "  then NJX upload to staging COS bucket + deploy aog-api-staging"
 exit 0
