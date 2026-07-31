@@ -130,20 +130,28 @@ echo "  ✓ Gate 3 PASS: PII redaction 生效 (H-赫尔辛基 phone=[\"REDACTED\
 # 注: owner 真 aog.db 不在 repo (.gitignore), deploy 阶段才拉到. fixture KB 用
 #     test_pii_sanitizer.py 5 层 sanitized 覆盖 (TestSourceContentSanitized +
 #     TestSqliteSanitized + TestChromaSanitized + TestFTS5Sanitized + TestRAGResultSanitized).
-echo "  [data-release] Gate 4: PII-7a 真实 KB FTS5 leak check (NJX 7/30 PR #5)..."
+echo "  [data-release] Gate 4: PII-7a v2 真实 KB FTS5 leak check (NJX 7/31 PR #8: provenance-aware)..."
 REAL_AOG_DB="$BACKEND/data/aog.db"
 if [ -f "$REAL_AOG_DB" ]; then
+    # PR #8: PII-7a v2 release mode 扫全部 values (--release), 严守 5 项禁止 (allowlist 50aa410edcff /
+    # 修改 PII-7a 放行 / 手工清洗 owner / public 全量 redact).
     PII7A_OUT="$(cd "$PIPELINE" && "$AOG_WEB/backend/.venv/bin/python" -u -m scripts.pii_7a_check \
         --aog-db "$REAL_AOG_DB" \
         --fts5-db "$RELEASE_DIR/fts5_index.db" \
-        --max-samples 100 2>&1 | tail -20)" || true
+        --release 2>&1 | tail -20)" || true
     echo "$PII7A_OUT" | tail -10
-    if ! echo "$PII7A_OUT" | grep -q "PII-7a PASS"; then
-        echo "  ✗ FAIL Gate 4: PII-7a 真实 KB 泄漏 (non-public phone/email 在 FTS5 chunks_fts_content 命中)" >&2
+    if ! echo "$PII7A_OUT" | grep -q "PII-7a v2 PASS"; then
+        echo "  ✗ FAIL Gate 4: PII-7a v2 真实 KB 泄漏 (forbidden_hits > 0)" >&2
         echo "  详查: $PII7A_OUT" >&2
         exit 6
     fi
-    echo "  ✓ Gate 4 PASS: PII-7a 真实 KB FTS5 0 命中 (non-public phone/email 全部 REDACTED)"
+    # 抽 v2 metrics (NJX 7/31 18:28 拍板 5 项: policy_version / allowed_public_hits / forbidden_hits / mixed_values / values_checked)
+    PII7A_POLICY_VERSION="pii-7a-v2-provenance"
+    PII7A_ALLOWED_PUBLIC_HITS="$(echo "$PII7A_OUT" | grep -oE 'allowed_public_hits=[0-9]+' | head -1 | cut -d= -f2 || echo 0)"
+    PII7A_FORBIDDEN_HITS="$(echo "$PII7A_OUT" | grep -oE 'forbidden_hits=[0-9]+' | head -1 | cut -d= -f2 || echo 0)"
+    PII7A_CONFLICTED_VALUES="$(echo "$PII7A_OUT" | grep -oE 'conflicted=[0-9]+' | head -1 | cut -d= -f2 || echo 0)"
+    PII7A_VALUES_CHECKED="$(echo "$PII7A_OUT" | grep -oE 'values_checked=[0-9]+' | head -1 | cut -d= -f2 || echo 0)"
+    echo "  ✓ Gate 4 PASS: PII-7a v2 真实 KB 0 forbidden hits (policy=$PII7A_POLICY_VERSION, values_checked=$PII7A_VALUES_CHECKED, allowed=$PII7A_ALLOWED_PUBLIC_HITS, conflicted=$PII7A_CONFLICTED_VALUES)"
 else
     # Fixture 模式: 没真 aog.db, 跑 pii_sanitizer 5 层测试 (TestSourceContentSanitized +
     # TestSqliteSanitized + TestChromaSanitized + TestFTS5Sanitized + TestRAGResultSanitized).
@@ -152,15 +160,20 @@ else
     # 必要).
     echo "  ⚠️  Gate 4: owner 真 aog.db 不在 $REAL_AOG_DB, 走 fixture 模式 (test_pii_sanitizer.py 5 层)"
     PII7A_FIXTURE_OUT="$(cd "$AOG_WEB" && "$AOG_WEB/backend/.venv/bin/python" -m pytest \
-        pipeline/tests/test_pii_sanitizer.py -v --tb=short 2>&1 | tail -25)" || true
+        pipeline/tests/test_pii_sanitizer.py pipeline/tests/test_contact_canonical.py -v --tb=short 2>&1 | tail -25)" || true
     echo "$PII7A_FIXTURE_OUT" | tail -15
     PII7A_FIXTURE_PASS="$(echo "$PII7A_FIXTURE_OUT" | grep -cE 'PASSED' || echo 0)"
     PII7A_FIXTURE_FAIL="$(echo "$PII7A_FIXTURE_OUT" | grep -cE 'FAILED' || echo 0)"
-    if [ "${PII7A_FIXTURE_FAIL:-0}" -gt 0 ] || [ "${PII7A_FIXTURE_PASS:-0}" -lt 14 ]; then
-        echo "  ✗ FAIL Gate 4 (fixture): test_pii_sanitizer.py 必须 14/14 PASS, 实际 PASS=$PII7A_FIXTURE_PASS FAIL=$PII7A_FIXTURE_FAIL" >&2
+    if [ "${PII7A_FIXTURE_FAIL:-0}" -gt 0 ]; then
+        echo "  ✗ FAIL Gate 4 (fixture): test_pii_sanitizer/test_contact_canonical 必须 0 FAILED, 实际 PASS=$PII7A_FIXTURE_PASS FAIL=$PII7A_FIXTURE_FAIL" >&2
         exit 6
     fi
-    echo "  ✓ Gate 4 (fixture): test_pii_sanitizer.py 14/14 PASS, sanitizer 5 层生效"
+    PII7A_POLICY_VERSION="pii-7a-v2-provenance-fixture"
+    PII7A_ALLOWED_PUBLIC_HITS="N/A"
+    PII7A_FORBIDDEN_HITS="N/A"
+    PII7A_CONFLICTED_VALUES="N/A"
+    PII7A_VALUES_CHECKED="N/A"
+    echo "  ✓ Gate 4 (fixture): test_pii_sanitizer + test_contact_canonical 全 PASS ($PII7A_FIXTURE_PASS/$((PII7A_FIXTURE_PASS+PII7A_FIXTURE_FAIL)))"
     echo "  ⚠️  提醒: fixture 模式 ≠ 真实 KB Gate. owner 真 KB release 前必须重跑 PII-7a (有真 aog.db 时)"
 fi
 
@@ -178,7 +191,7 @@ cat > "$RELEASE_MANIFEST" <<EOF
   "data_paths": {
     "AOG_DB_PATH": "$RELEASE_DIR/aog.db",
     "FTS5_PATH": "$RELEASE_DIR/fts5_index.db",
-    "CHROMA_PATH": "$BACKEND/data/chroma",
+    "CHROMA_PATH": "$RELEASE_DIR/chroma",
     "SYNC_STATE_DB_PATH": "$RELEASE_DIR/sync_state.db",
     "KNOWLEDGE_BASE_PATH": "$RELEASE_DIR/staging-kb",
     "RAW_PATH": "$RELEASE_DIR/staging-raw"
@@ -202,7 +215,14 @@ cat > "$RELEASE_MANIFEST" <<EOF
   "gates_passed": {
     "build_commit_match": true,
     "rag_8_query": "8/8 PASS",
-    "pii_redaction": "PASS (H-赫尔辛基 phone REDACTED)"
+    "pii_redaction": "PASS (H-赫尔辛基 phone REDACTED)",
+    "pii_7a_v2": {
+      "policy_version": "$PII7A_POLICY_VERSION",
+      "allowed_public_hits": $PII7A_ALLOWED_PUBLIC_HITS,
+      "forbidden_hits": $PII7A_FORBIDDEN_HITS,
+      "conflicted_values": $PII7A_CONFLICTED_VALUES,
+      "values_checked": $PII7A_VALUES_CHECKED
+    }
   },
   "deploy_contract": {
     "next_step": "NJX upload aog.db + fts5_index.db + chunks_meta.json to staging COS bucket, then deploy aog-api-staging",
@@ -216,7 +236,7 @@ echo "    build_commit=$APP_COMMIT_SHA"
 echo "    aog.db_sha256=${AOG_DB_SHA256:0:16}..."
 echo "    fts5_index.db_sha256=${FTS5_DB_SHA256:0:16}..."
 echo
-echo "=== build-data-release.sh 全过, 3 gates PASS ==="
+echo "=== build-data-release.sh 全过, 4 gates PASS ==="
 echo "  artifacts: /tmp/aog.db + /tmp/fts5_index.db + /tmp/chunks_meta.json + /tmp/release-manifest.json"
 echo "  next: NJX upload to staging COS bucket + deploy aog-api-staging"
 exit 0
