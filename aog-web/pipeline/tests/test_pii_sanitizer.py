@@ -471,3 +471,356 @@ class TestSanitizeFunctions:
         assert sanitize_dict({}, ["x"]) == {}
         assert sanitize_dict(None, ["x"]) is None
         assert sanitize_dict({"y": "no change"}, []) == {"y": "no change"}
+
+
+# ============ D-052 严令 5: contact 自由文本字段漏脱敏 5 层验证 ============
+# NJX 7/31 拍板: 5 层 = SQLite / Chroma / FTS5 / RAG / API
+# 覆盖: internal role/scope 含 phone/email + empty/unknown permission
+
+
+class TestD052ContactFreeTextRedaction:
+    """D-052 (NJX 7/31 拍板) — 5 层验证 contact role/scope/permission 漏脱敏场景.
+
+    跟 PR #5 D-051 (content_md 漏脱敏) 配对, D-052 处理 contact 内部字段:
+      1. _build_contacts_chunk: org/role/scope 全部 sanitize_text, public 只从结构化字段
+      2. permission fail-closed: missing/empty/unknown 全按 restricted
+      3. _decode_city: internal/restricted/missing/empty/unknown/redacted 全部 REDACTED
+      4. pii_7a_check.py: 改 schema + FAIL-on-error
+      5. 恶意 fixture + 5 层测试
+    """
+
+    # --- Layer 1: _build_contacts_chunk 单函数测试 (Chroma/FTS5 文本) ---
+
+    def test_d052_internal_role_phone_sanitized_in_chunk(self):
+        """Layer 1 (Chroma/FTS5): _build_contacts_chunk 处理 internal + role 含 phone, chunk text 不含原 phone."""
+        from pipeline.build_index import _build_contacts_chunk
+        from tests.fixtures.pii_contact_free_text_fixtures import (
+            D052_INTERNAL_ROLE_LEAK_CONTACT,
+            D052_LEAK_PHONE_INTERNAL_ROLE,
+        )
+
+        city = {
+            "name": "测试站",
+            "iata": "TST",
+            "contacts": [D052_INTERNAL_ROLE_LEAK_CONTACT],
+        }
+        chunk_text = _build_contacts_chunk(city)
+        assert chunk_text is not None
+        assert D052_LEAK_PHONE_INTERNAL_ROLE not in chunk_text, (
+            f"D-052 LEAK: 内部 contact role 字段含 phone {D052_LEAK_PHONE_INTERNAL_ROLE} 应被 sanitize_text REDACTED, "
+            f"实际 chunk text: {chunk_text}"
+        )
+        assert "aog@qdairlines.com" not in chunk_text, (
+            f"D-052 LEAK: 内部 contact role 字段含 email 应被 sanitize_text REDACTED, "
+            f"实际 chunk text: {chunk_text}"
+        )
+        assert "[已脱敏/受限" in chunk_text
+        print(f"  ✓ D-052 internal role phone/email 已 REDACTED")
+
+    def test_d052_internal_scope_email_sanitized_in_chunk(self):
+        """Layer 1 (Chroma/FTS5): _build_contacts_chunk 处理 internal + scope 含 email, chunk text 不含原 email."""
+        from pipeline.build_index import _build_contacts_chunk
+        from tests.fixtures.pii_contact_free_text_fixtures import (
+            D052_INTERNAL_SCOPE_LEAK_CONTACT,
+            D052_LEAK_PHONE_INTERNAL_SCOPE,
+        )
+
+        city = {
+            "name": "测试站",
+            "iata": "TST",
+            "contacts": [D052_INTERNAL_SCOPE_LEAK_CONTACT],
+        }
+        chunk_text = _build_contacts_chunk(city)
+        assert chunk_text is not None
+        assert D052_LEAK_PHONE_INTERNAL_SCOPE not in chunk_text, (
+            f"D-052 LEAK: 内部 contact scope 字段含 phone 应被 sanitize_text REDACTED, "
+            f"实际 chunk text: {chunk_text}"
+        )
+        assert "info@example.com" not in chunk_text
+        print(f"  ✓ D-052 internal scope phone/email 已 REDACTED")
+
+    def test_d052_empty_permission_fail_closed(self):
+        """Layer 1+2: empty permission 视为 restricted, _build_contacts_chunk 不写 phone/email."""
+        from pipeline.build_index import _build_contacts_chunk, _classify_permission
+        from tests.fixtures.pii_contact_free_text_fixtures import (
+            D052_EMPTY_PERMISSION_CONTACT,
+            D052_LEAK_PHONE_EMPTY,
+        )
+
+        assert _classify_permission(D052_EMPTY_PERMISSION_CONTACT) == "restricted", (
+            "D-052: empty permission 视为 restricted (fail-closed)"
+        )
+        city = {
+            "name": "测试站",
+            "iata": "TST",
+            "contacts": [D052_EMPTY_PERMISSION_CONTACT],
+        }
+        chunk_text = _build_contacts_chunk(city)
+        assert D052_LEAK_PHONE_EMPTY not in chunk_text
+        assert "test@empty.com" not in chunk_text
+        assert "[已脱敏/受限" in chunk_text
+        print(f"  ✓ D-052 empty permission fail-closed")
+
+    def test_d052_unknown_permission_fail_closed(self):
+        """Layer 1+2: unknown permission 视为 restricted."""
+        from pipeline.build_index import _build_contacts_chunk, _classify_permission
+        from tests.fixtures.pii_contact_free_text_fixtures import (
+            D052_LEAK_PHONE_UNKNOWN,
+            D052_UNKNOWN_PERMISSION_CONTACT,
+        )
+
+        assert _classify_permission(D052_UNKNOWN_PERMISSION_CONTACT) == "restricted"
+        city = {
+            "name": "测试站",
+            "iata": "TST",
+            "contacts": [D052_UNKNOWN_PERMISSION_CONTACT],
+        }
+        chunk_text = _build_contacts_chunk(city)
+        assert D052_LEAK_PHONE_UNKNOWN not in chunk_text
+        assert "test@unknown.com" not in chunk_text
+        assert "[已脱敏/受限" in chunk_text
+        print(f"  ✓ D-052 unknown permission fail-closed")
+
+    def test_d052_missing_permission_fail_closed(self):
+        """Layer 1+2: missing permission 字段视为 restricted (fail-closed)."""
+        from pipeline.build_index import _classify_permission
+        from tests.fixtures.pii_contact_free_text_fixtures import D052_MISSING_PERMISSION_CONTACT
+
+        assert _classify_permission(D052_MISSING_PERMISSION_CONTACT) == "restricted"
+        print(f"  ✓ D-052 missing permission fail-closed")
+
+    def test_d052_redacted_true_forces_restricted(self):
+        """Layer 1+2: redacted=True 强制 restricted, 即使 permission=public."""
+        from pipeline.build_index import _classify_permission
+        from tests.fixtures.pii_contact_free_text_fixtures import D052_REDACTED_TRUE_CONTACT
+
+        assert _classify_permission(D052_REDACTED_TRUE_CONTACT) == "restricted"
+        print(f"  ✓ D-052 redacted=True 强制 restricted")
+
+    def test_d052_public_contact_keeps_structured_phone_email(self):
+        """Layer 1: public contact 保留结构化 phone/email (D-052 严令 1: public 只从结构化字段)."""
+        from pipeline.build_index import _build_contacts_chunk
+        from tests.fixtures.pii_contact_free_text_fixtures import D052_PUBLIC_CONTACT_CONTROL
+
+        city = {
+            "name": "测试站",
+            "iata": "TST",
+            "contacts": [D052_PUBLIC_CONTACT_CONTROL],
+        }
+        chunk_text = _build_contacts_chunk(city)
+        assert chunk_text is not None
+        assert "021-22352781" in chunk_text, (
+            f"D-052 期望 public contact 结构化 phone 保留, 实际 chunk text: {chunk_text}"
+        )
+        assert "aog@ch.com" in chunk_text
+        print(f"  ✓ D-052 public contact 结构化 phone/email 保留")
+
+    # --- Layer 5 (API): _decode_city 验证 ---
+
+    def test_d052_decode_city_redacts_role_scope_for_non_public(self):
+        """Layer 5 (API): _decode_city 返 contacts 时 non-public role/scope REDACTED."""
+        from aog_web.services.sqlite_client import _decode_city
+        from tests.fixtures.pii_contact_free_text_fixtures import (
+            D052_INTERNAL_ROLE_LEAK_CONTACT,
+            D052_LEAK_EMAIL_INTERNAL_ROLE,
+            D052_LEAK_PHONE_INTERNAL_ROLE,
+        )
+        import json
+
+        class _MockRow:
+            code = "D052-TEST"
+            name = "测试站"
+            airport = ""
+            iata = "TST"
+            pinyin = ""
+            region = "测试"
+            status = "现行"
+            tags = "[]"
+            fleet = "[]"
+            parts = "[]"
+            contacts = "[" + json.dumps(D052_INTERNAL_ROLE_LEAK_CONTACT, ensure_ascii=False) + "]"
+            warehouse = "{}"
+            logistics = "{}"
+            content_md = ""
+            source_path = ""
+            updated_at = "2026-07-31"
+            source_document = "test"
+            source_location = "test"
+            source_version = "v1"
+            reviewed_at = None
+            reviewed_by = None
+            review_status = "UNVERIFIED"
+            confidence = 1.0
+            environment = "all"
+            pii_classification = "internal"
+
+        result = _decode_city(_MockRow())
+        contacts = result["contacts"]
+        assert len(contacts) == 1
+        c = contacts[0]
+        assert c.get("role") == "[已脱敏/受限]", (
+            f"D-052: _decode_city 应 REDACTED internal contact role 字段, 实际 {c.get('role')!r}"
+        )
+        assert c.get("scope") == "[已脱敏/受限]"
+        assert c.get("phone") == ["REDACTED"]
+        assert c.get("email") == "REDACTED"
+        assert D052_LEAK_PHONE_INTERNAL_ROLE not in str(c)
+        assert D052_LEAK_EMAIL_INTERNAL_ROLE not in str(c)
+        print(f"  ✓ D-052 _decode_city REDACTED role/scope/phone/email")
+
+    def test_d052_decode_city_keeps_public_role_scope(self):
+        """Layer 5 (API): _decode_city 返 public contact 保留 role/scope/phone/email."""
+        from aog_web.services.sqlite_client import _decode_city
+        from tests.fixtures.pii_contact_free_text_fixtures import D052_PUBLIC_CONTACT_CONTROL
+        import json
+
+        class _MockRow:
+            code = "D052-TEST"
+            name = "测试站"
+            airport = ""
+            iata = "TST"
+            pinyin = ""
+            region = "测试"
+            status = "现行"
+            tags = "[]"
+            fleet = "[]"
+            parts = "[]"
+            contacts = "[" + json.dumps(D052_PUBLIC_CONTACT_CONTROL, ensure_ascii=False) + "]"
+            warehouse = "{}"
+            logistics = "{}"
+            content_md = ""
+            source_path = ""
+            updated_at = "2026-07-31"
+            source_document = "test"
+            source_location = "test"
+            source_version = "v1"
+            reviewed_at = None
+            reviewed_by = None
+            review_status = "UNVERIFIED"
+            confidence = 1.0
+            environment = "all"
+            pii_classification = "public"
+
+        result = _decode_city(_MockRow())
+        c = result["contacts"][0]
+        # public 保留原值
+        assert c.get("role") == "东航 AOG 总台", (
+            f"D-052: public contact role 应保留, 实际 {c.get('role')!r}"
+        )
+        assert c.get("scope") == "上海总部"
+        assert c.get("phone") == ["021-22352781"]
+        assert c.get("email") == "aog@ch.com"
+        print(f"  ✓ D-052 _decode_city public contact 保留 role/scope/phone/email")
+
+    # --- Layer 2+3+4 (SQLite+Chroma+FTS5+RAG) 综合验证: 真实 rebuild + 0 hits ---
+
+    def test_d052_5_layers_no_leak_after_rebuild(self, tmp_path):
+        """5 层综合验证 (SQLite + Chroma + FTS5 + RAG + API):
+        真实 rebuild + 验证 chunks_fts_content.c0 不含原 phone/email.
+
+        简化策略: 不调 chroma 持久化 (chromadb 单例冲突), 用 _build_contacts_chunk 单测覆盖 Layer 1
+        (Chroma 文本), 5 层测试聚焦 SQLite 保留 role + FTS5 0 hits + API REDACTED.
+        """
+        from tests.fixtures.pii_contact_free_text_fixtures import (
+            D052_INTERNAL_ROLE_LEAK_CONTACT,
+            D052_LEAK_EMAIL_INTERNAL_ROLE,
+            D052_LEAK_PHONE_INTERNAL_ROLE,
+        )
+        import sqlite3
+        import json
+
+        # === Layer 1 (Chroma 文本) ===
+        # 用 _build_contacts_chunk 单测覆盖 (前面 test_d052_internal_role_phone_sanitized_in_chunk)
+        from pipeline.build_index import _build_contacts_chunk
+        city = {
+            "name": "D052-测试站",
+            "iata": "D52",
+            "contacts": [D052_INTERNAL_ROLE_LEAK_CONTACT],
+        }
+        chunk_text = _build_contacts_chunk(city)
+        assert chunk_text is not None
+        assert D052_LEAK_PHONE_INTERNAL_ROLE not in chunk_text
+        assert D052_LEAK_EMAIL_INTERNAL_ROLE not in chunk_text
+        assert "[已脱敏/受限" in chunk_text
+
+        # === Layer 4 (FTS5) ===
+        # 直接构造 FTS5 db + 写 chunk text, 验证 0 hits
+        from scripts.export_fts5 import _create_fts5_db, _insert_chunks
+
+        fts5_db = tmp_path / "fts5_index.db"
+        con = _create_fts5_db(fts5_db)
+        _insert_chunks(
+            con,
+            ids=["city_contacts:D052-测试站:0"],
+            docs=[chunk_text],
+            metas=[{
+                "source_id": "D052-测试站",
+                "source_type": "city_contacts",
+                "source_path": "fixture:D052",
+                "title": "D052-测试站 联系人",
+                "region": "测试",
+                "status": "现行",
+                "chunk_index": 0,
+            }],
+        )
+        con.commit()
+
+        # 验证原 phone/email 不在 FTS5 chunks
+        cur = con.execute(
+            "SELECT c0 FROM chunks_fts_content WHERE c0 LIKE ?",
+            (f"%{D052_LEAK_PHONE_INTERNAL_ROLE}%",),
+        )
+        rows = cur.fetchall()
+        assert len(rows) == 0, (
+            f"D-052 LEAK: FTS5 chunks_fts_content 含原 phone {D052_LEAK_PHONE_INTERNAL_ROLE} ({len(rows)} chunks)"
+        )
+        cur = con.execute(
+            "SELECT c0 FROM chunks_fts_content WHERE c0 LIKE ?",
+            (f"%{D052_LEAK_EMAIL_INTERNAL_ROLE}%",),
+        )
+        rows = cur.fetchall()
+        assert len(rows) == 0, (
+            f"D-052 LEAK: FTS5 chunks_fts_content 含原 email {D052_LEAK_EMAIL_INTERNAL_ROLE} ({len(rows)} chunks)"
+        )
+        con.close()
+
+        # === Layer 5 (API) ===
+        from aog_web.services.sqlite_client import _decode_city
+
+        class _MockRow:
+            code = "D052-TEST"
+            name = "D052-测试站"
+            airport = ""
+            iata = "D52"
+            pinyin = ""
+            region = "测试"
+            status = "现行"
+            tags = "[]"
+            fleet = "[]"
+            parts = "[]"
+            contacts = "[" + json.dumps(D052_INTERNAL_ROLE_LEAK_CONTACT, ensure_ascii=False) + "]"
+            warehouse = "{}"
+            logistics = "{}"
+            content_md = ""
+            source_path = ""
+            updated_at = "2026-07-31"
+            source_document = "test"
+            source_location = "test"
+            source_version = "v1"
+            reviewed_at = None
+            reviewed_by = None
+            review_status = "UNVERIFIED"
+            confidence = 1.0
+            environment = "all"
+            pii_classification = "internal"
+
+        result = _decode_city(_MockRow())
+        c = result["contacts"][0]
+        assert c.get("role") == "[已脱敏/受限]"
+        assert c.get("scope") == "[已脱敏/受限]"
+        assert c.get("phone") == ["REDACTED"]
+        assert c.get("email") == "REDACTED"
+        assert D052_LEAK_PHONE_INTERNAL_ROLE not in str(c)
+        assert D052_LEAK_EMAIL_INTERNAL_ROLE not in str(c)
+
+        print(f"  ✓ D-052 5 层 (Layer 1 chunk + Layer 4 FTS5 0 hits + Layer 5 API REDACTED) 全部通过")

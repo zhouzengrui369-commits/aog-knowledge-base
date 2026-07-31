@@ -77,22 +77,30 @@ def _hash_pii(value: str) -> str:
 
 
 def _is_public_contact(contact: dict) -> bool:
-    """D-030 合同: 公开 contact 进 chunk, internal/restricted/redacted 不进."""
-    if not contact:
+    """D-030 + D-052 合同: 公开 contact 进 chunk, 其它全部不进.
+
+    ★ D-052 fail-closed (NJX 7/31 拍板):
+      - permission=public AND not redacted  → True (公开)
+      - 其它所有 (missing/empty/internal/restricted/unknown/redacted) → False (视为 non-public)
+      - 严禁: 默认 public (历史 D-030 bug: missing → public 导致 phone leak)
+    """
+    if not contact or not isinstance(contact, dict):
         return False
-    permission = (contact.get("permission") or "").lower()
+    if bool(contact.get("redacted")) is True:
+        return False  # redacted=True 严禁进
+    permission = (contact.get("permission") or "")
+    if not isinstance(permission, str):
+        return False
+    permission = permission.strip().lower()
     if permission == "public":
         return True
-    if contact.get("redacted") is True:
-        return False  # redacted=True 严禁进
-    if permission in ("internal", "restricted", "private"):
-        return False
-    return False  # 默认 internal
+    # 其它 (missing/empty/internal/restricted/private/unknown) 全部 non-public
+    return False
 
 
 def main():
     parser = argparse.ArgumentParser(
-        description="PII-7a 真实 KB FTS5 leak check (NJX 7/30 PR #5 严令 5 项)"
+        description="PII-7a 真实 KB FTS5 leak check (NJX 7/31 D-052 严令: 改 schema + FAIL-on-error)"
     )
     parser.add_argument("--aog-db", required=True, type=Path, help="owner 真实 aog.db 路径")
     parser.add_argument("--fts5-db", required=True, type=Path, help="release fts5_index.db 路径")
@@ -110,42 +118,45 @@ def main():
         return 4
 
     # === 1. 从 owner 真实 aog.db cities 抽 non-public phone + email ===
+    # D-052 修: 真实 schema 是 content_md + contacts, 严禁用 summary/contacts_json (跟 schema 不匹配)
     con = sqlite3.connect(str(aog_db_path))
     con.row_factory = sqlite3.Row
     try:
-        # 兼容 schema: 仅取必需字段, 允许 code/name 缺失 (空 DB / 部分 schema)
+        # D-052 修: schema 错误 (OperationalError) 必须 FAIL, 严禁 SKIP
+        # SKIP 会让 PII-7a 假绿 (NJX 7/31 拍板)
+        # 期望 schema: code, name, content_md, contacts (TEXT, JSON list)
         cur = con.execute(
-            "SELECT content_md, summary, contacts_json FROM cities "
-            "WHERE content_md IS NOT NULL OR summary IS NOT NULL OR contacts_json IS NOT NULL "
+            "SELECT content_md, contacts FROM cities "
+            "WHERE content_md IS NOT NULL OR contacts IS NOT NULL "
             "LIMIT ?",
             (args.max_samples * 10,),
         )
         rows = cur.fetchall()
     except sqlite3.OperationalError as e:
-        # cities 表不存在 / schema 不全, 当 SKIP 处理
-        print(f"⚠️  PII-7a SKIP: aog.db cities 表不可读 ({e})", file=sys.stderr)
+        # D-052 修: schema 错误 FAIL (不是 SKIP)
+        print(f"✗ FAIL: aog.db cities schema 不匹配 (NJX 7/31 D-052 严令: 严禁 SKIP): {e}", file=sys.stderr)
         con.close()
-        return 0
+        return 4
     finally:
         try:
             con.close()
         except Exception:
             pass
 
-    # 抽 non-public PII
+    # 抽 non-public PII (D-052 fail-closed: missing/empty/unknown 视为 non-public)
     pii_set: set[str] = set()  # 用 set dedup, 查 FTS5 用
     pii_hash_counts: dict[str, int] = {}  # hash -> 计数
     for row in rows:
-        # 抽 content_md + summary 文本里所有 phone/email
-        text = (row["content_md"] or "") + "\n" + (row["summary"] or "")
+        # 抽 content_md 文本里所有 phone/email (D-052: 不用 summary 字段, schema 没这字段)
+        text = (row["content_md"] or "")
         for ph in _extract_phone_candidates(text):
             pii_set.add(ph)
         for em in _extract_email_candidates(text):
             pii_set.add(em)
 
-        # 抽 contacts_json 里 non-public 的 phone/email
+        # 抽 contacts (D-052 真实字段, 不是 contacts_json) 里 non-public 的 phone/email
         try:
-            contacts = json.loads(row["contacts_json"] or "[]")
+            contacts = json.loads(row["contacts"] or "[]")
         except (json.JSONDecodeError, TypeError):
             contacts = []
         for c in contacts:
@@ -158,9 +169,11 @@ def main():
             if isinstance(em, str) and em:
                 pii_set.add(em)
 
+    # D-052 修: 无 non-public 样本必须 FAIL (不是 PASS/SKIP)
+    # 历史 SKIP 行为会假绿 (NJX 7/31 拍板: 严禁 SKIP-on-empty)
     if not pii_set:
-        print("⚠️  PII-7a SKIP: aog.db 抽不到 non-public PII (空 DB 或全 public)")
-        return 0
+        print("✗ FAIL: aog.db 抽不到 non-public PII (NJX 7/31 D-052 严令: 严禁 SKIP-on-empty, 必须 FAIL 提醒 owner 数据可能有问题)", file=sys.stderr)
+        return 4
 
     # === 2. 查 FTS5 chunks_fts_content.c0 命中 ===
     fts5_con = sqlite3.connect(str(fts5_db_path))
@@ -170,8 +183,10 @@ def main():
             "SELECT name FROM sqlite_master WHERE type='table' AND name='chunks_fts_content'"
         )
         if not cur.fetchone():
-            print("⚠️  PII-7a SKIP: fts5_index.db 无 chunks_fts_content 表 (未 export)")
-            return 0
+            # D-052 严令 4: 无 chunks_fts_content 表必须 FAIL, 严禁 SKIP
+            # SKIP 会让 PII-7a 假绿, owner 部署后才发现 FTS5 没 export
+            print("✗ FAIL: fts5_index.db 无 chunks_fts_content 表 (未 export, NJX 7/31 D-052 严令: 严禁 SKIP)", file=sys.stderr)
+            return 4
 
         # 抽样
         sample_pii = list(pii_set)[: args.max_samples]

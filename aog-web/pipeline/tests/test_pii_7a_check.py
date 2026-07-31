@@ -35,37 +35,39 @@ for p in (str(SCRIPTS_DIR), str(BACKEND_ROOT)):
 
 @pytest.fixture
 def malicious_aog_db(tmp_path):
-    """构造恶意 fixture aog.db (含 non-public phone + email + 公开 phone 对照)"""
+    """构造恶意 fixture aog.db (含 non-public phone + email + 公开 phone 对照)
+
+    D-052 严令 4 (NJX 7/31 拍板): 使用真实 schema (content_md + contacts),
+    严禁使用 summary/contacts_json (跟 schema 不匹配, 旧 PR #5 行为 SKIP 假绿).
+    """
     db = tmp_path / "malicious_aog.db"
     con = sqlite3.connect(str(db))
+    # 真实 schema: content_md + contacts (T3 schema)
     con.execute("""
         CREATE TABLE cities (
             id INTEGER PRIMARY KEY,
             code TEXT,
             name TEXT,
             content_md TEXT,
-            summary TEXT,
-            contacts_json TEXT
+            contacts TEXT
         )
     """)
     con.execute(
-        "INSERT INTO cities VALUES (1, 'M-TEST', 'MALICIOUS', ?, ?, ?)",
+        "INSERT INTO cities VALUES (1, 'M-TEST', 'MALICIOUS', ?, ?)",
         (
-            "测试恶意 city 含 vendor phone +86 13908081935 和 litao010@163.com",
-            "AOG总台: 010-64537139",
+            "测试恶意 city 含 vendor phone +86 13908081935 和 litao010@163.com\nAOG总台: 010-64537139",
             json.dumps([
-                {"name": "公开 AOG", "phone": ["+86-21-62690267"], "permission": "public"},  # 公开
-                {"name": "内部 vendor", "phone": ["+86 18600051432"], "permission": "internal"},  # internal
-                {"name": "restricted", "phone": ["+44 208 562 3007"], "permission": "restricted"},  # restricted
-                {"name": "redacted", "phone": ["13908081935"], "permission": "internal", "redacted": True},  # redacted
-            ]),
+                {"org": "公开 AOG", "phone": ["+86-21-62690267"], "permission": "public"},  # 公开
+                {"org": "内部 vendor", "phone": ["+86 18600051432"], "permission": "internal"},  # internal
+                {"org": "restricted", "phone": ["+44 208 562 3007"], "permission": "restricted"},  # restricted
+                {"org": "redacted", "phone": ["13908081935"], "permission": "internal", "redacted": True},  # redacted
+            ], ensure_ascii=False),
         ),
     )
     con.execute(
-        "INSERT INTO cities VALUES (2, 'M-CLEAN', 'CLEAN', ?, ?, ?)",
+        "INSERT INTO cities VALUES (2, 'M-CLEAN', 'CLEAN', ?, ?)",
         (
-            "干净 city 无 PII",
-            "件号 3-1531 ISO 9001",
+            "干净 city 无 PII 件号 3-1531 ISO 9001",
             json.dumps([]),
         ),
     )
@@ -189,11 +191,16 @@ def test_pii_7a_fail_when_leaked(malicious_aog_db, tmp_path):
     assert "+86 13908081935" not in combined, "PII 明文泄漏到日志 (FAIL 报告也禁明文)"
 
 
-def test_pii_7a_skip_when_empty_db(tmp_path):
-    """空 aog.db (无 non-public PII) → PII-7a SKIP (exit 0)"""
+def test_pii_7a_fail_when_empty_db(tmp_path):
+    """空 aog.db (无 non-public PII) → PII-7a FAIL (exit 4, 严禁 SKIP)
+
+    D-052 严令 4 (NJX 7/31 拍板): 严禁 SKIP-on-empty, 必须 FAIL 提醒 owner 数据可能有问题.
+    """
     db = tmp_path / "empty.db"
     con = sqlite3.connect(str(db))
-    con.execute("CREATE TABLE cities (id INTEGER PRIMARY KEY, content_md TEXT, summary TEXT, contacts_json TEXT)")
+    # 真实 schema (D-052 严令 4: schema 必须匹配)
+    con.execute("CREATE TABLE cities (id INTEGER PRIMARY KEY, code TEXT, name TEXT, content_md TEXT, contacts TEXT)")
+    con.execute("INSERT INTO cities VALUES (1, 'M-EMPTY', 'EMPTY', NULL, NULL)")
     con.commit()
     con.close()
     fts5 = tmp_path / "fts5.db"
@@ -215,12 +222,18 @@ def test_pii_7a_skip_when_empty_db(tmp_path):
     )
 
     combined = result.stdout + result.stderr
-    assert result.returncode == 0, f"空 DB 应 exit 0 (SKIP), 实际 {result.returncode}"
-    assert "SKIP" in combined, f"应输出 SKIP, 实际: {combined}"
+    # D-052 严令: 无 non-public PII 必须 FAIL (exit 4), 严禁 SKIP
+    assert result.returncode == 4, f"空 DB 应 exit 4 (FAIL), 实际 {result.returncode}\nstderr: {result.stderr}"
+    assert "FAIL" in combined
+    # 严禁 "⚠️  PII-7a SKIP" (旧 SKIP 标记, "严禁" 字符串里有 "SKIP" 字样但不是 SKIP 标记)
+    assert "PII-7a SKIP" not in combined, f"D-052 严禁 SKIP-on-empty, 实际: {combined}"
 
 
-def test_pii_7a_skip_when_no_fts5_table(malicious_aog_db, tmp_path):
-    """fts5_index.db 无 chunks_fts_content 表 → SKIP (exit 0)"""
+def test_pii_7a_fail_when_no_fts5_table(malicious_aog_db, tmp_path):
+    """fts5_index.db 无 chunks_fts_content 表 → FAIL (exit 4, D-052 严禁 SKIP)
+
+    D-052 严令 4: 严禁 SKIP-on-no-fts5, 必须 FAIL 提醒 owner fts5_index.db 不完整.
+    """
     fts5 = tmp_path / "fts5_no_table.db"
     con = sqlite3.connect(str(fts5))
     con.execute("CREATE TABLE dummy (x INTEGER)")  # 无 chunks_fts_content
@@ -243,8 +256,10 @@ def test_pii_7a_skip_when_no_fts5_table(malicious_aog_db, tmp_path):
     )
 
     combined = result.stdout + result.stderr
-    assert result.returncode == 0, f"无 chunks_fts_content 表应 SKIP, 实际 {result.returncode}"
-    assert "SKIP" in combined
+    # D-052 严令: 无 chunks_fts_content 表必须 FAIL (exit 4), 严禁 SKIP
+    assert result.returncode == 4, f"无 chunks_fts_content 表应 FAIL (exit 4), 实际 {result.returncode}\nstderr: {result.stderr}"
+    assert "FAIL" in combined
+    assert "PII-7a SKIP" not in combined, f"D-052 严禁 SKIP-on-no-fts5, 实际: {combined}"
 
 
 def test_pii_7a_excludes_public_contacts(malicious_aog_db, tmp_path):

@@ -25,6 +25,7 @@ from . import __version__
 from .chunker import chunk_text
 from .embedder import Embedder
 from .extractors import extract_city, extract_core_plan, extract_experience
+from .extractors.pii_sanitizer import sanitize_text
 from .indexer import CHROMA_COLLECTION, ChromaIndex, IndexStats, SqliteIndex
 
 # ---------- 默认路径 ----------
@@ -188,15 +189,41 @@ def _process_core_plans(files: list[Path], kb_root: Path) -> tuple[list[dict], l
     return out, failed, indexed
 
 
+def _classify_permission(contact: dict) -> str:
+    """D-052 fail-closed permission 分类 (NJX 7/31 拍板).
+
+    ★ 严禁默认 public (历史 D-030 bug: missing → public 导致 phone leak)
+    返回:
+      - "public"   : 显式 permission=public + redacted=False
+      - "restricted": missing/empty/unknown/internal/restricted/private/redacted=True
+                     (全部 fail-closed 视为受限, 严禁进 RAG chunk phone/email)
+    """
+    if not contact or not isinstance(contact, dict):
+        return "restricted"
+    if bool(contact.get("redacted")) is True:
+        return "restricted"  # redacted=True 强制受限
+    permission_raw = contact.get("permission")
+    if not isinstance(permission_raw, str):
+        return "restricted"
+    permission = permission_raw.strip().lower()
+    if permission == "public":
+        return "public"
+    # 其它所有 (missing/empty/internal/restricted/private/unknown) → restricted
+    return "restricted"
+
+
 def _build_contacts_chunk(c: dict) -> str | None:
-    """D-030 + P0-6: 把 city.contacts[] 拼成一段文本, 喂 RAG 让 AI 能召回 public 公开电话。
+    """D-030 + P0-6 + D-052: 把 city.contacts[] 拼成一段文本, 喂 RAG 让 AI 能召回 public 公开电话。
 
     ★ P0-6 (Owner 7/29 严令): 严格 PII 隔离
-    - permission=public           → 拼 phone/email 到 chunk text (公开信息, RAG 可召回)
-    - permission=internal/restricted → 不拼 phone/email, 只保留 org/role/scope + "联系方式受限" 标志
-    - redacted=true                → 同 internal/restricted
-    - 原始 phone/email 仅保留在 SQLite cities.contacts JSON (受控数据层)
-      通过 city detail API + 权限检查返回, 不进 RAG chunk / LLM context
+    ★ D-052 (NJX 7/31 拍板): contact 自由文本字段必须 sanitize
+      - org/role/scope 全部先 sanitize_text (无论 permission)
+      - public: 只从结构化 phone/email 字段保留公开联系方式
+      - non-public: 不写 phone/email
+    ★ D-052 permission fail-closed: missing/empty/unknown 全按 restricted
+    ★ 严禁: 原始 phone/email 进 RAG chunk / LLM context
+      原始 phone/email 仅保留在 SQLite cities.contacts JSON (受控数据层)
+      通过 city detail API + 权限检查返回, 不进 RAG chunk
 
     返回 None 表示无 contacts, 跳过。
     """
@@ -205,32 +232,46 @@ def _build_contacts_chunk(c: dict) -> str | None:
         return None
     lines: list[str] = [f"# {c['name']} ({c['iata']}) 现场联系人清单"]
     for ct in contacts:
-        perm = ct.get("permission", "public")
-        redacted = ct.get("redacted", False)
-        org = ct.get("org", "")
-        phones = ct.get("phone") or []
-        email = ct.get("email", "")
-        role = ct.get("role", "")
-        scope = ct.get("scope", "")
+        # ★ D-052 fail-closed permission 分类 (缺失/空/unknown 全部按 restricted)
+        perm_class = _classify_permission(ct)
+        is_public = (perm_class == "public")
+        # 显示标签: 原始 permission (raw) + 是否已脱敏
+        raw_permission = (ct.get("permission") or "").strip()
+        raw_permission_display = raw_permission.upper() if raw_permission else "MISSING"
+        if bool(ct.get("redacted")) is True:
+            raw_permission_display = (raw_permission_display or "PUBLIC") + " 已脱敏"
 
-        # ★ P0-6 隔离决策
-        is_public = (perm == "public") and not redacted
-        parts: list[str] = [f"- [{perm.upper()}{' 已脱敏' if redacted else ''}] {org}"]
+        # ★ D-052: org/role/scope 全部先 sanitize_text (无论 permission)
+        # 严禁保留 role 字段里的 phone/email 原值 (D-052 LEAK 根因)
+        org_raw = ct.get("org", "")
+        role_raw = ct.get("role", "")
+        scope_raw = ct.get("scope", "")
+        org = sanitize_text(org_raw) if isinstance(org_raw, str) else ""
+        role = sanitize_text(role_raw) if isinstance(role_raw, str) else ""
+        scope = sanitize_text(scope_raw) if isinstance(scope_raw, str) else ""
+
+        # 拼 parts
+        parts: list[str] = [f"- [{raw_permission_display}] {org}"]
         if role:
             parts.append(f"  职责: {role}")
         if scope:
             parts.append(f"  范围: {scope}")
 
         if is_public:
-            # public contact: 拼 phone/email (RAG 可召回)
-            phone_str = " / ".join(phones) if phones else ""
-            if phone_str:
-                parts.append(f"  电话: {phone_str}")
-            if email:
-                parts.append(f"  邮箱: {email}")
+            # D-052 严令 1: public 只从结构化 phone/email 字段保留公开联系方式
+            # role/scope 已经 sanitize_text 不会再有 phone/email
+            # 结构化 phone/email 是 owner 标记的 public, 不再 sanitize (owner 信任, 公开信息)
+            phones = ct.get("phone") or []
+            email = ct.get("email", "")
+            phone_strs = [p for p in phones if isinstance(p, str) and p]
+            email_str = email if isinstance(email, str) and email else ""
+            if phone_strs:
+                parts.append(f"  电话: {' / '.join(phone_strs)}")
+            if email_str:
+                parts.append(f"  邮箱: {email_str}")
         else:
-            # internal/restricted/redacted: 不写原值, 只显"联系方式受限"标志
-            # 受控访问走 city detail API (permission 决定是否返 phone/email)
+            # D-052: non-public (restricted/internal/missing/empty/unknown/redacted)
+            # 严禁写结构化 phone/email 进 chunk
             parts.append("  联系方式: [已脱敏/受限, 详情见 city detail API 权限检查]")
 
         lines.append("\n".join(parts))

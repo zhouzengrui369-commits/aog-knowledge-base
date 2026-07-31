@@ -300,8 +300,30 @@ class SQLiteClient:
 # ============ Decode helpers ============
 
 
+def _classify_contact_permission(contact: dict) -> str:
+    """D-052 fail-closed permission 分类 (NJX 7/31 拍板).
+
+    ★ 严禁默认 public (历史 D-030 bug: missing → public 导致 phone leak)
+    返回:
+      - "public"    : 显式 permission=public + redacted=False
+      - "restricted": missing/empty/unknown/internal/restricted/private/redacted=True
+                      (全部 fail-closed 视为受限)
+    """
+    if not contact or not isinstance(contact, dict):
+        return "restricted"
+    if bool(contact.get("redacted")) is True:
+        return "restricted"  # redacted=True 强制受限
+    permission_raw = contact.get("permission")
+    if not isinstance(permission_raw, str):
+        return "restricted"
+    permission = permission_raw.strip().lower()
+    if permission == "public":
+        return "public"
+    return "restricted"
+
+
 def _decode_city(row: CityRow) -> Dict[str, Any]:
-    """T3 schema: 所有复杂字段独立列 + JSON 序列化（tags/fleet/parts/contacts/warehouse/logistics） + P0-5 9 字段 + P0-6 REDACTED"""
+    """T3 schema: 所有复杂字段独立列 + JSON 序列化（tags/fleet/parts/contacts/warehouse/logistics） + P0-5 9 字段 + P0-6 REDACTED + D-052 fail-closed"""
     def _j(s: str, default):
         if not s:
             return default
@@ -310,9 +332,10 @@ def _decode_city(row: CityRow) -> Dict[str, Any]:
         except json.JSONDecodeError:
             return default
 
-    # ★ P0-6: contact 脱敏处理 (Owner 7/29 授权, D-044-E)
-    # permission=restricted 或 redacted=true → phone/email 替换为 REDACTED
-    # D-030 permission 字段: public 直展示, internal 半透明, restricted 折叠
+    # ★ P0-6 + D-052 (NJX 7/31 拍板): contact 脱敏 fail-closed
+    # D-052 严令 3: internal/restricted/missing/empty/unknown/redacted 全部 REDACTED
+    #   public 保留 phone/email 原值
+    # 严禁: 任何隐式 default = public (历史 D-030 bug: missing → public)
     raw_contacts = _j(row.contacts, [])
     decoded_contacts = []
     for c in raw_contacts:
@@ -320,11 +343,17 @@ def _decode_city(row: CityRow) -> Dict[str, Any]:
             decoded_contacts.append(c)
             continue
         c_copy = dict(c)
-        if c_copy.get("redacted") or c_copy.get("permission") == "restricted":
-            # 脱敏: 替换 phone/email
+        perm_class = _classify_contact_permission(c_copy)
+        if perm_class != "public":
+            # D-052: non-public (含 missing/empty/unknown/internal/restricted) 全部 REDACTED
             c_copy["phone"] = ["REDACTED"] if c_copy.get("phone") else []
             if c_copy.get("email"):
                 c_copy["email"] = "REDACTED"
+            # D-052: role/scope 自由文本字段也 REDACTED (避免 PII 通过描述字段泄漏到 API)
+            if c_copy.get("role"):
+                c_copy["role"] = "[已脱敏/受限]"
+            if c_copy.get("scope"):
+                c_copy["scope"] = "[已脱敏/受限]"
         decoded_contacts.append(c_copy)
 
     return {
