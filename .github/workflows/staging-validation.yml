@@ -3,12 +3,15 @@
 # trigger: push to ops/staging-isolation 分支 + PR 到 main
 # 目标: 验证 staging 隔离 (production 资源严禁引用), 不做云端写操作
 #
-# 5 jobs:
+# 7 jobs:
 #   1. denylist-check         - 跑 denylist_check.py 验证 staging 脚本 + 配置不含 production 4 项
 #   2. staging-prepare        - 跑 prepare-scf-staging.sh preflight + package + compile + drift + manifest
 #   3. staging-deps-isolation - 验证 staging 脚本用占位符, 不含真 production 凭据
 #   4. staging-validation-tests - 跑 staging_isolation_test.py 全部 unit tests
-#   5. staging-all-pass       - aggregate, 全部 job 都通过
+#   5. frontend-build         - 验证 deploy-frontend-staging.sh 脚本完整 + package.json 存在
+#   5.5 data-release-contract - (NJX 7/30 PR #4 严令 Fix 1) 跑 test_build_data_release_contract.py 15 项
+#   6. remote-validation      - 跑 8 RAG + 10 旅程真实远端验收 (缺 URL skip, 不阻塞)
+#   7. staging-all-pass       - aggregate, 全部 job 都通过
 #
 # 任何一项失败, staging PR 不得 merge.
 # 禁止 continue-on-error / || true.
@@ -17,9 +20,9 @@ name: "staging-validation"
 
 on:
   push:
-    branches: [ops/staging-isolation, ops/staging-runtime-preflight]
+    branches: [ops/staging-isolation, ops/staging-runtime-preflight, ops/staging-release-rehearsal-r1]
   pull_request:
-    branches: [main, ops/staging-isolation, ops/staging-runtime-preflight]
+    branches: [main, ops/staging-isolation, ops/staging-runtime-preflight, ops/staging-release-rehearsal-r1]
 
 # 所有 job 默认 set -euo pipefail
 defaults:
@@ -317,6 +320,93 @@ jobs:
           # dry-run 模式 (无 ALLOW_STAGING_DEPLOY 必 fail, 但 frontend-build 不需要它, 这里仅 verify)
           echo "  ✓ deploy-frontend-staging.sh + frontend package.json 全 ready"
 
+  # data-release-contract: 跑 tests/test_build_data_release_contract.py 15 项
+  # NJX 7/30 PR #4 严令: 12 原有 (12/12) + 3 新增 (Fix 2/3/4+5) = 15 项
+  # fail = PR 阻断, 严禁 skip 关键合同测试
+  data-release-contract:
+    name: "data-release-contract"
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: "Setup Python 3.11"
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: "Install pytest + python-docx"
+        run: |
+          set -euo pipefail
+          python -m pip install --upgrade pip
+          pip install pytest pytest-asyncio python-docx
+
+      - name: "Install backend venv (build-data-release.sh 需 .venv/bin/python)"
+        run: |
+          set -euo pipefail
+          # test_build_data_release_contract.py 调 build-data-release.sh
+          # build-data-release.sh 内部调 backend/.venv/bin/python + pipeline/.venv/bin/python
+          # CI 必须先把这两个 venv 建出来, 否则 subprocess FileNotFoundError
+          python -m venv aog-web/backend/.venv
+          aog-web/backend/.venv/bin/python -m pip install --upgrade pip
+          aog-web/backend/.venv/bin/pip install -e aog-web/backend 2>&1 | tail -3
+          aog-web/backend/.venv/bin/pip install pytest pytest-asyncio aiosqlite sqlalchemy fastapi uvicorn[standard] pypinyin python-frontmatter python-docx openpyxl pypdf markdown-it-py 2>&1 | tail -3
+          # Pipeline venv (build-data-release.sh 也用 pipeline/.venv/bin/python)
+          python -m venv aog-web/pipeline/.venv
+          aog-web/pipeline/.venv/bin/python -m pip install --upgrade pip
+          aog-web/pipeline/.venv/bin/pip install -e aog-web/pipeline 2>&1 | tail -3 || true
+          aog-web/pipeline/.venv/bin/pip install chromadb openai sentence-transformers 2>&1 | tail -3 || true
+          ls -la aog-web/backend/.venv/bin/python aog-web/pipeline/.venv/bin/python
+          echo "OK: backend + pipeline venv 已建"
+
+      - name: "Verify test file + count 15 items"
+        run: |
+          set -euo pipefail
+          if [ ! -f "tests/test_build_data_release_contract.py" ]; then
+            echo "FAIL: test file missing" >&2
+            exit 1
+          fi
+          test_count=$(grep -cE "^def test_[0-9]" tests/test_build_data_release_contract.py || true)
+          if [ "$test_count" -lt 15 ]; then
+            echo "FAIL: contract tests should be at least 15, got $test_count" >&2
+            exit 1
+          fi
+          echo "OK: $test_count contract tests found"
+
+      - name: "Run 15 contract tests"
+        run: |
+          set -euo pipefail
+          # NJX 7/30 PR #4 fix: 用固定 log 路径 + 先确保目录存在, 严禁依赖默认 /tmp
+          LOG_DIR="$RUNNER_TEMP/data-release-contract"
+          mkdir -p "$LOG_DIR"
+          LOG_FILE="$LOG_DIR/log.txt"
+          # 跑 pytest, 同时 capture 到 log 文件
+          python -m pytest tests/test_build_data_release_contract.py \
+            -v --tb=long --no-header -ra > "$LOG_FILE" 2>&1 || PYTEST_EXIT=$?
+          PYTEST_EXIT="${PYTEST_EXIT:-0}"
+          echo "pytest exit code: $PYTEST_EXIT"
+          # 关键 (NJX 7/30 PR #4 fix): 只 grep test result 行 (tests/...py::test_xx STATUS [  x%]),
+          # 严禁 grep 整行 (会匹配 "SKIPPED [1] tests/..." 摘要行, false positive)
+          passed=$(grep -cE "tests/.*PASSED \[" "$LOG_FILE" 2>/dev/null || echo 0)
+          failed=$(grep -cE "tests/.*FAILED \[" "$LOG_FILE" 2>/dev/null || echo 0)
+          skipped=$(grep -cE "tests/.*SKIPPED \[" "$LOG_FILE" 2>/dev/null || echo 0)
+          echo
+          echo "data-release-contract summary: PASSED=$passed  FAILED=$failed  SKIPPED=$skipped  (pytest exit=$PYTEST_EXIT)"
+          if [ "$failed" -gt 0 ] || [ "$PYTEST_EXIT" -ne 0 ]; then
+            echo "FAIL: $failed contract tests failed (pytest exit=$PYTEST_EXIT)" >&2
+            tail -30 "$LOG_FILE" >&2
+            exit 1
+          fi
+          if [ "$skipped" -gt 0 ]; then
+            echo "FAIL: $skipped contract tests SKIPPED (NJX 7/30 PR #4 严令: 严禁 skip 关键合同测试)" >&2
+            exit 1
+          fi
+          if [ "$passed" -lt 15 ]; then
+            echo "FAIL: expected at least 15 PASS, got $passed" >&2
+            exit 1
+          fi
+          echo "OK: data-release-contract $passed/15 PASS"
+
   # ============================================================
   # 6. remote-validation: 真实远端验收 (NJX 7/30 PR #5 严令)
   #    - 普通 PR / push 触发: deferred success marker, 不跑 RAG / journey
@@ -347,13 +437,14 @@ jobs:
 
   # ============================================================
   # 7. Aggregate: 全部 job 都通过
+  #    (NJX 7/30 PR #4 严令 Fix 1: data-release-contract 必须进 needs)
+  #    (NJX 7/30 PR #5 严令: remote-validation deferred, 不阻塞 aggregate)
   # ============================================================
   staging-all-pass:
     name: "Staging isolation: all checks passed"
     runs-on: ubuntu-latest
-    # 8 完成门 (NJX 7/30 PR #3): 不依赖 remote-validation
-    # remote-validation 是 deferred success marker, 不阻塞 aggregate
-    needs: [denylist-check, staging-prepare, staging-deps-isolation, staging-validation-tests, frontend-build, remote-validation]
+    # NJX 7/30 严令: data-release-contract (PR #4 Fix 1) + remote-validation (PR #5 deferred) 都进 needs
+    needs: [denylist-check, staging-prepare, staging-deps-isolation, staging-validation-tests, frontend-build, data-release-contract, remote-validation]
     if: success()
     steps:
       - run: echo "✓ All staging isolation checks passed. PR ready for NJX review."

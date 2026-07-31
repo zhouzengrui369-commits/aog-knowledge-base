@@ -37,6 +37,11 @@ LLM:
 
   # dry-run (不调 LLM, 只列计划)
   uv run python -m scripts.wiki_curator --dry-run
+
+D-056 (NJX 7/31 20:12 拍板) 红线:
+  - 本脚本是 dev/curation 工具, 严禁在 release 路径 (build-data-release.sh) 调用
+  - release 阶段只读已生成的 pipeline/data/wiki/*.md, 走 sanitize_wiki_release.py 兜底 sanitize
+  - 严禁: release 阶段调 LLM 生成新 wiki (会污染 source wiki, 触发 PII-7a 命中)
 """
 from __future__ import annotations
 
@@ -208,7 +213,13 @@ def build_prompt(city_code: str, city_name: str, docx_text: str, topic: str) -> 
 - 整理者: MiniMax M3 (minimax-m3)
 ===WIKI_END===
 
-⚠️ 任何思考/解释/元评论请放在 ===WIKI_END=== 之后 (或省略), 严禁放在 ===WIKI_START=== 之前"""
+⚠️ 任何思考/解释/元评论请放在 ===WIKI_END=== 之后 (或省略), 严禁放在 ===WIKI_START=== 之前
+
+# D-056 (NJX 7/31 20:12 拍板) — 严禁 PII 进 wiki 文本:
+#   - 不要在 wiki 里写出任何 phone/email 原值
+#   - 联系方式段里 phone/email 一律写 "[已脱敏/受限]" 或 "见源 docx"
+#   - 不要整理 docx 的 PII 表格/列表, 留下让 release 阶段 sanitize_wiki_release.py 兜底
+#   - 严禁: LLM 在 wiki 里"为完整起见"把 phone 重写一遍
 
 
 # Wiki 内容 sentinel 标记 (让 LLM 严格输出 wiki, post-process 切出来)

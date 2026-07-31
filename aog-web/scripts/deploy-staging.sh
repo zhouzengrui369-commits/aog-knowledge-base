@@ -224,33 +224,19 @@ PYEOF
         return 1
     fi
 
-    # ============ 3. STAGING_DEPLOY_MODE 模式 (NJX 7/29 DEPLOYABILITY 严令) ============
-    local STAGING_DEPLOY_MODE="${STAGING_DEPLOY_MODE:-dry-run}"
+    # ============ 3. 4 项身份强校验 (NJX 7/30 R-4 修: 提升到 dry-run + execute 都跑) ============
+    # 老脚本: 4 项只在 execute 跑, dry-run 跳过 → dry-run 错身份时仍然 0 错返回
+    # 修法: dry-run + execute 都在这步先 verify 身份, 不通过就 return 1
+    echo "  [staging-deploy] 4 项身份强校验 (dry-run + execute 都跑, NJX 7/30 R-4 修):"
 
-    if [ "$STAGING_DEPLOY_MODE" != "execute" ]; then
-        echo "  [staging-deploy] STAGING_DEPLOY_MODE=$STAGING_DEPLOY_MODE (默认 dry-run, 不实际执行 tcb fn deploy)"
-        echo "  [staging-deploy] 准备好命令 (NJX 物理执行):"
-        echo "    tcb fn deploy aog-api-staging --path $FUNCTIONS_DIR \\"
-        echo "      --env-id \"\$TCB_ENV_ID\" \\"
-        echo "      --config-file \"\$REPO_ROOT/cloudbaserc.staging.json\" \\"
-        echo "      --mode staging \\"
-        echo "      --yes"
-        echo "  [staging-deploy] 严禁: 老命令 / 老 flag (见 STAGING_ISOLATION_SPEC.md §3.5)"
-        echo "  [staging-deploy] 当前 dry-run 完成: preflight + verify_package + deploy_target_validate"
-        return 0
-    fi
-
-    # ============ 4. STAGING_DEPLOY_MODE=execute 真实执行 + 4 项强校验 (NJX 7/29 严令) ============
-    echo "  [staging-deploy] STAGING_DEPLOY_MODE=execute, 进入真实部署模式 (4 项强校验)"
-
-    # 4.1 MERGE_SHA 必须是 40 位 hex SHA1
+    # 3.1 MERGE_SHA 必须是 40 位 hex SHA1
     if ! [[ "${MERGE_SHA:-}" =~ ^[0-9a-f]{40}$ ]]; then
         echo "  ✗ FAIL: MERGE_SHA='${MERGE_SHA:-}' 不是 40 位 hex SHA1" >&2
         return 1
     fi
     echo "  ✓ MERGE_SHA=${MERGE_SHA:0:12}... (40 hex)"
 
-    # 4.2 MERGE_SHA == git rev-parse HEAD (本地 HEAD 必须等于 merge commit)
+    # 3.2 MERGE_SHA == git rev-parse HEAD
     local current_head
     current_head=$(cd "$REPO_ROOT" && git rev-parse HEAD 2>/dev/null)
     if [ "$current_head" != "$MERGE_SHA" ]; then
@@ -260,7 +246,7 @@ PYEOF
     fi
     echo "  ✓ git rev-parse HEAD == MERGE_SHA"
 
-    # 4.3 APP_COMMIT_SHA == MERGE_SHA (运行时环境变量一致性)
+    # 3.3 APP_COMMIT_SHA == MERGE_SHA
     if [ -z "${APP_COMMIT_SHA:-}" ]; then
         echo "  ✗ FAIL: APP_COMMIT_SHA 未设" >&2
         echo "  必须 export APP_COMMIT_SHA=\$MERGE_SHA (部署时由 CI 注入 {{env.APP_COMMIT_SHA}})" >&2
@@ -272,7 +258,7 @@ PYEOF
     fi
     echo "  ✓ APP_COMMIT_SHA == MERGE_SHA"
 
-    # 4.4 git status clean (工作树无未提交变更, 含 untracked files)
+    # 3.4 git status clean (含 untracked, NJX 7/30 git status --porcelain 严令)
     if [ -n "$(cd "$REPO_ROOT" && git status --porcelain 2>/dev/null)" ]; then
         echo "  ✗ FAIL: git working tree 不 clean, 有未提交变更 (含 untracked)" >&2
         (cd "$REPO_ROOT" && git status --porcelain | head -10) >&2
@@ -281,7 +267,26 @@ PYEOF
     fi
     echo "  ✓ git status clean"
 
-    # ============ 5. 真实执行 tcb fn deploy (参数数组, 不 eval, 修 exit code 捕获) ============
+    # ============ 4. STAGING_DEPLOY_MODE 模式 (NJX 7/29 DEPLOYABILITY 严令) ============
+    local STAGING_DEPLOY_MODE="${STAGING_DEPLOY_MODE:-dry-run}"
+
+    if [ "$STAGING_DEPLOY_MODE" != "execute" ]; then
+        echo "  [staging-deploy] STAGING_DEPLOY_MODE=$STAGING_DEPLOY_MODE (默认 dry-run, 不实际执行 tcb fn deploy)"
+        echo "  [staging-deploy] 4 项身份校验全过, 准备好命令 (NJX 物理执行):"
+        echo "    tcb fn deploy aog-api-staging --path $FUNCTIONS_DIR \\"
+        echo "      --env-id \"\$TCB_ENV_ID\" \\"
+        echo "      --config-file \"\$REPO_ROOT/cloudbaserc.staging.json\" \\"
+        echo "      --mode staging \\"
+        echo "      --yes"
+        echo "  [staging-deploy] 严禁: 老命令 / 老 flag (见 STAGING_ISOLATION_SPEC.md §3.5)"
+        echo "  [staging-deploy] 当前 dry-run 完成: preflight + verify_package + deploy_target_validate + 4 项身份校验"
+        echo "  [staging-deploy] 严禁 dry-run 阶段触碰 CloudBase (NJX 7/30 R-4 修: 4 项校验 dry-run 也跑, 但 tcb fn deploy 仅 execute 跑)"
+        return 0
+    fi
+
+    # ============ 5. STAGING_DEPLOY_MODE=execute 真实执行 tcb fn deploy (NJX 7/29 严令) ============
+    echo "  [staging-deploy] STAGING_DEPLOY_MODE=execute, 4 项身份校验已过, 真实执行 tcb fn deploy"
+
     # NJX 7/30 严令:
     #   - 增 --path aog-api-staging (让 tcb 知道函数包路径, 不依赖 cwd)
     #   - 修 tcb 失败 exit code 捕获 (用 PIPESTATUS 或保存 $? 立即)
