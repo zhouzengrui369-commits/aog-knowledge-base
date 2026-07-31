@@ -53,7 +53,7 @@ def _normalize_phone(phone: str) -> str | None:
     # +86 11 位 mobile: 提取后 11 位
     if digits.startswith("+86"):
         rest = digits[3:]  # 跳过 "+86"
-        # owner data 异常: 黏连 +86 后还有前导 0, e.g. `+86-018938850285` → +86018938850285
+        # owner data 异常: 黏连 +86 后还有前导 0, e.g. `+86-0XXXXXXXXXX` (11位)
         # 跳 0 提取后 11 位
         if rest.startswith("0"):
             rest = rest[1:]
@@ -124,9 +124,9 @@ def build_canonical_identity(cities: list[dict]) -> dict[str, dict]:
 
     Returns:
       {
-        "phone:18938850285": {
+        "phone:<canonical>": {
           'type': 'phone',
-          'value': '18938850285',
+          'value': '<canonical>',
           'occurrences': [
             {'city_code': 'B-北京', 'contact_idx': 3, 'original_permission': 'internal', 'field': 'phone'},
             {'city_code': 'H-惠州', 'contact_idx': 1, 'original_permission': 'public', 'field': 'phone'},
@@ -135,9 +135,9 @@ def build_canonical_identity(cities: list[dict]) -> dict[str, dict]:
           'effective_permission': 'restricted',  # 跨 city 混合 → restricted
           'is_conflicted': True,  # public + non-public 共存
         },
-        "email:aogoffice@airchina.com": {
+        "email:<canonical>": {
           'type': 'email',
-          'value': 'aogoffice@airchina.com',
+          'value': '<canonical>',
           'occurrences': [...],
           'effective_permission': 'public',  # 全 public → public
           'is_conflicted': False,

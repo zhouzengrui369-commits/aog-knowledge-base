@@ -565,7 +565,7 @@ def test_v2_public_value_free_text_hit(tmp_path):
 def test_v2_34_public_1_internal_shared_corporate_desk(tmp_path):
     """D-054 v2 测试 6 (PR #8 严守后改): 公知共享 corporate desk → CONFLICTED → FORBIDDEN
 
-    场景 (NJX 7/31 D-054 真实根因): owner aog.db 含 `aogoffice@airchina.com` 公开邮箱在 116+ city
+    场景 (NJX 7/31 D-054 真实根因): owner aog.db 含公知公开邮箱在 116+ city
     共享, 但 1 个 internal contact 也引用这个邮箱. v2 判定 CONFLICTED (PR #8 严守).
 
     期望 (PR #8 NJX 7/31 18:28 拍板):
@@ -577,7 +577,8 @@ def test_v2_34_public_1_internal_shared_corporate_desk(tmp_path):
     FTS5 不含 conflict value, PII-7a OK. 但 unit test 模拟的 aog.db 没经过 build 降级,
     PII-7a 看到 conflict → FORBIDDEN. 跟 PR #8 严守一致.
     """
-    shared_email = "aogoffice@airchina.com"  # 国航公知 AOG 邮箱
+    # placeholder email (不是真实 AOG 邮箱, 严禁当真实数据)
+    shared_email = "shared-corporate-desk@example.com"
     cities = [
         # 34 个 city 公开 contact 都引用这个邮箱
         *[{

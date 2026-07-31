@@ -59,7 +59,7 @@ def test_pr8_effective_permission_pure_non_public():
 def test_pr8_effective_permission_conflict_downgrades_to_restricted():
     """SCENARIO_1 1 public + 1 internal 同 phone → effective_permission=restricted (保守)"""
     identity = build_canonical_identity(SCENARIO_1_PUBLIC_1_INTERNAL)
-    # 应该只有 1 个 phone value (010-64537139 跨 2 city 共享)
+    # 应该只有 1 个 phone value (010-11112222 placeholder 跨 2 city 共享)
     assert len(identity) == 1
     entry = list(identity.values())[0]
     # 跨 city 出现 public + non-public → restricted (NJX 拍板 保守原则)
@@ -70,14 +70,13 @@ def test_pr8_effective_permission_conflict_downgrades_to_restricted():
 
 
 def test_pr8_d054_real_root_cause_3_public_15_internal():
-    """SCENARIO_2 D-054 真实根因: 3 public + 15 internal 共用 `18938850285` → restricted
+    """SCENARIO_2 D-054 真实根因: 3 public + 15 internal 共用 placeholder phone `12345678901` → restricted
 
-    模拟 owner data 标错: H-惠州 / S-深圳 / Y-运城 把深航 internal 标 public,
-    跟 15 个其他 internal city 共用同一 phone.
+    模拟 owner data 标错: 3 city public + 15 internal 共用同一 phone.
     PR #8 期望: canonical identity 聚合, effective_permission=restricted.
     """
     identity = build_canonical_identity(SCENARIO_2_D054_REAL_ROOT_CAUSE)
-    # 18 city 共用同一 phone `18938850285`, 应该只有 1 个 entry
+    # 18 city 共用同一 placeholder phone, 应该只有 1 个 entry
     assert len(identity) == 1
     entry = list(identity.values())[0]
     # 跨 city public + non-public → restricted (保守)
@@ -94,12 +93,12 @@ def test_pr8_d054_real_root_cause_3_public_15_internal():
 def test_pr8_concat_phone_normalization_d053_compat():
     """SCENARIO_5 D-053 黏连 phone + PR #8 conflict 协同"""
     identity = build_canonical_identity(SCENARIO_5_CONCAT_NORMALIZATION)
-    # 黏连 `+86-018938850285` 拆出 `18938850285` (D-053), 跟 1 internal `18938850285` 共用
+    # 黏连 `+86-012345678901` (placeholder) 拆出 `12345678901` (D-053), 跟 1 internal `12345678901` 共用
     # 1 public + 1 internal → restricted (conflict)
     phone_entries = [e for e in identity.values() if e["type"] == "phone"]
     assert len(phone_entries) == 1
     entry = phone_entries[0]
-    assert entry["value"] == "18938850285"
+    assert entry["value"] == "12345678901"
     assert entry["effective_permission"] == "restricted"
     assert entry["is_conflicted"] is True
 
@@ -109,7 +108,7 @@ def test_pr8_concat_phone_normalization_d053_compat():
 def test_pr8_build_contacts_chunk_uses_effective_permission():
     """PR #8: _build_contacts_chunk 用 effective_permission, 不使用原 permission
 
-    模拟 D-054 真实场景: H-惠州 (标 public) + 1 internal 共用 `010-64537139`,
+    模拟 D-054 真实场景: 1 city public + 1 internal 共用 placeholder phone `010-11112222`,
     期望 contact 标注 `→ RESTRICTED (PR#8 conflict)`, 不进 phone/email 字段.
     """
     cities = [
@@ -130,14 +129,14 @@ def test_pr8_build_contacts_chunk_uses_effective_permission():
         chunk = _build_contacts_chunk(city)
         assert chunk is not None
         # 严禁 phone 原值进 chunk
-        assert "010-64537139" not in chunk, f"PR #8 严禁 phone 进 chunk (city {city['code']})"
+        assert "010-11112222" not in chunk, f"PR #8 严禁 phone 进 chunk (city {city['code']})"
         # 应该有 RESTRICTED 标签 + 联系方式 REDACTED
         assert "RESTRICTED" in chunk, f"PR #8 应标 RESTRICTED, chunk: {chunk}"
         assert "[已脱敏/受限, 详情见 city detail API 权限检查]" in chunk
 
 
 def test_pr8_build_contacts_chunk_pure_public_keeps_phone():
-    """PR #8: 全 public → effective_permission=public, 保留 phone 进 chunk"""
+    """PR #8: 全 public → effective_permission=public, 保留 email 进 chunk"""
     cities = [
         {**c, "iata": c["code"][:3].upper(), "content_md": ""}
         for c in SCENARIO_3_PURE_PUBLIC
@@ -151,7 +150,7 @@ def test_pr8_build_contacts_chunk_pure_public_keeps_phone():
         chunk = _build_contacts_chunk(city)
         assert chunk is not None
         # 公开 email 保留
-        assert "aogoffice@airchina.com" in chunk, f"全 public 应保留 email, chunk: {chunk}"
+        assert "placeholder@example.com" in chunk, f"全 public 应保留 email, chunk: {chunk}"
         # 不应有 RESTRICTED 标签
         assert "RESTRICTED" not in chunk
 
@@ -167,15 +166,15 @@ def test_pr8_pii7a_v2_conflicted_classification(tmp_path):
     import subprocess
     backend_root = PIPELINE_ROOT.parent / "backend"
 
-    # 构造 aog.db (跟 SCENARIO_1 一致: 1 public + 1 internal 共用 010-64537139)
+    # 构造 aog.db (跟 SCENARIO_1 一致: 1 public + 1 internal 共用 placeholder 010-11112222)
     db = tmp_path / "test_aog.db"
     import sqlite3
     con = sqlite3.connect(str(db))
     con.execute("CREATE TABLE cities (id INTEGER PRIMARY KEY, code TEXT, name TEXT, content_md TEXT, contacts TEXT)")
     con.execute("INSERT INTO cities VALUES (1, 'M-CONFLICT-A', 'A', NULL, ?)",
-                (json.dumps([{"org": "公开 AOG", "phone": ["010-64537139"], "permission": "public"}], ensure_ascii=False),))
+                (json.dumps([{"org": "公开 AOG", "phone": ["010-11112222"], "permission": "public"}], ensure_ascii=False),))
     con.execute("INSERT INTO cities VALUES (2, 'M-CONFLICT-B', 'B', NULL, ?)",
-                (json.dumps([{"org": "内部 vendor", "phone": ["010-64537139"], "permission": "internal"}], ensure_ascii=False),))
+                (json.dumps([{"org": "内部 vendor", "phone": ["010-11112222"], "permission": "internal"}], ensure_ascii=False),))
     con.commit()
     con.close()
 
@@ -228,5 +227,5 @@ def test_pr8_get_conflicted_values_helper():
     conflicted = get_conflicted_values(identity)
     assert len(conflicted) == 1
     # canonical value 移除 dash (跟 _normalize_phone 一致)
-    assert conflicted[0]["value"] == "01064537139"
+    assert conflicted[0]["value"] == "01011112222"
     assert conflicted[0]["effective_permission"] == "restricted"
