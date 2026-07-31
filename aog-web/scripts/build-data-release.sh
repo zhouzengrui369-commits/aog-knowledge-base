@@ -1185,26 +1185,40 @@ echo "[9/9] 写 release-manifest.json (所有 Gate 成功后)..."
 echo "  [data-release] Gate 4: PII-7a v2 真实 KB FTS5 leak check (NJX 7/31 PR #8: provenance-aware)..."
 # D-056 修: PII-7a v2 必须用 release 重建的 aog.db ($RELEASE_DIR/aog.db), 严禁用旧 BACKEND/data/aog.db
 # (旧 aog.db 没经过 D-052/D-053/PR#8 canonical identity normalization, 跟 FTS5 不一致 → 假 fail)
+# D-056 修: 严禁 || true 假绿 (NJX 7/30 R-3 修), 用 set +e 显式捕获 exit code
 REAL_AOG_DB="$RELEASE_DIR/aog.db"
 if [ -f "$REAL_AOG_DB" ]; then
     # PR #8: PII-7a v2 release mode 扫全部 values (--release), 严守 5 项禁止 (allowlist 50aa410edcff /
     # 修改 PII-7a 放行 / 手工清洗 owner / public 全量 redact).
+    set +e
     PII7A_OUT="$(cd "$PIPELINE" && "$AOG_WEB/backend/.venv/bin/python" -u -m scripts.pii_7a_check \
         --aog-db "$REAL_AOG_DB" \
         --fts5-db "$RELEASE_DIR/fts5_index.db" \
-        --release 2>&1 | tail -20)" || true
+        --release 2>&1 | tail -20)"
+    PII7A_EXIT=$?
+    set -e
     echo "$PII7A_OUT" | tail -10
+    if [ "$PII7A_EXIT" -ne 0 ]; then
+        echo "  ✗ FAIL Gate 4: PII-7a v2 exit $PII7A_EXIT (NJX 7/30 R-3: 严禁 || true 假绿)" >&2
+        echo "  详查: $PII7A_OUT" >&2
+        exit 6
+    fi
     if ! echo "$PII7A_OUT" | grep -q "PII-7a v2 PASS"; then
         echo "  ✗ FAIL Gate 4: PII-7a v2 真实 KB 泄漏 (forbidden_hits > 0)" >&2
         echo "  详查: $PII7A_OUT" >&2
         exit 6
     fi
     # 抽 v2 metrics (NJX 7/31 18:28 拍板 5 项: policy_version / allowed_public_hits / forbidden_hits / mixed_values / values_checked)
+    # D-056 修: 严禁 || true 假绿 (NJX 7/30 R-3 修), 用默认值兜底 (output 在 set +e 后已捕获, 失败就在 PII7A_EXIT -ne 0 catch)
     PII7A_POLICY_VERSION="pii-7a-v2-provenance"
-    PII7A_ALLOWED_PUBLIC_HITS="$(echo "$PII7A_OUT" | grep -oE 'allowed_public_hits=[0-9]+' | head -1 | cut -d= -f2 || echo 0)"
-    PII7A_FORBIDDEN_HITS="$(echo "$PII7A_OUT" | grep -oE 'forbidden_hits=[0-9]+' | head -1 | cut -d= -f2 || echo 0)"
-    PII7A_CONFLICTED_VALUES="$(echo "$PII7A_OUT" | grep -oE 'conflicted=[0-9]+' | head -1 | cut -d= -f2 || echo 0)"
-    PII7A_VALUES_CHECKED="$(echo "$PII7A_OUT" | grep -oE 'values_checked=[0-9]+' | head -1 | cut -d= -f2 || echo 0)"
+    PII7A_ALLOWED_PUBLIC_HITS="$(echo "$PII7A_OUT" | grep -oE 'allowed_public_hits=[0-9]+' | head -1 | cut -d= -f2)"
+    PII7A_ALLOWED_PUBLIC_HITS="${PII7A_ALLOWED_PUBLIC_HITS:-0}"
+    PII7A_FORBIDDEN_HITS="$(echo "$PII7A_OUT" | grep -oE 'forbidden_hits=[0-9]+' | head -1 | cut -d= -f2)"
+    PII7A_FORBIDDEN_HITS="${PII7A_FORBIDDEN_HITS:-0}"
+    PII7A_CONFLICTED_VALUES="$(echo "$PII7A_OUT" | grep -oE 'conflicted=[0-9]+' | head -1 | cut -d= -f2)"
+    PII7A_CONFLICTED_VALUES="${PII7A_CONFLICTED_VALUES:-0}"
+    PII7A_VALUES_CHECKED="$(echo "$PII7A_OUT" | grep -oE 'values_checked=[0-9]+' | head -1 | cut -d= -f2)"
+    PII7A_VALUES_CHECKED="${PII7A_VALUES_CHECKED:-0}"
     echo "  ✓ Gate 4 PASS: PII-7a v2 真实 KB 0 forbidden hits (policy=$PII7A_POLICY_VERSION, values_checked=$PII7A_VALUES_CHECKED, allowed=$PII7A_ALLOWED_PUBLIC_HITS, conflicted=$PII7A_CONFLICTED_VALUES)"
 else
     # Fixture 模式: 没真 aog.db, 跑 pii_sanitizer 5 层测试 (TestSourceContentSanitized +
@@ -1212,12 +1226,18 @@ else
     # 严禁当 PII-7a 真实 KB gate 用, 但作为 sanitizer unit 验证, 配合 owner 真 KB
     # staging release 前人工跑 (NJX 7/30 D-051 教训: fixture 通常太干净, 真实数据 review
     # 必要).
+    # D-056 修: 严禁 || true 假绿 (NJX 7/30 R-3 修), 用 set +e 显式捕获 exit code
     echo "  ⚠️  Gate 4: owner 真 aog.db 不在 $REAL_AOG_DB, 走 fixture 模式 (test_pii_sanitizer.py 5 层)"
+    set +e
     PII7A_FIXTURE_OUT="$(cd "$AOG_WEB" && "$AOG_WEB/backend/.venv/bin/python" -m pytest \
-        pipeline/tests/test_pii_sanitizer.py pipeline/tests/test_contact_canonical.py -v --tb=short 2>&1 | tail -25)" || true
+        pipeline/tests/test_pii_sanitizer.py pipeline/tests/test_contact_canonical.py -v --tb=short 2>&1 | tail -25)"
+    PII7A_FIXTURE_EXIT=$?
+    set -e
     echo "$PII7A_FIXTURE_OUT" | tail -15
-    PII7A_FIXTURE_PASS="$(echo "$PII7A_FIXTURE_OUT" | grep -cE 'PASSED' || echo 0)"
-    PII7A_FIXTURE_FAIL="$(echo "$PII7A_FIXTURE_OUT" | grep -cE 'FAILED' || echo 0)"
+    PII7A_FIXTURE_PASS="$(echo "$PII7A_FIXTURE_OUT" | grep -cE 'PASSED')"
+    PII7A_FIXTURE_PASS="${PII7A_FIXTURE_PASS:-0}"
+    PII7A_FIXTURE_FAIL="$(echo "$PII7A_FIXTURE_OUT" | grep -cE 'FAILED')"
+    PII7A_FIXTURE_FAIL="${PII7A_FIXTURE_FAIL:-0}"
     if [ "${PII7A_FIXTURE_FAIL:-0}" -gt 0 ]; then
         echo "  ✗ FAIL Gate 4 (fixture): test_pii_sanitizer/test_contact_canonical 必须 0 FAILED, 实际 PASS=$PII7A_FIXTURE_PASS FAIL=$PII7A_FIXTURE_FAIL" >&2
         exit 6
