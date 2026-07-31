@@ -26,6 +26,10 @@ from .chunker import chunk_text
 from .embedder import Embedder
 from .extractors import extract_city, extract_core_plan, extract_experience
 from .extractors.pii_sanitizer import sanitize_text
+from .extractors.contact_canonical import (
+    annotate_contacts_with_effective_permission,
+    build_canonical_identity,
+)
 from .indexer import CHROMA_COLLECTION, ChromaIndex, IndexStats, SqliteIndex
 
 # ---------- 默认路径 ----------
@@ -213,13 +217,17 @@ def _classify_permission(contact: dict) -> str:
 
 
 def _build_contacts_chunk(c: dict) -> str | None:
-    """D-030 + P0-6 + D-052: 把 city.contacts[] 拼成一段文本, 喂 RAG 让 AI 能召回 public 公开电话。
+    """D-030 + P0-6 + D-052 + PR #8: 把 city.contacts[] 拼成一段文本, 喂 RAG 让 AI 能召回 public 公开电话。
 
     ★ P0-6 (Owner 7/29 严令): 严格 PII 隔离
     ★ D-052 (NJX 7/31 拍板): contact 自由文本字段必须 sanitize
       - org/role/scope 全部先 sanitize_text (无论 permission)
       - public: 只从结构化 phone/email 字段保留公开联系方式
       - non-public: 不写 phone/email
+    ★ PR #8 (NJX 7/31 18:28 拍板): contact permission 冲突解决
+      - 使用 effective_permission (覆盖原 permission)
+      - canonical identity 跨 city 聚合, public + non-public → restricted (保守)
+      - 严禁: 跨 city permission 冲突时降级为 public (会触发 PII-7a v2 FORBIDDEN)
     ★ D-052 permission fail-closed: missing/empty/unknown 全按 restricted
     ★ 严禁: 原始 phone/email 进 RAG chunk / LLM context
       原始 phone/email 仅保留在 SQLite cities.contacts JSON (受控数据层)
@@ -232,14 +240,28 @@ def _build_contacts_chunk(c: dict) -> str | None:
         return None
     lines: list[str] = [f"# {c['name']} ({c['iata']}) 现场联系人清单"]
     for ct in contacts:
-        # ★ D-052 fail-closed permission 分类 (缺失/空/unknown 全部按 restricted)
-        perm_class = _classify_permission(ct)
-        is_public = (perm_class == "public")
-        # 显示标签: 原始 permission (raw) + 是否已脱敏
+        # ★ PR #8 严守: 优先用 effective_permission (build 阶段 canonical identity 算的)
+        # Fallback: 如果 effective_permission 没设 (unit test 或 owner data 异常),
+        # 用 D-052 _classify_permission 单 contact decision (向后兼容)
+        effective_perm = (ct.get("effective_permission") or "").strip()
+        if effective_perm in ("public", "restricted"):
+            is_public = (effective_perm == "public")
+        else:
+            # Fallback: D-052 fail-closed 单 contact permission 分类
+            perm_class = _classify_permission(ct)
+            is_public = (perm_class == "public")
+
+        # 显示标签: 原始 permission (raw) + effective_permission
         raw_permission = (ct.get("permission") or "").strip()
         raw_permission_display = raw_permission.upper() if raw_permission else "MISSING"
         if bool(ct.get("redacted")) is True:
             raw_permission_display = (raw_permission_display or "PUBLIC") + " 已脱敏"
+        # PR #8 标记: 如果 contact 跨 city conflict (canonical identity is_conflicted=True),
+        # 加 (PR#8 conflict) 标签. 严禁 allowlist 特定 phone (NJX 7/31 18:28 禁止);
+        # 仅 display, 不改数据, 不影响 chunk 内容决定.
+        permission_label = raw_permission_display
+        if bool(ct.get("is_conflicted")) is True:
+            permission_label = f"{raw_permission_display} → RESTRICTED (PR#8 conflict)"
 
         # ★ D-052: org/role/scope 全部先 sanitize_text (无论 permission)
         # 严禁保留 role 字段里的 phone/email 原值 (D-052 LEAK 根因)
@@ -251,16 +273,16 @@ def _build_contacts_chunk(c: dict) -> str | None:
         scope = sanitize_text(scope_raw) if isinstance(scope_raw, str) else ""
 
         # 拼 parts
-        parts: list[str] = [f"- [{raw_permission_display}] {org}"]
+        parts: list[str] = [f"- [{permission_label}] {org}"]
         if role:
             parts.append(f"  职责: {role}")
         if scope:
             parts.append(f"  范围: {scope}")
 
         if is_public:
-            # D-052 严令 1: public 只从结构化 phone/email 字段保留公开联系方式
+            # PR #8: 仅当 effective_permission=public 时进 phone/email (D-052 严令 1)
             # role/scope 已经 sanitize_text 不会再有 phone/email
-            # 结构化 phone/email 是 owner 标记的 public, 不再 sanitize (owner 信任, 公开信息)
+            # 结构化 phone/email 是 effective_permission=public 标记的, 不再 sanitize
             phones = ct.get("phone") or []
             email = ct.get("email", "")
             phone_strs = [p for p in phones if isinstance(p, str) and p]
@@ -270,8 +292,7 @@ def _build_contacts_chunk(c: dict) -> str | None:
             if email_str:
                 parts.append(f"  邮箱: {email_str}")
         else:
-            # D-052: non-public (restricted/internal/missing/empty/unknown/redacted)
-            # 严禁写结构化 phone/email 进 chunk
+            # PR #8: non-public (含 PR#8 conflict 降级) — 严禁写结构化 phone/email 进 chunk
             parts.append("  联系方式: [已脱敏/受限, 详情见 city detail API 权限检查]")
 
         lines.append("\n".join(parts))
@@ -436,6 +457,16 @@ def build(
     result.files_indexed = result.cities_count + result.experiences_count + result.core_plans_count
 
     print(f"[extract] cities={result.cities_count} experiences={result.experiences_count} core_plans={result.core_plans_count} failed={len(result.files_failed)}")
+
+    # 2.5 PR #8 (NJX 7/31 18:28 拍板): canonical contact identity + effective_permission
+    # 跨 city 聚合 phone/email occurrence, 算 effective_permission 覆盖原 permission
+    # 解决 owner permission 标错 (H-惠州 / S-深圳 / Y-运城 把深航 internal 标 public) 触发
+    # PII-7a v2 NON_PUBLIC_ONLY FORBIDDEN 的根因.
+    # 规则: 全 public → public; 混合 public + non-public → restricted (保守原则)
+    canonical_identity = build_canonical_identity(cities)
+    cities = annotate_contacts_with_effective_permission(cities, canonical_identity)
+    conflicted_count = sum(1 for e in canonical_identity.values() if e["is_conflicted"])
+    print(f"[canonical-identity] {len(canonical_identity)} unique values, {conflicted_count} conflicted (cross-city permission conflict)")
 
     if dry_run:
         result.build_time_s = time.time() - t0
