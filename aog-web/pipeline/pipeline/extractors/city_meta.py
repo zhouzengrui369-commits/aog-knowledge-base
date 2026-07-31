@@ -423,7 +423,13 @@ def _extract_contacts(dt: DocxTable) -> list[dict]:
     行格式: ['东航', '东航上海总部 AOG', '东航上海总部 AOG', '互援', '021-22379771...']
 
     D-030: 给每条 contact 加 permission 字段 (public/internal/restricted)
+    D-053 (NJX 7/31 拍板): phone field normalization
+      - 拆分黏连号码 (e.g. '020-86138428 / 86138730 13924136' + '820' → 3 个 phone)
+      - 单独 validate (用 pii_sanitizer.is_valid_phone 验证 valid/invalid)
+      - invalid 丢弃 (e.g. '88984060' 8 digit 无前导 0 不命中 patterns, 视为 owner data 异常)
+      - 严禁整体 regex 吞掉多个号码 (D-053 严令 2)
     """
+    from .pii_sanitizer import is_valid_phone  # D-053 helper
     sec = _find_section(dt, "当地及周边资源", "联系人", "周边资源")
     if not sec:
         return []
@@ -437,13 +443,53 @@ def _extract_contacts(dt: DocxTable) -> list[dict]:
         scope = row[1].strip()
         method = row[-2].strip() if len(row) >= 2 else ""
         phone_str = row[-1].strip() if len(row) >= 1 else ""
-        # 抽 phone
-        phones = re.findall(r"[\d\-\+\s\(\)]{7,}", phone_str)
-        phones = [re.sub(r"\s+", " ", p).strip() for p in phones]
+        # D-053: phone field normalization - 拆黏连 + 单独 validate
+        # 严禁: 整体 regex [\d\-\+\s\(\)]{7,} 吞掉多个 phone (D-053 严令 2 禁止)
+        # 拆: 按分隔符 / ; 拆, 然后每段单独跑更严 phone regex
+        raw_phones: list[str] = []
+        if phone_str:
+            # 1. 按强分隔符 / 拆 (语义: 不同 phone 单元)
+            for segment in re.split(r"\s*[;/]\s*", phone_str):
+                segment = segment.strip()
+                if not segment:
+                    continue
+                # 2. 段内按空格拆 (黏连情况: '86138730 13924136' + '820')
+                for sub in re.split(r"\s+", segment):
+                    sub = sub.strip()
+                    if not sub:
+                        continue
+                    # 3. 单 phone regex (不允许空格/黏连):
+                    #    +国家码 / 00XX- / 11+ digit / 0XX-XXXXXXX / 00(X)XXXXXXXX
+                    for m in re.finditer(
+                        r"(?:"
+                        r"\+\d{1,3}[\s\-\(\)\.]*\d[\d\s\-\(\)\.]{5,}\d"  # +国家码
+                        r"|"
+                        r"00\(\d{1,4}\)\d{6,}"  # 00(X)XXXXXXXX
+                        r"|"
+                        r"00\d{1,3}[\-\.]\d{7,8}"  # 00XX-XXXX-XXXX
+                        r"|"
+                        r"00\d{1,3}[\-\.]\d{2,4}[\-\.]\d{3,4}[\-\.]\d{3,4}"  # 00XX-XXX-XXX-XXXX
+                        r"|"
+                        r"\d{11,}"  # 11+ 连续 (中国手机等)
+                        r"|"
+                        r"0\d{2,3}[\-\.]\d{7,8}(?:[\-\.]\d{1,5})?"  # 中国座机 0XX-XXXXXXX
+                        r")",
+                        sub,
+                    ):
+                        cand = m.group(0).strip()
+                        if cand and is_valid_phone(cand):
+                            raw_phones.append(cand)
+        # 4. 去重保序 (D-053: 拆出后可能有重复, 保留首次)
+        seen: set[str] = set()
+        phones: list[str] = []
+        for ph in raw_phones:
+            if ph not in seen:
+                seen.add(ph)
+                phones.append(ph)
         # email
         email_match = re.search(r"[\w\.\-]+@[\w\.\-]+\.[a-zA-Z]{2,}", phone_str)
         email = email_match.group(0) if email_match else None
-        # D-030: 启发式 permission
+        # D-030: 启发式 permission (用规范化后 phone list)
         perm = _classify_contact_permission(org, phones, method or "7×24", email)
         contact: dict = {
             "org": org,
