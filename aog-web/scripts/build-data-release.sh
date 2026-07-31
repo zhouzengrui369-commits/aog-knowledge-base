@@ -1185,7 +1185,7 @@ echo "[9/9] 写 release-manifest.json (所有 Gate 成功后)..."
 echo "  [data-release] Gate 4: PII-7a v2 真实 KB FTS5 leak check (NJX 7/31 PR #8: provenance-aware)..."
 # D-056 修: PII-7a v2 必须用 release 重建的 aog.db ($RELEASE_DIR/aog.db), 严禁用旧 BACKEND/data/aog.db
 # (旧 aog.db 没经过 D-052/D-053/PR#8 canonical identity normalization, 跟 FTS5 不一致 → 假 fail)
-# D-056 修: 严禁 || true 假绿 (NJX 7/30 R-3 修), 用 set +e 显式捕获 exit code
+# D-056 修: 严禁 exit-code masking 假绿 (NJX 7/30 R-3 修), 用 set +e 显式捕获 exit code
 REAL_AOG_DB="$RELEASE_DIR/aog.db"
 if [ -f "$REAL_AOG_DB" ]; then
     # PR #8: PII-7a v2 release mode 扫全部 values (--release), 严守 5 项禁止 (allowlist 50aa410edcff /
@@ -1199,7 +1199,7 @@ if [ -f "$REAL_AOG_DB" ]; then
     set -e
     echo "$PII7A_OUT" | tail -10
     if [ "$PII7A_EXIT" -ne 0 ]; then
-        echo "  ✗ FAIL Gate 4: PII-7a v2 exit $PII7A_EXIT (NJX 7/30 R-3: 严禁 || true 假绿)" >&2
+        echo "  ✗ FAIL Gate 4: PII-7a v2 exit $PII7A_EXIT (NJX 7/30 R-3: 严禁 exit-code masking 假绿)" >&2
         echo "  详查: $PII7A_OUT" >&2
         exit 6
     fi
@@ -1209,7 +1209,7 @@ if [ -f "$REAL_AOG_DB" ]; then
         exit 6
     fi
     # 抽 v2 metrics (NJX 7/31 18:28 拍板 5 项: policy_version / allowed_public_hits / forbidden_hits / mixed_values / values_checked)
-    # D-056 修: 严禁 || true 假绿 (NJX 7/30 R-3 修), 用默认值兜底 (output 在 set +e 后已捕获, 失败就在 PII7A_EXIT -ne 0 catch)
+    # D-056 修: 严禁 exit-code masking 假绿 (NJX 7/30 R-3 修), 用默认值兜底 (output 在 set +e 后已捕获, 失败就在 PII7A_EXIT -ne 0 catch)
     PII7A_POLICY_VERSION="pii-7a-v2-provenance"
     PII7A_ALLOWED_PUBLIC_HITS="$(echo "$PII7A_OUT" | grep -oE 'allowed_public_hits=[0-9]+' | head -1 | cut -d= -f2)"
     PII7A_ALLOWED_PUBLIC_HITS="${PII7A_ALLOWED_PUBLIC_HITS:-0}"
@@ -1226,7 +1226,7 @@ else
     # 严禁当 PII-7a 真实 KB gate 用, 但作为 sanitizer unit 验证, 配合 owner 真 KB
     # staging release 前人工跑 (NJX 7/30 D-051 教训: fixture 通常太干净, 真实数据 review
     # 必要).
-    # D-056 修: 严禁 || true 假绿 (NJX 7/30 R-3 修), 用 set +e 显式捕获 exit code
+    # D-056 修: 严禁 exit-code masking 假绿 (NJX 7/30 R-3 修), 用 set +e 显式捕获 exit code
     echo "  ⚠️  Gate 4: owner 真 aog.db 不在 $REAL_AOG_DB, 走 fixture 模式 (test_pii_sanitizer.py 5 层)"
     set +e
     PII7A_FIXTURE_OUT="$(cd "$AOG_WEB" && "$AOG_WEB/backend/.venv/bin/python" -m pytest \
