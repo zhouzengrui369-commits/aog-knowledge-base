@@ -596,7 +596,8 @@ if [ "$MISSING_COUNT" -gt 0 ]; then
     exit 3
 fi
 # D-056: 校验 wiki/ 目录里 MOC-*.md 数 == wiki-release-manifest.json 声明数
-WIKI_ACTUAL_COUNT="$(ls "$RELEASE_DIR/wiki/MOC-*.md" 2>/dev/null | wc -l | tr -d ' ')"
+# 注: 用 find 不用 ls glob, 避免 macOS bash 3.2 + unicode 路径下 glob 失效
+WIKI_ACTUAL_COUNT="$(find "$RELEASE_DIR/wiki" -maxdepth 1 -name "MOC-*.md" -type f 2>/dev/null | wc -l | tr -d ' ')"
 if [ "$WIKI_ACTUAL_COUNT" != "$D056_WIKI_SANITIZED_PAGES" ]; then
     echo "  ✗ FAIL: wiki/ 实际 MOC-*.md ($WIKI_ACTUAL_COUNT) != manifest 声明 ($D056_WIKI_SANITIZED_PAGES)" >&2
     exit 3
