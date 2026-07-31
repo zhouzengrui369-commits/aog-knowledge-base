@@ -1183,7 +1183,9 @@ echo "[9/9] 写 release-manifest.json (所有 Gate 成功后)..."
 #     test_pii_sanitizer.py 5 层 sanitized 覆盖 (TestSourceContentSanitized +
 #     TestSqliteSanitized + TestChromaSanitized + TestFTS5Sanitized + TestRAGResultSanitized).
 echo "  [data-release] Gate 4: PII-7a v2 真实 KB FTS5 leak check (NJX 7/31 PR #8: provenance-aware)..."
-REAL_AOG_DB="$BACKEND/data/aog.db"
+# D-056 修: PII-7a v2 必须用 release 重建的 aog.db ($RELEASE_DIR/aog.db), 严禁用旧 BACKEND/data/aog.db
+# (旧 aog.db 没经过 D-052/D-053/PR#8 canonical identity normalization, 跟 FTS5 不一致 → 假 fail)
+REAL_AOG_DB="$RELEASE_DIR/aog.db"
 if [ -f "$REAL_AOG_DB" ]; then
     # PR #8: PII-7a v2 release mode 扫全部 values (--release), 严守 5 项禁止 (allowlist 50aa410edcff /
     # 修改 PII-7a 放行 / 手工清洗 owner / public 全量 redact).

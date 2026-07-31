@@ -63,10 +63,11 @@ PHONE_PATTERNS = [
         r"(?<!\d)\d{11,}(?!\d)"            # 11+ 连续数字, 前后非数字
     ),
     # 4. 座机 0XX-XXXXXXX (中国座机 10-12 digits, 有 - 分隔, 不被上面 11+ 覆盖)
+    # D-053 修 (NJX 7/31 拍板): \d{7,12} 允许 7-12 数字含分机号黏连 (e.g. 0898-688751725)
     re.compile(
         r"(?<!\d)"
         r"0\d{2,3}"                         # 0XX 区号 (010 / 02X / 0XX)
-        r"[\-\.]\d{7,8}"                   # -XXXXXXX (7-8 digits)
+        r"[\-\.]\d{7,12}"                  # -XXXXXXX (7-12 digits 含分机号)
         r"(?:[\-\.]\d{1,5})?"               # 可选 -XXX 分机
         r"(?!\d)"
     ),
@@ -120,15 +121,37 @@ def sanitize_phone(text: str) -> str:
 
     严禁保留: phone 原值
     替换 marker: [PHONE_REDACTED] (RAG 易识别, 人类易理解)
+
+    D-056 扩展 (NJX 7/31 20:12 拍板): owner data 黏连前缀 split
+      严守 D-053 严令 2: 禁止整体 regex 吞掉多个号码
+      例: '310898-68875172' (3 digit 数字 + 0XX-XXXXXXX) →
+          split 出 '31' + '0898-68875172', 然后正常 sanitize
     """
     if not text:
         return text
+    # D-056 黏连前缀 split: 在 \d+0\d{2,3}[\-\.]\d{7,12} 里, 把前缀 digits REDACTED
+    # 保留 phone 部分 (group 2), 让主 pattern 二次 match + REDACT
+    # 例: 310898-68875172 → [PHONE_REDACTED]0898-68875172 (主 pattern 再 REDACT → [PHONE_REDACTED])
+    # 例: 250898-68875172 → [PHONE_REDACTED]0898-68875172
+    # 例: 0898-688751725 (12 digit 黏连后缀) → 主 pattern P4 整体 match
+    text = _D056_STICKY_PHONE_PREFIX_RE.sub(
+        lambda m: PHONE_REDACTED + m.group(2),  # 保留 group 2 让主 pattern 处理
+        text,
+    )
     # 多 pattern 联合, 任何一 match 就 redact
     # 顺序: 先 +国家码, 再 11+ 连续, 再 座机
     # 注: re.sub 接受 list of patterns
     for pat in PHONE_PATTERNS:
         text = pat.sub(PHONE_REDACTED, text)
     return text
+
+
+# D-056 黏连前缀 regex: \d+(0\d{2,3}[\-\.]\d{7,12}) — 前缀 1-4 digit + 0XX-XXXXXXX
+# 例: 310898-68875172, 250898-68875172
+# 注: 不动 0XX-XXXXXXX 自身 (无前缀情况), 不动 +/00 国际格式 (那些有显式前缀)
+_D056_STICKY_PHONE_PREFIX_RE = re.compile(
+    r"(?<!\d)(\d{1,4})(0\d{2,3}[\-\.]\d{7,12})(?!\d)"
+)
 
 
 def sanitize_email(text: str) -> str:
