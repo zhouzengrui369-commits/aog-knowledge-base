@@ -17,6 +17,13 @@ NJX 7/31 20:12 拍板 D-056_WIKI_RELEASE_SNAPSHOT_BYPASS:
 
   此脚本为 release 专用. 严禁在 release 路径调 LLM (wiki_curator) 或静默修.
 
+NJX 7/31 22:13 拍板 fix(security) — D-056 失败路径 PII 明文收口:
+  严守 (failure path 不写含明文):
+    1. 所有 residual PII 只记录 SHA256[:12] fingerprint, 严禁原始 phone/email
+    2. 日志不得输出原始 phone/email
+    3. 失败时不得生成含明文的正式 wiki-release-manifest
+    4. failure receipt 只允许 path/kind/fingerprint/count (严禁 value 原值)
+
 Usage:
   python -m scripts.sanitize_wiki_release \\
       --source-wiki <KB_ROOT>/pipeline/data/wiki \\
@@ -28,7 +35,7 @@ Usage:
 
 退出码:
   0 = success (residual_pii_matches=0, page count 一致)
-  4 = residual PII > 0 (fail)
+  4 = residual PII > 0 (fail; manifest 不写, 严禁明文 receipt)
   5 = source/output page count 不一致
   6 = source wiki 不存在 / 为空
 """
@@ -43,7 +50,7 @@ import shutil
 import sys
 import time
 from pathlib import Path
-from typing import Dict, List, Tuple
+from typing import Any, Dict, List, Tuple
 
 logging.basicConfig(
     level=logging.INFO,
@@ -158,11 +165,12 @@ def process_wiki_file(
 ) -> Dict:
     """处理 1 个 wiki 源文件: sanitize body + 自由文本 metadata → 写 $out_dir.
 
+    NJX 7/31 22:13 拍板 fix(security): residual PII 只记 fingerprint, 严禁明文 value.
     Returns: dict with keys
         - source_sha256 (源文件 sha256)
         - output_sha256 (sanitized 输出 sha256)
-        - frontmatter_residual_pii (list of (k, kind, value))
-        - body_residual_pii (list of (kind, value))
+        - frontmatter_residual_pii (list of dict: {metadata_key, kind, fingerprint, count})
+        - body_residual_pii (list of dict: {kind, fingerprint, count})
         - body_chars_in / body_chars_out
     """
     raw = src.read_text(encoding="utf-8", errors="ignore")
@@ -171,20 +179,38 @@ def process_wiki_file(
 
     # sanitize frontmatter free-text fields
     fm_sanitized: Dict[str, str] = {}
-    fm_residual: List[Tuple[str, str, str]] = []
+    # 严守 fix(security): residual 只记 fingerprint, 严禁原值
+    fm_residual: List[Dict[str, str]] = []
     for k, v in fm.items():
         if k in SAFE_METADATA_KEYS:
             fm_sanitized[k] = v
         else:
             sanitized = sanitize_text(v)
             fm_sanitized[k] = sanitized
-            # 严守: 检 residual
+            # 严守: 检 residual → fingerprint only
             for kind, val in find_residual_pii(sanitized):
-                fm_residual.append((k, kind, val))
+                fm_residual.append({
+                    "metadata_key": k,
+                    "kind": kind,
+                    "fingerprint": hashlib.sha256(val.encode("utf-8")).hexdigest()[:12],
+                    "count": 1,
+                })
 
     # sanitize body
     body_sanitized = sanitize_text(body)
-    body_residual = find_residual_pii(body_sanitized)
+    # 严守 fix(security): 按 (kind, fingerprint) 聚合 count, 严禁原值
+    body_residual: List[Dict[str, Any]] = []
+    body_residual_agg: Dict[Tuple[str, str], int] = {}
+    for kind, val in find_residual_pii(body_sanitized):
+        fingerprint = hashlib.sha256(val.encode("utf-8")).hexdigest()[:12]
+        key = (kind, fingerprint)
+        body_residual_agg[key] = body_residual_agg.get(key, 0) + 1
+    for (kind, fingerprint), count in body_residual_agg.items():
+        body_residual.append({
+            "kind": kind,
+            "fingerprint": fingerprint,
+            "count": count,
+        })
 
     # 写输出
     out_path = out_dir / src.name
@@ -280,7 +306,31 @@ def build_wiki_release(
         shutil.rmtree(out_dir)
         sys.exit(5)
 
-    # 写 wiki-release-manifest.json
+    # FAIL: residual PII > 0 → 严禁写含明文 manifest (NJX 7/31 22:13 拍板 fix(security))
+    if total_residual > 0:
+        # 失败前: 清理已写出的 wiki 目录 (避免脏 release 留下含原文的 sanitized 副本)
+        shutil.rmtree(out_dir)
+        # 详查: failure receipt 只允许 path/kind/fingerprint/count, 严禁 value 原值
+        leaked_pages = [r for r in page_results if r["body_residual_pii"] or r["frontmatter_residual_pii"]]
+        for lp in leaked_pages[:5]:
+            # 失败日志只输出 path + total count + 5 个 fingerprint, 严禁原值
+            fm_count = sum(item["count"] for item in lp["frontmatter_residual_pii"])
+            body_count = sum(item["count"] for item in lp["body_residual_pii"])
+            logger.error(
+                "D-056 FAIL: source=%s fm_residual_count=%d body_residual_count=%d",
+                lp["source_path"], fm_count, body_count,
+            )
+            for item in lp["body_residual_pii"][:5]:
+                logger.error(
+                    "  kind=%s fingerprint=%s count=%d",
+                    item["kind"], item["fingerprint"], item["count"],
+                )
+        # 显式声明: 没生成 manifest, 没生成 wiki output (已清), 没明文 receipt
+        logger.error("D-056 FAIL: 严禁写含明文 wiki-release-manifest (NJX 7/31 22:13 拍板 fix(security))")
+        logger.error("D-056 FAIL: failure receipt 仅 path/kind/fingerprint/count, 严禁原始 phone/email value")
+        sys.exit(4)
+
+    # 写 wiki-release-manifest.json (仅 success path, residual=0)
     manifest = {
         "policy_version": "d056-wiki-release-v1",
         "build_time": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
@@ -306,14 +356,6 @@ def build_wiki_release(
     logger.info("  manifest:           %s", manifest_path)
     logger.info("  manifest sha256:    %s", manifest_sha)
     logger.info("=" * 60)
-
-    # FAIL: residual PII > 0
-    if total_residual > 0:
-        # 详查: 列出所有 residual
-        leaked_pages = [r for r in page_results if r["body_residual_pii"] or r["frontmatter_residual_pii"]]
-        for lp in leaked_pages[:5]:
-            logger.error("  residual in %s: fm=%s, body=%s", lp["source_path"], lp["frontmatter_residual_pii"], lp["body_residual_pii"])
-        sys.exit(4)
 
     # OK
     return {

@@ -25,6 +25,7 @@ Wave 3 · SCF 部署前置 (替代 chroma, /tmp 友好)
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import logging
 import sqlite3
@@ -488,6 +489,11 @@ _D056_EMAIL_RE = _re_d056.compile(
 def _d056_check_pii_residual(text: str, where: str) -> None:
     """D-056 fail-loud: 扫 text 内 phone/email 原值, 命中立即 raise SystemExit(4).
 
+    严禁 (NJX 7/31 22:13 拍板 fix(security)):
+      - 日志只输出 SHA256[:12] fingerprint, 严禁明文原值
+      - 不写含明文 manifest
+      - failure receipt 只允许 path/kind/fingerprint/count
+
     Args:
         text: 待扫的文本
         where: 错误信息里标注位置 (e.g. 'wiki:MOC-X-西安-故障树')
@@ -495,14 +501,17 @@ def _d056_check_pii_residual(text: str, where: str) -> None:
     if not text:
         return
     for m in _D056_EMAIL_RE.finditer(text):
-        logger.error("D-056 FAIL: %s 残留 email 原值: %s", where, m.group(0))
+        v = m.group(0)
+        fingerprint = hashlib.sha256(v.encode("utf-8")).hexdigest()[:12]
+        logger.error("D-056 FAIL: %s kind=email fingerprint=%s", where, fingerprint)
         sys.exit(4)
     for pat in _D056_PHONE_RE_LIST:
         for m in pat.finditer(text):
             v = m.group(0)
             if v == "[PHONE_REDACTED]":
                 continue
-            logger.error("D-056 FAIL: %s 残留 phone 原值: %s", where, v)
+            fingerprint = hashlib.sha256(v.encode("utf-8")).hexdigest()[:12]
+            logger.error("D-056 FAIL: %s kind=phone fingerprint=%s", where, fingerprint)
             sys.exit(4)
 
 

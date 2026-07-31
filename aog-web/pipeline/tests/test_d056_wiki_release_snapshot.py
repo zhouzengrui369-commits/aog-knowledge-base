@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""test_d056_wiki_release_snapshot.py — D-056 wiki release snapshot 6 场景验证
+"""test_d056_wiki_release_snapshot.py — D-056 wiki release snapshot 6 场景 + 4 失败路径验证
 
 NJX 7/31 20:12 拍板 D-056_WIKI_RELEASE_SNAPSHOT_BYPASS:
   PR #4 final merge BLOCKED 根因: export_fts5.py 隐式读 pipeline/data/wiki
@@ -15,13 +15,21 @@ NJX 7/31 20:12 拍板 D-056_WIKI_RELEASE_SNAPSHOT_BYPASS:
   5. 海航总部 3 phone 精确覆盖 (0898-65987130 / 31 / 68875172 → REDACTED)
   6. PII-7a v2 wiki forbidden hits=0 (端到端: 真 fts5 + 真 pii_7a_check 验证)
 
+4 失败路径 (NJX 7/31 22:13 拍板 fix(security)):
+  7. sanitizer exit 4 (含 PII wiki) → exit 4
+  8. log 无明文 (失败日志不含原始 phone/email value, 仅 path/kind/fingerprint/count)
+  9. manifest 无明文 (失败时严禁写含原值的 wiki-release-manifest.json)
+  10. export_fts5 只输出 hash (失败日志仅 fingerprint, 严禁原始 value)
+
 运行:
   cd aog-web/pipeline
   ../backend/.venv/bin/python -m pytest tests/test_d056_wiki_release_snapshot.py -v --tb=short
 """
 from __future__ import annotations
 
+import hashlib
 import json
+import logging
 import shutil
 import sqlite3
 import subprocess
@@ -288,3 +296,195 @@ def test_d056_export_fts5_new_args_accepted(tmp_release_env):
     # 系统应该 fail-loud (exit 4) 因为 require_wiki=True + dir 不存在
     # 注: 因为 con=None, 可能在 dir 检查前崩, 只断言 exit code 不是 0
     assert exc_info.value.code != 0, f"require_wiki=True + missing dir must fail, got {exc_info.value.code}"
+
+
+# === 4 失败路径 tests (NJX 7/31 22:13 拍板 fix(security)) ===
+# 严守:
+#   - sanitizer exit 4 (含 PII wiki → 立即 exit 4, 不写含明文 manifest)
+#   - log 无明文 (失败日志仅 fingerprint, 严禁原始 phone/email value)
+#   - manifest 无明文 (失败时严禁写含原值的 wiki-release-manifest.json)
+#   - export_fts5 只输出 hash (_d056_check_pii_residual 失败日志仅 hash, 严禁原始 v)
+
+
+# === Test 7: sanitizer exit 4 (含 PII wiki) ===
+
+def test_d056_sanitizer_exit_4_on_residual(tmp_release_env, monkeypatch):
+    """D-056 fix(security) 严守 7: 失败路径立即 exit 4, 不写含明文 manifest.
+
+    直接调 build_wiki_release() in-process (用 monkeypatch 替换 sanitize_text 为 fake,
+    触发 residual PII). 严守:
+      - SystemExit(4) 抛出
+      - 不写 wiki-release-manifest.json
+      - 不写 wiki/ output (residual > 0 时已 rmtree)
+    """
+    import scripts.sanitize_wiki_release as swr
+
+    def fake_sanitize_no_op(text: str) -> str:
+        # 不动任何文本, 模拟 sanitize 失败 (旧 MOC-*.md 含 PII 但 sanitize patterns 不覆盖)
+        return text
+
+    # fixture: 海航原文 + extra PII
+    src = tmp_release_env["source_wiki"] / "MOC-G-广州-故障树.md"
+    original_content = src.read_text(encoding="utf-8")
+    src.write_text(original_content + "\n\n海航总部 0898-65987130 / 31 / 68875172\n", encoding="utf-8")
+
+    monkeypatch.setattr(swr, "sanitize_text", fake_sanitize_no_op)
+    with pytest.raises(SystemExit) as exc_info:
+        swr.build_wiki_release(
+            tmp_release_env["source_wiki"], tmp_release_env["release_dir"]
+        )
+    # 严守 7: 失败时 exit code = 4
+    assert exc_info.value.code == 4, f"必须 exit 4 (含 PII 残留), got {exc_info.value.code}"
+    # 严守 9: 失败时严禁写 wiki-release-manifest.json
+    manifest_path = tmp_release_env["release_dir"] / "wiki-release-manifest.json"
+    assert not manifest_path.exists(), f"失败时严禁写 manifest, but {manifest_path} exists"
+    # 严守 9b: 失败时严禁写 wiki output (已 rmtree)
+    out_wiki = tmp_release_env["release_dir"] / "wiki"
+    assert not out_wiki.exists(), f"失败时严禁写 wiki output, but {out_wiki} exists"
+
+
+# === Test 8: log 无明文 (失败日志仅 fingerprint, 严禁原始 phone/email value) ===
+
+def test_d056_failure_log_no_plaintext_phone(tmp_release_env, monkeypatch, caplog):
+    """D-056 fix(security) 严守 8: 失败日志严禁原始 phone value, 仅 fingerprint."""
+    import scripts.sanitize_wiki_release as swr
+
+    def fake_sanitize_no_op(text: str) -> str:
+        return text
+
+    # 已知 3 个 phone: 0898-65987130, 0898-68875172, 18938850285
+    KNOWN_PHONES = ["0898-65987130", "0898-68875172", "18938850285"]
+    src = tmp_release_env["source_wiki"] / "MOC-G-广州-故障树.md"
+    original_content = src.read_text(encoding="utf-8")
+    src.write_text(original_content + "\n" + " ".join(KNOWN_PHONES) + "\n", encoding="utf-8")
+
+    monkeypatch.setattr(swr, "sanitize_text", fake_sanitize_no_op)
+    with caplog.at_level(logging.ERROR, logger="sanitize_wiki_release"):
+        with pytest.raises(SystemExit) as exc_info:
+            swr.build_wiki_release(
+                tmp_release_env["source_wiki"], tmp_release_env["release_dir"]
+            )
+    assert exc_info.value.code == 4
+    log_text = caplog.text
+    # 严守 8: 失败日志严禁原始 phone value 出现
+    for ph in KNOWN_PHONES:
+        assert ph not in log_text, f"失败日志严禁含原始 phone {ph!r}, log: {log_text[:500]}"
+    # 严守 8b: 但 fingerprint 必须出现 (12 char hex)
+    for ph in KNOWN_PHONES:
+        fp = hashlib.sha256(ph.encode("utf-8")).hexdigest()[:12]
+        assert fp in log_text, f"失败日志必须含 fingerprint {fp} (for phone {ph})"
+
+
+def test_d056_failure_log_no_plaintext_email(tmp_release_env, monkeypatch, caplog):
+    """D-056 fix(security) 严守 8 (email): 失败日志严禁原始 email value, 仅 fingerprint."""
+    import scripts.sanitize_wiki_release as swr
+
+    def fake_sanitize_no_op(text: str) -> str:
+        return text
+
+    KNOWN_EMAILS = ["aogdesk@hnair.com", "secret-pii@x-test-only.example"]
+    src = tmp_release_env["source_wiki"] / "MOC-G-广州-故障树.md"
+    original_content = src.read_text(encoding="utf-8")
+    src.write_text(original_content + "\n" + " ".join(KNOWN_EMAILS) + "\n", encoding="utf-8")
+
+    monkeypatch.setattr(swr, "sanitize_text", fake_sanitize_no_op)
+    with caplog.at_level(logging.ERROR, logger="sanitize_wiki_release"):
+        with pytest.raises(SystemExit) as exc_info:
+            swr.build_wiki_release(
+                tmp_release_env["source_wiki"], tmp_release_env["release_dir"]
+            )
+    assert exc_info.value.code == 4
+    log_text = caplog.text
+    for em in KNOWN_EMAILS:
+        assert em not in log_text, f"失败日志严禁含原始 email {em!r}"
+    for em in KNOWN_EMAILS:
+        fp = hashlib.sha256(em.encode("utf-8")).hexdigest()[:12]
+        assert fp in log_text, f"失败日志必须含 fingerprint {fp} (for email {em})"
+
+
+# === Test 9: manifest 无明文 (失败时严禁写含原值的 wiki-release-manifest.json) ===
+
+def test_d056_no_manifest_on_failure(tmp_release_env, monkeypatch):
+    """D-056 fix(security) 严守 9: 失败时严禁写 wiki-release-manifest.json.
+
+    严守 NJX 7/31 22:13 拍板: 失败时不得生成含明文的正式 wiki-release-manifest.
+    """
+    import scripts.sanitize_wiki_release as swr
+
+    def fake_sanitize_no_op(text: str) -> str:
+        return text
+
+    src = tmp_release_env["source_wiki"] / "MOC-G-广州-故障树.md"
+    original_content = src.read_text(encoding="utf-8")
+    src.write_text(original_content + "\n海航总部 0898-65987130\n", encoding="utf-8")
+
+    monkeypatch.setattr(swr, "sanitize_text", fake_sanitize_no_op)
+    with pytest.raises(SystemExit) as exc_info:
+        swr.build_wiki_release(
+            tmp_release_env["source_wiki"], tmp_release_env["release_dir"]
+        )
+    assert exc_info.value.code == 4
+    manifest_path = tmp_release_env["release_dir"] / "wiki-release-manifest.json"
+    assert not manifest_path.exists(), f"失败时严禁写 manifest, found {manifest_path}"
+    # 严守 9b: 失败时 wiki output 也不写
+    out_wiki = tmp_release_env["release_dir"] / "wiki"
+    assert not out_wiki.exists(), f"失败时严禁写 wiki/, found {out_wiki}"
+    # 严守 9c: 失败时也严禁把原文残留在 release_dir
+    for path in tmp_release_env["release_dir"].iterdir():
+        # 严禁含 .md (原文残留)
+        if path.suffix == ".md":
+            pytest.fail(f"失败时严禁残留 .md 原文, found {path}")
+
+
+# === Test 10: export_fts5 只输出 hash (失败日志仅 fingerprint, 严禁原始 v) ===
+
+def test_d056_export_fts5_residual_log_only_hash(caplog):
+    """D-056 fix(security) 严守 10: export_fts5 失败日志仅 fingerprint, 严禁原始 v.
+
+    直接调 _d056_check_pii_residual, 传含 phone/email 文本, 验证:
+      - SystemExit(4) 抛出
+      - 失败日志严禁原始 phone/email value
+      - 失败日志必须含 fingerprint (至少首个命中的)
+    """
+    from scripts.export_fts5 import _d056_check_pii_residual
+
+    KNOWN_PHONES = ["0898-65987130", "18938850285"]
+    KNOWN_EMAILS = ["aogdesk@hnair.com"]
+    # 严守 10: 单独 phone 跟 email 文本 (函数 sys.exit 提前, 第一个命中就终止)
+    text_phone = "海航总部 0898-65987130 18938850285"
+    text_email = "邮箱 aogdesk@hnair.com"
+
+    # Test 10a: phone 失败路径
+    with caplog.at_level(logging.ERROR, logger="export_fts5"):
+        with pytest.raises(SystemExit) as exc_info:
+            _d056_check_pii_residual(text_phone, "test:phone")
+    assert exc_info.value.code == 4
+    log_text = caplog.text
+    # 严守 10: 失败日志严禁原始 phone value
+    for v in KNOWN_PHONES:
+        assert v not in log_text, f"phone 失败日志严禁含原始 {v!r}, log: {log_text[:500]}"
+    # 严守 10b: 失败日志必须含至少 1 个 fingerprint (函数 sys.exit 提前, 只首个命中可见)
+    fingerprints = [
+        hashlib.sha256(v.encode("utf-8")).hexdigest()[:12] for v in KNOWN_PHONES
+    ]
+    assert any(fp in log_text for fp in fingerprints), (
+        f"phone 失败日志必须含至少 1 个 fingerprint (from {fingerprints}), log: {log_text[:500]}"
+    )
+    # 严守 10c: failure receipt 必须含 path/kind
+    assert "test:phone" in log_text, f"phone 失败日志必须含 path 'test:phone', log: {log_text[:500]}"
+    assert "kind=phone" in log_text, f"phone 失败日志必须含 kind=phone, log: {log_text[:500]}"
+
+    # Test 10b: email 失败路径 (清空 caplog)
+    caplog.clear()
+    with caplog.at_level(logging.ERROR, logger="export_fts5"):
+        with pytest.raises(SystemExit) as exc_info:
+            _d056_check_pii_residual(text_email, "test:email")
+    assert exc_info.value.code == 4
+    log_text = caplog.text
+    for v in KNOWN_EMAILS:
+        assert v not in log_text, f"email 失败日志严禁含原始 {v!r}, log: {log_text[:500]}"
+    for v in KNOWN_EMAILS:
+        fp = hashlib.sha256(v.encode("utf-8")).hexdigest()[:12]
+        assert fp in log_text, f"email 失败日志必须含 fingerprint {fp} (for {v})"
+    assert "test:email" in log_text
+    assert "kind=email" in log_text
