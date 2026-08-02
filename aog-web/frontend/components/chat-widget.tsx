@@ -22,6 +22,10 @@ interface Msg {
   model?: string;
   /** NSM-2 violation: AI answered without references */
   nsM2Fail?: boolean;
+  /** V32 (NJX 8/2 20:28 反馈 "等待过程先输出思考内容"): <think>...</think> 段累积 */
+  think?: string;
+  /** V32: think 流式是否结束 (用于收起/展开动画) */
+  thinkDone?: boolean;
 }
 
 const SUGGESTIONS = [
@@ -729,29 +733,76 @@ function normalizeMarkdownLineBreaks(s: string): string {
  *  P0 治本 (NJX 7/27 15:44 反馈: AI 答案显示原始 markdown 格式, ## 标题 / | 表格 | / 1. 列表 都没渲染)
  *  V30 治本 (NJX 7/27 22:14 拍板 🅰️): 有 sections 走组件化渲染, 否则 fallback markdown */
 function formatAnswer(msg: Msg): React.ReactNode {
-  const { text, sections } = msg;
-  // V30 治本: 优先 sections 渲染 (NJX 22:14 拍板, 100% 视觉受控)
-  if (sections && sections.length > 0) {
-    // sections 模式不解析 think (LLM 在 JSON 模板里不输出 <think>)
-    return <>{renderSections(sections)}</>;
-  }
-  // Fallback: markdown 渲染 (V29d++ 兼容, 解析失败 / 老 LLM 走这里)
-  if (!text) return null;
-  const { think, body } = splitThink(text);
+  const { text, sections, think, thinkDone } = msg;
+  // V32b (NJX 8/2 20:52 反馈 "思考过程没有流式输出"):
+  //   流式过程中 think 段**始终默认展开** + 闪烁光标 (用户随时能看到完整思考)
+  //   thinkDone 后保留 3s 展开, 然后才折叠为 "点击收起"
+  //   用 local state 跟踪 details 是否用户手动收起过
+  // V32c: 改用 useState 在 MessageBubble 内部, 不污染 msg state
+  return <ThinkAnswer text={text} sections={sections} think={think} thinkDone={thinkDone} />;
+}
+
+function ThinkAnswer({ text, sections, think, thinkDone }: { text: string; sections?: ChatSection[]; think?: string; thinkDone?: boolean }) {
+  // V32c: 跟踪用户是否手动收起过 — 一旦收起, 即使 thinkDone 后也保持收起
+  const [userCollapsed, setUserCollapsed] = React.useState(false);
+  // thinkDone 后, 默认展开 3s 然后切换到 userCollapsed 状态
+  const [autoExpanded, setAutoExpanded] = React.useState(true);
+  // V32d (NJX 8/2 20:55 反馈 "思考过程页面超出方框了"): think 段 max-height + 内部滚动 + 自动滚到底
+  const thinkBodyRef = React.useRef<HTMLDivElement>(null);
+  React.useEffect(() => {
+    if (thinkDone) {
+      const t = setTimeout(() => setAutoExpanded(false), 3000);
+      return () => clearTimeout(t);
+    } else {
+      setAutoExpanded(true);  // 流式过程中保持展开
+    }
+  }, [thinkDone]);
+  // think 段流式更新时, 自动滚到末尾 (用户看到最新内容)
+  React.useEffect(() => {
+    if (thinkBodyRef.current && !thinkDone) {
+      thinkBodyRef.current.scrollTop = thinkBodyRef.current.scrollHeight;
+    }
+  }, [think, thinkDone]);
+  const detailsOpen = !userCollapsed && autoExpanded;
   const thinkBlock = think ? (
-    <details key="think" className="mb-2 rounded-md border border-ink-100 bg-ink-50 px-2.5 py-1.5 text-[11px] text-ink-500">
-      <summary className="cursor-pointer select-none font-medium text-ink-600 hover:text-primary">
-        💭 AI 思考过程 (点击展开)
+    <details
+      key="think"
+      open={detailsOpen}
+      onToggle={(e) => {
+        // 用户手动操作时记录 collapsed 状态
+        setUserCollapsed(!(e.currentTarget as HTMLDetailsElement).open);
+      }}
+      className="mb-2 rounded-md border border-ink-200 bg-ink-50 px-2.5 py-1.5 text-[11px] text-ink-600"
+    >
+      <summary className="cursor-pointer select-none font-medium text-ink-700 hover:text-primary">
+        {thinkDone
+          ? (userCollapsed ? "💭 思考过程 (点击展开)" : "💭 思考过程 (点击收起)")
+          : "💭 思考中…"}
       </summary>
-      <div className="mt-1 whitespace-pre-wrap leading-relaxed text-ink-500">
+      <div
+        ref={thinkBodyRef}
+        className="mt-1.5 max-h-48 overflow-y-auto whitespace-pre-wrap leading-relaxed text-ink-600"
+      >
         {think}
+        {!thinkDone && <span className="ml-0.5 inline-block h-2 w-1.5 animate-pulse bg-ink-500 align-middle" />}
       </div>
     </details>
   ) : null;
+  // V30 治本: 优先 sections 渲染 (NJX 22:14 拍板, 100% 视觉受控)
+  if (sections && sections.length > 0) {
+    return (
+      <>
+        {thinkBlock}
+        {renderSections(sections)}
+      </>
+    );
+  }
+  // Fallback: markdown 渲染 (V29d++ 兼容, 解析失败 / 老 LLM 走这里)
+  if (!text) return <>{thinkBlock}</>;
   return (
     <>
       {thinkBlock}
-      {renderMarkdown(normalizeMarkdownLineBreaks(body))}
+      {renderMarkdown(normalizeMarkdownLineBreaks(text))}
     </>
   );
 }
@@ -771,6 +822,11 @@ export const ChatWidget = React.forwardRef<ChatWidgetHandle>((_, ref) => {
   const [error, setError] = React.useState<string | null>(null);
   const inputRef = React.useRef<HTMLInputElement>(null);
   const scrollRef = React.useRef<HTMLDivElement>(null);
+  // V31 (NJX 8/2 20:22 反馈: "流式过程是乱码"): 缓存 token 到 ref, 不直接更新 text
+  //   - onToken → 写 ref map, 不触发 setMsgs (避免用户看到 raw markdown 累积)
+  //   - onSections → 删 ref map, 渲染 sections (结构化 100% 视觉受控)
+  //   - onDone → 若 sections 没来, 取 ref 里的 buffer 跑 cleanText 后填到 text
+  const streamBufferRef = React.useRef<Map<string, string>>(new Map());
 
   // Auto-scroll
   React.useEffect(() => {
@@ -835,11 +891,27 @@ export const ChatWidget = React.forwardRef<ChatWidgetHandle>((_, ref) => {
           )
         );
       },
-      onToken: (delta) => {
+      onThink: (delta) => {
+        // V32: <think>...</think> 段实时累积, 立即显示 (NJX 8/2 20:28 反馈)
+        // 不缓存, 直接 setMsgs 触发 re-render, 用户看到思考过程
         setMsgs((prev) =>
           prev.map((m) =>
             m.id === loadingId
-              ? { ...m, text: m.text + delta, loading: false }
+              ? { ...m, think: (m.think || "") + delta, thinkDone: false, loading: false }
+              : m
+          )
+        );
+      },
+      onToken: (delta) => {
+        // V31 改: 只缓存到 ref, 不直接渲染 raw markdown 累积
+        // 避免 token 半成品 (含 sentinel 标记 / JSON 字面量 / 孤立 #) 漏出
+        const cur = streamBufferRef.current.get(loadingId) || "";
+        streamBufferRef.current.set(loadingId, cur + delta);
+        // 让 loading 圈消失 (表示有内容正在来), 但不显示 raw text
+        setMsgs((prev) =>
+          prev.map((m) =>
+            m.id === loadingId && m.loading
+              ? { ...m, loading: false }
               : m
           )
         );
@@ -847,6 +919,7 @@ export const ChatWidget = React.forwardRef<ChatWidgetHandle>((_, ref) => {
       onSections: (sections) => {
         // V30 治本: LLM 解析成功, 用 sections 覆盖流式 markdown 渲染
         // 100% 视觉受控 — 不再依赖 markdown 解析, 8 种 type 各对应独立 React 组件
+        streamBufferRef.current.delete(loadingId);  // V31: sections 到了, 丢弃 buffer
         setMsgs((prev) =>
           prev.map((m) =>
             m.id === loadingId
@@ -856,23 +929,35 @@ export const ChatWidget = React.forwardRef<ChatWidgetHandle>((_, ref) => {
         );
       },
       onDone: () => {
+        // V31 改: 若 sections 没来, 用 cleanText 处理 buffer 后填到 text
+        //   - cleanText: strip 行首 # 标记, strip 单独 # 行, strip 整段 raw JSON 例子
+        //   - 即使后端 V30 parser 解析失败, 也不会再漏出 sentinel / JSON 字面量
+        // V32: 标记 thinkDone, 让折叠 details 默认展开, 用户可收起
+        const buf = streamBufferRef.current.get(loadingId);
+        streamBufferRef.current.delete(loadingId);
         setMsgs((prev) =>
-          prev.map((m) =>
-            m.id === loadingId ? { ...m, loading: false } : m
-          )
+          prev.map((m) => {
+            if (m.id !== loadingId) return m;
+            if (m.sections && m.sections.length > 0) {
+              return { ...m, loading: false, thinkDone: true };  // V32: think 完成
+            }
+            const cleaned = buf ? cleanText(buf) : "";
+            return { ...m, text: cleaned, loading: false, thinkDone: true };
+          })
         );
       },
       onError: (msg) => {
+        streamBufferRef.current.delete(loadingId);  // V31: 清 buffer
         setError(`流式 chat 异常: ${msg}`);
         setMsgs((prev) =>
           prev.map((m) =>
             m.id === loadingId
               ? {
                   id: loadingId,
-                  role: "assistant",
-                  text: `抱歉，AI 服务异常：${msg}。请稍后重试，或直接浏览左侧城市 / 经验库。`,
-                  nsM2Fail: true,
-                }
+                      role: "assistant",
+                      text: `抱歉，AI 服务异常：${msg}。请稍后重试，或直接浏览左侧城市 / 经验库。`,
+                      nsM2Fail: true,
+                    }
               : m
           )
         );

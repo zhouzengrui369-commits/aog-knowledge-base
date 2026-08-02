@@ -16,6 +16,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import RedirectResponse
 
 from aog_web import __version__
 from aog_web.api import (
@@ -183,6 +184,11 @@ def create_app() -> FastAPI:
     app.include_router(reindex.router)
     app.include_router(sync.router)
     app.include_router(files.router)
+
+    # 根路径重定向到 /docs (FastAPI swagger, NJX 8/2 本地验收浏览器友好)
+    @app.get("/", include_in_schema=False)
+    async def root_index() -> RedirectResponse:
+        return RedirectResponse(url="/docs", status_code=307)
 
     return app
 
