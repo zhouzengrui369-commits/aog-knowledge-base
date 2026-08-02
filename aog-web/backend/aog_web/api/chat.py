@@ -453,10 +453,26 @@ async def _retrieve_context(request: Request, body: ChatRequest) -> List[Dict[st
                     rag_hits.append(h)
                 if len(rag_hits) >= 12:
                     break
+            # V33 (NJX 8/2 20:43 反馈 "墨尔本 chat 报错"):
+            #   过滤掉带 NSM-2 红线提示的 doc — wiki 库里有些 doc 是错归档的 (e.g. BRU 内容归档到 M-墨尔本),
+            #   doc 自带 ⚠️ NSM-2 红线提示, RAG 返回给 LLM 后 LLM 主动警告 (但 NJX 看到的是警告本身, 不是答案)
+            #   治本: 检索层就过滤掉, LLM 看不到错归档 doc, 答案直接给正确的
+            #   关键词: "NSM-2" + "红线提示" + "严重不符" (3 选 1 即排除, doc 自带)
+            nsm_keywords = ("NSM-2", "红线提示", "严重不符")
+            nsm_filtered = 0
+            filtered_hits = []
+            for h in rag_hits:
+                text = h.get("text") or h.get("snippet") or ""
+                if any(kw in text for kw in nsm_keywords):
+                    nsm_filtered += 1
+                    logger.info("[V33 NSM-2 filter] drop doc id=%s (含红线标记)", h.get("id"))
+                    continue
+                filtered_hits.append(h)
+            rag_hits = filtered_hits
             logger.info(
-                "P1-1 fts5 5 段 hits: %d (wiki=%d city=%d contacts=%d exp=%d core=%d) for q=%r",
+                "P1-1 fts5 5 段 hits: %d (wiki=%d city=%d contacts=%d exp=%d core=%d) NSM2_filtered=%d for q=%r",
                 len(rag_hits), len(wiki_hits), len(city_hits), len(contacts_hits),
-                len(experience_hits), len(core_plan_hits), body.q[:60],
+                len(experience_hits), len(core_plan_hits), nsm_filtered, body.q[:60],
             )
         except Exception as e:
             logger.warning("fts5 query failed, fallback to chroma: %s", e)
@@ -522,14 +538,66 @@ async def chat_stream(request: Request, body: ChatRequest) -> StreamingResponse:
         yield _sse_format(json.dumps(refs_payload, ensure_ascii=False), event="refs")
 
         # 4b. LLM 流式 + 累加完整 buffer (V30 解析用)
+        # V32 (NJX 8/2 20:28 反馈 "等待过程先输出思考内容"):
+        #   分离 <think>...</think> 段, 单独 emit `think` event (前端折叠 details 实时显示)
+        #   正文 emit `token` event (前端缓存到 buffer, sections 来了再渲染)
+        #   状态机: in_think 跟踪是否在 think 段内, 跨 delta 标签容错
         full_buffer: List[str] = []
         try:
-            # 优先用 stream_chat, 没有则 fallback chat() 然后整段 emit
-            # P0 治本 (NJX 7/27 20:34 反馈): max_tokens=4000 兼容 markdown 完整结构 (heading + 表格 + 引用)
             if hasattr(llm, "stream_chat"):
+                in_think = False
+                pending = ""  # 跨 delta 容错: 保留未确定归属的尾部
+                THINK_OPEN = "<think>"
+                THINK_CLOSE = "</think>"
+                OPEN_LEN = len(THINK_OPEN)
+                CLOSE_LEN = len(THINK_CLOSE)
                 async for delta in llm.stream_chat(messages, max_tokens=4000):
-                    full_buffer.append(delta)
-                    yield _sse_format(delta, event="token")
+                    full_buffer.append(delta)  # 完整 buffer 留给 sections parser
+                    pending += delta
+                    # 状态机: 在 pending 里找标签, 切分并 emit
+                    while pending:
+                        if not in_think:
+                            idx_open = pending.find(THINK_OPEN)
+                            if idx_open == -1:
+                                # 没有 <think> 标签, 末尾保留 6 字符 (避免漏掉跨 delta 标签)
+                                safe_cut = max(0, len(pending) - OPEN_LEN)
+                                if safe_cut > 0:
+                                    yield _sse_format(pending[:safe_cut], event="token")
+                                pending = pending[safe_cut:]
+                                break
+                            else:
+                                # <think> 之前是正文
+                                if idx_open > 0:
+                                    yield _sse_format(pending[:idx_open], event="token")
+                                pending = pending[idx_open + OPEN_LEN:]
+                                in_think = True
+                        else:
+                            idx_close = pending.find(THINK_CLOSE)
+                            if idx_close == -1:
+                                # 全部是 think 内容 (但保留 CLOSE_LEN 防跨 delta)
+                                safe_cut = max(0, len(pending) - CLOSE_LEN)
+                                if safe_cut > 0:
+                                    yield _sse_format(pending[:safe_cut], event="think")
+                                pending = pending[safe_cut:]
+                                break
+                            else:
+                                if idx_close > 0:
+                                    yield _sse_format(pending[:idx_close], event="think")
+                                pending = pending[idx_close + CLOSE_LEN:]
+                                in_think = False
+                    # 防 pending 无限增长 (LLM 大量输出无标签时)
+                    if len(pending) > 200:
+                        if in_think:
+                            yield _sse_format(pending, event="think")
+                        else:
+                            yield _sse_format(pending, event="token")
+                        pending = ""
+                # 流结束, flush 残余 pending
+                if pending:
+                    if in_think:
+                        yield _sse_format(pending, event="think")
+                    else:
+                        yield _sse_format(pending, event="token")
             else:
                 # Mock LLM / 老 LLM 没 stream, 走一次性 emit
                 full = await llm.chat(messages, max_tokens=4000)

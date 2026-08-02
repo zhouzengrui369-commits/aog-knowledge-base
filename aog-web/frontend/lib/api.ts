@@ -238,6 +238,7 @@ export async function chat(req: ChatRequest): Promise<ChatResponse | null> {
 export interface ChatStreamCallbacks {
   onRefs?: (refs: { references: ChatResponse["references"]; model: string }) => void;
   onToken?: (delta: string) => void;
+  onThink?: (delta: string) => void;  // V32: <think>...</think> 段实时累积
   onSections?: (sections: NonNullable<ChatResponse["sections"]>) => void;
   onDone?: (latencyMs: number) => void;
   onError?: (message: string) => void;
@@ -290,6 +291,9 @@ export async function chatStream(req: ChatRequest, cbs: ChatStreamCallbacks): Pr
           } catch (e) {
             console.warn("[chatStream] refs parse failed:", e);
           }
+        } else if (event === "think") {
+          // V32: <think> 段内容, 实时显示给用户 (NJX 8/2 20:28 反馈)
+          cbs.onThink?.(dataStr);
         } else if (event === "token") {
           cbs.onToken?.(dataStr);
         } else if (event === "sections") {
