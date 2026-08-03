@@ -12,9 +12,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable
 
-# Short AOG checklists can be useful while still concise.  Thirty-two cleaned
-# characters excludes headings/placeholders but keeps a compact actionable step.
-_MIN_MEANINGFUL_CHARS = 32
+_MIN_BODY_CHARS = 4
 _PLACEHOLDER_ONLY = {
     "sheet1",
     "暂无详细内容",
@@ -28,27 +26,45 @@ def _normalized_text(value: str | None) -> str:
     text = (value or "").strip()
     if not text:
         return ""
-    # Remove common Markdown/table decoration before measuring useful content.
     text = re.sub(r"```.*?```", " ", text, flags=re.DOTALL)
     text = re.sub(r"[#>*_`|\-]+", " ", text)
     text = re.sub(r"\s+", " ", text).strip()
     return text
 
 
-def has_meaningful_experience_content(content_md: str | None, summary: str | None = None) -> bool:
-    """Return True only for experience records containing publishable content."""
-    content = _normalized_text(content_md)
-    if not content:
-        return False
-    if content.casefold() in _PLACEHOLDER_ONLY:
-        return False
-    if len(content) < _MIN_MEANINGFUL_CHARS:
-        return False
+def _meaningful_body(content_md: str | None) -> str:
+    """Return cleaned non-heading body text.
 
-    summary_text = _normalized_text(summary)
-    if summary_text and summary_text.casefold() in _PLACEHOLDER_ONLY:
+    A concise checklist is publishable, but a Markdown title, empty worksheet
+    marker, or internal placeholder is not.  This avoids an arbitrary document
+    length threshold while still rejecting the empty shells observed in P0-1.
+    """
+    raw = (content_md or "").strip()
+    if not raw:
+        return ""
+
+    body_lines: list[str] = []
+    for line in raw.splitlines():
+        stripped = line.strip()
+        if not stripped or re.match(r"^#{1,6}(?:\s+|$)", stripped):
+            continue
+        cleaned = _normalized_text(stripped)
+        if cleaned:
+            body_lines.append(cleaned)
+    return _normalized_text(" ".join(body_lines))
+
+
+def has_meaningful_experience_content(
+    content_md: str | None, summary: str | None = None
+) -> bool:
+    """Return True only for experience records containing a real body."""
+    del summary  # Summary alone must never publish an empty detail page.
+    body = _meaningful_body(content_md)
+    if not body:
         return False
-    return True
+    if body.casefold() in _PLACEHOLDER_ONLY:
+        return False
+    return len(body) >= _MIN_BODY_CHARS
 
 
 @dataclass(frozen=True)
@@ -61,9 +77,9 @@ class ExperienceContentFlagStats:
 def ensure_experience_content_flags(db_path: str | Path) -> ExperienceContentFlagStats:
     """Add/backfill ``experiences.has_content`` and return migration statistics.
 
-    This function never fabricates content.  Existing records are classified
-    deterministically from ``content_md`` and ``summary``.  It is safe to call
-    before every read; updates are issued only when a stored flag is stale.
+    This function never fabricates content. Existing records are classified
+    deterministically from ``content_md``. It is safe to call before reads;
+    updates are issued only when a stored flag is stale.
     """
     path = Path(db_path)
     if not path.exists():
@@ -78,9 +94,15 @@ def ensure_experience_content_flags(db_path: str | Path) -> ExperienceContentFla
 
         columns = {row[1] for row in con.execute("PRAGMA table_info(experiences)")}
         if "has_content" not in columns:
-            con.execute(
-                "ALTER TABLE experiences ADD COLUMN has_content INTEGER NOT NULL DEFAULT 0"
-            )
+            try:
+                con.execute(
+                    "ALTER TABLE experiences "
+                    "ADD COLUMN has_content INTEGER NOT NULL DEFAULT 0"
+                )
+            except sqlite3.OperationalError as exc:
+                # Two first requests may race on a newly restored SQLite file.
+                if "duplicate column" not in str(exc).lower():
+                    raise
 
         rows = con.execute(
             "SELECT id, content_md, summary, has_content FROM experiences"
