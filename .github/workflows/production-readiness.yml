@@ -42,6 +42,7 @@ jobs:
             tests/test_airlines.py \
             tests/test_experiences.py \
             tests/test_p0_experience_content.py \
+            tests/test_exp_aog_focused_retest.py \
             -v --tb=short
 
   frontend-production:
@@ -75,7 +76,8 @@ jobs:
           set -euo pipefail
           pnpm exec vitest run \
             tests/api-mock-isolation.test.ts \
-            tests/production-readiness.test.ts
+            tests/production-readiness.test.ts \
+            tests/exp-aog-focused-retest.test.ts
       - name: Production build
         working-directory: aog-web/frontend
         env:
@@ -86,7 +88,7 @@ jobs:
         run: |
           set -euo pipefail
           pnpm build
-          ! grep -R "build 时跳过\|18 份实战经验\|18 个实战经验\|PKX · 华东\|课件.*v2" out/
+          ! grep -R "build 时跳过\|18 份实战经验\|18 个实战经验\|PKX · 华东\|课件.*v2\|city_contacts:" out/
 
   rag-pressure-contract:
     name: RAG pressure-test contract
@@ -122,6 +124,9 @@ jobs:
           test -f reports/RAG-HALLUCINATION-PRESSURE-TEST.md
           test -f reports/DATA-GOVERNANCE-REGISTRY.md
           test -f reports/MINIMAX-LOCAL-DEPLOYMENT.md
+          test -f work/tasks/2026-08-03-exp-aog-focused-retest-r1/GOAL.md
+          test -f work/tasks/2026-08-03-exp-aog-focused-retest-r1/TASK.md
+          test -f work/tasks/2026-08-03-exp-aog-focused-retest-r1/PLAN.md
 
   all-production-checks:
     name: All production checks passed
