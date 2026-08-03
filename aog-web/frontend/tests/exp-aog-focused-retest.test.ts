@@ -130,7 +130,8 @@ describe("EXP-AOG-20260803 focused retest contracts", () => {
     expect(gate).toContain("AUTH_SESSION_EVENT");
     expect(gate).toContain('reason: "login"');
     expect(gate).toContain('reason: "logout"');
-    expect(gate).toContain('reason: "expired"');
+    expect(gate).toContain('body?.reason === "expired"');
+    expect(gate).toContain("clearAllChatSessions");
     expect(gate).toContain("rotate: true");
   });
 
