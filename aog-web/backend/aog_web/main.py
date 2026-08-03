@@ -12,7 +12,7 @@ from aog_web import __version__
 from aog_web.api import (
     auth,
     airlines,
-    chat,
+    chat_safe as chat,
     cities,
     core_plans,
     experiences,
