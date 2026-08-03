@@ -1,4 +1,9 @@
-"""GET /api/experiences + /api/experience/{id}"""
+"""GET /api/experiences + /api/experience/{id}."""
+from __future__ import annotations
+
+import sqlite3
+from datetime import datetime
+
 import pytest
 
 
@@ -14,13 +19,19 @@ async def test_list_experiences_seeded(client, seeded_sqlite):
     r = await client.get("/api/experiences")
     exps = r.json()
     assert len(exps) == 2
-    # 字段 1:1 (注意: list endpoint 故意不返 content_md, 避 SCF 6MB HTTP 上限
-    #   单条 /api/experience/{id} 仍返 content_md, 见 test_get_experience_ok)
     e = exps[0]
-    for key in ["id", "title", "category", "status", "tags", "summary",
-                "related_pn", "source_path", "updated_at"]:
+    for key in [
+        "id",
+        "title",
+        "category",
+        "status",
+        "tags",
+        "summary",
+        "related_pn",
+        "source_path",
+        "updated_at",
+    ]:
         assert key in e, f"missing field: {key}"
-    # content_md 必须不在 list response (避 SCF 6MB)
     assert "content_md" not in e, "list endpoint 应排除 content_md (避 SCF 6MB)"
 
 
@@ -55,6 +66,45 @@ async def test_get_experience_ok(client, seeded_sqlite):
     assert e["id"] == "exp-001"
     assert e["title"] == "B787 风挡 AOG 处理流程"
     assert e["category"] == "案例"
+    assert "流程内容" in e["content_md"]
+
+
+@pytest.mark.asyncio
+async def test_empty_experience_is_flagged_and_hidden(client, seeded_sqlite):
+    """P0-1: an empty worksheet record is neither listed nor directly readable."""
+    from aog_web.services.sqlite_client import ExperienceRow
+
+    async with seeded_sqlite.session_factory() as session:
+        session.add(
+            ExperienceRow(
+                id="exp-empty-shell",
+                title="知识库导出记录",
+                category="案例",
+                status="现行",
+                tags='["导出"]',
+                summary="Sheet1",
+                content_md="Sheet1",
+                related_pn="[]",
+                source_path="03_保障经验/export.xlsx",
+                updated_at=datetime.utcnow().isoformat(),
+            )
+        )
+        await session.commit()
+
+    listed = await client.get("/api/experiences?limit=15")
+    assert listed.status_code == 200
+    assert "exp-empty-shell" not in {item["id"] for item in listed.json()}
+
+    direct = await client.get("/api/experience/exp-empty-shell")
+    assert direct.status_code == 404
+    assert direct.json()["detail"]["error"] == "experience not published"
+
+    with sqlite3.connect(seeded_sqlite.db_path) as con:
+        row = con.execute(
+            "SELECT has_content FROM experiences WHERE id = ?",
+            ("exp-empty-shell",),
+        ).fetchone()
+    assert row == (0,)
 
 
 @pytest.mark.asyncio
