@@ -1,8 +1,12 @@
-"""Focused regression tests for Issue #12 EXP-AOG-20260803-001/002."""
+"""Focused regression tests for Issue #12 EXP-AOG-20260803-001/002/004."""
 from __future__ import annotations
 
+import pytest
+
+from aog_web.api import chat_safe
 from aog_web.api.chat_safe import _build_context_block, _reference_from_hit
 from aog_web.services.verification_policy import (
+    RetrievalPolicyResult,
     apply_retrieval_policy,
     blocked_city_answer,
     reference_route,
@@ -130,3 +134,65 @@ def test_context_includes_code_assigned_verification_status() -> None:
     block = _build_context_block([hit])
     assert "verification_status=VERIFIED" in block
     assert "source_type=experience" in block
+
+
+@pytest.mark.asyncio
+async def test_unverified_stream_keeps_refs_intermediate_until_done(client, seeded_sqlite) -> None:
+    response = await client.post(
+        "/api/chat/stream",
+        json={"q": "上海浦东 AOG 如何处置"},
+    )
+    assert response.status_code == 200
+    stream = response.text
+    markers = [
+        '"phase": "queued"',
+        '"phase": "retrieving"',
+        "event: refs",
+        '"phase": "generating"',
+        "event: token",
+        '"phase": "done"',
+        "event: done",
+    ]
+    positions = [stream.find(marker) for marker in markers]
+    assert all(position >= 0 for position in positions), stream[:1000]
+    assert positions == sorted(positions)
+    assert "UNVERIFIED / 不可用于操作" in stream
+    assert "event: error" not in stream
+
+
+@pytest.mark.asyncio
+async def test_stream_error_is_terminal_and_never_followed_by_done(
+    client, monkeypatch
+) -> None:
+    verified_hit = _hit("experience", "exp-test", "verified fixture")
+    verified_hit["metadata"]["verification_status"] = "VERIFIED"
+
+    async def fake_policy(request, body):
+        return RetrievalPolicyResult(
+            hits=[verified_hit],
+            blocked_targets=[],
+            target_codes=[],
+            quarantined_count=0,
+        )
+
+    class FailingLLM:
+        model = "fixture-live-provider"
+
+        async def stream_chat(self, messages, **kwargs):
+            if False:
+                yield ""
+            raise RuntimeError("fixture provider failure")
+
+        async def close(self):
+            return None
+
+    monkeypatch.setattr(chat_safe, "_retrieve_with_policy", fake_policy)
+    monkeypatch.setattr(chat_safe, "get_llm", lambda settings: FailingLLM())
+
+    response = await client.post("/api/chat/stream", json={"q": "fixture question"})
+    assert response.status_code == 200
+    stream = response.text
+    assert '"phase": "error"' in stream
+    assert "event: error" in stream
+    assert '"phase": "done"' not in stream
+    assert "event: done" not in stream
