@@ -76,6 +76,7 @@ describe("AOG production UI contracts", () => {
   it("removes static access-count fallback", () => {
     const text = source("lib/city-stats.ts");
     expect(text).not.toContain("data.view_count");
-    expect(text).toContain("city.view_count");
+    expect(text).toContain("right.view_count");
+    expect(text).toContain("left.view_count");
   });
 });
