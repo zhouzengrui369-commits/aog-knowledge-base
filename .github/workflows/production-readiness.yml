@@ -1,0 +1,131 @@
+name: production-readiness
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  backend-production:
+    name: Backend production policy
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Install backend dependencies
+        working-directory: aog-web/backend
+        run: |
+          set -euo pipefail
+          python -m pip install --upgrade pip
+          pip install -e .
+          pip install pytest pytest-asyncio aiosqlite sqlalchemy fastapi uvicorn[standard] pypinyin python-frontmatter python-docx openpyxl pypdf markdown-it-py
+      - name: Run production policy tests
+        working-directory: aog-web/backend
+        run: |
+          set -euo pipefail
+          PYTHONPATH=. python -m pytest \
+            tests/test_production_readiness.py \
+            tests/test_auth.py \
+            tests/test_cities.py \
+            tests/test_airlines.py \
+            tests/test_experiences.py \
+            tests/test_p0_experience_content.py \
+            -v --tb=short
+
+  frontend-production:
+    name: Frontend production contracts
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: pnpm
+          cache-dependency-path: aog-web/frontend/pnpm-lock.yaml
+      - name: Install
+        working-directory: aog-web/frontend
+        run: |
+          set -euo pipefail
+          pnpm install --frozen-lockfile
+      - name: Typecheck and lint
+        working-directory: aog-web/frontend
+        run: |
+          set -euo pipefail
+          pnpm exec tsc --noEmit
+          pnpm lint
+      - name: Unit and production contract tests
+        working-directory: aog-web/frontend
+        run: |
+          set -euo pipefail
+          pnpm exec vitest run \
+            tests/api-mock-isolation.test.ts \
+            tests/production-readiness.test.ts
+      - name: Production build
+        working-directory: aog-web/frontend
+        env:
+          NEXT_PUBLIC_ALLOW_MOCK: "false"
+          NEXT_PUBLIC_API_BASE: "https://staging.invalid"
+          NEXT_PUBLIC_DEBUG: "false"
+          NEXT_PUBLIC_DEBUG_THOUGHTS: "false"
+        run: |
+          set -euo pipefail
+          pnpm build
+          ! grep -R "build 时跳过\|18 份实战经验\|18 个实战经验\|PKX · 华东\|课件.*v2" out/
+
+  rag-pressure-contract:
+    name: RAG pressure-test contract
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Validate 20-case suite and scoring
+        working-directory: aog-web/pipeline
+        run: |
+          set -euo pipefail
+          python -m pip install pytest
+          PYTHONPATH=.:scripts python -m pytest tests/test_rag_pressure_contract.py -v --tb=short
+
+  repository-production:
+    name: Repository production discipline
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: User-visible placeholder and credential scan
+        run: |
+          set -euo pipefail
+          runtime=(aog-web/frontend/app aog-web/frontend/components aog-web/frontend/lib)
+          ! grep -R -E "(build 时跳过|18 份实战经验|18 个实战经验|PKX · 华东|课件[^\n]*v2)" "${runtime[@]}"
+          ! grep -R -E "(sk-[A-Za-z0-9]{20,}|BEGIN (RSA |EC )?PRIVATE KEY)" . \
+            --exclude-dir=.git --exclude='*.md'
+      - name: Required production artifacts
+        run: |
+          set -euo pipefail
+          test -f reports/AOG-PRODUCTION-READY.md
+          test -f reports/RAG-HALLUCINATION-PRESSURE-TEST.md
+          test -f reports/DATA-GOVERNANCE-REGISTRY.md
+          test -f reports/MINIMAX-LOCAL-DEPLOYMENT.md
+
+  all-production-checks:
+    name: All production checks passed
+    runs-on: ubuntu-latest
+    needs: [backend-production, frontend-production, rag-pressure-contract, repository-production]
+    steps:
+      - run: echo "All AOG production code gates passed."

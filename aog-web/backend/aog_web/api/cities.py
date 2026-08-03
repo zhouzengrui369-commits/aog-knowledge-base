@@ -1,14 +1,17 @@
-"""GET /api/cities, /api/city/{code} - CONTRACT §2.2 + §2.3"""
+"""City list/detail endpoints with release trust and usage enforcement."""
 from __future__ import annotations
 
-import logging
+import asyncio
 from typing import Optional
 
 from fastapi import APIRouter, HTTPException, Query, Request
 
+from aog_web.services.production_policy import (
+    apply_city_release_policy,
+    city_view_counts,
+    increment_city_view,
+)
 from aog_web.services.sqlite_client import get_sqlite_client
-
-logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api", tags=["cities"])
 
@@ -16,25 +19,29 @@ router = APIRouter(prefix="/api", tags=["cities"])
 @router.get("/cities")
 async def list_cities(
     request: Request,
-    region: Optional[str] = Query(None, description="地区筛选, 例 '华北'"),
-    status: Optional[str] = Query(None, description="状态筛选, '现行'|'暂停'|'已废'"),
-    letter: Optional[str] = Query(None, description="首字母 A-Z (按 pinyin)"),
+    region: Optional[str] = Query(None, description="地区筛选"),
+    status: Optional[str] = Query(None, description="现行|暂停|已废"),
+    letter: Optional[str] = Query(None, description="拼音首字母 A-Z"),
 ) -> list[dict]:
-    """城市列表 - 按 pinyin 排序"""
-    if letter is not None:
-        if not letter.isalpha() or len(letter) != 1:
-            raise HTTPException(status_code=400, detail={"error": "invalid query", "field": "letter"})
+    if letter is not None and (not letter.isalpha() or len(letter) != 1):
+        raise HTTPException(400, detail={"error": "invalid query", "field": "letter"})
     if status is not None and status not in {"现行", "暂停", "已废"}:
-        raise HTTPException(status_code=400, detail={"error": "invalid query", "field": "status"})
+        raise HTTPException(400, detail={"error": "invalid query", "field": "status"})
+
     client = get_sqlite_client()
-    return await client.list_cities(region=region, status=status, letter=letter)
+    cities = await client.list_cities(region=region, status=status, letter=letter)
+    counts = await asyncio.to_thread(city_view_counts, client.db_path)
+    return [
+        apply_city_release_policy(city, view_count=counts.get(str(city.get("code")), 0))
+        for city in cities
+    ]
 
 
 @router.get("/city/{code}")
 async def get_city(request: Request, code: str) -> dict:
-    """城市详情 - code 需 URL-encoded"""
     client = get_sqlite_client()
     city = await client.get_city(code)
     if city is None:
-        raise HTTPException(status_code=404, detail={"error": "city not found", "code": code})
-    return city
+        raise HTTPException(404, detail={"error": "city not found", "code": code})
+    count = await asyncio.to_thread(increment_city_view, client.db_path, code)
+    return apply_city_release_policy(city, view_count=count)
