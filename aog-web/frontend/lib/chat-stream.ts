@@ -42,6 +42,20 @@ export async function safeChatStream(
   const timeoutMs = options.timeoutMs ?? 90_000;
   let timedOut = false;
   let terminal: ChatPhase | null = null;
+  let tokenPending = "";
+
+  const flushTokens = (force = false) => {
+    if (!tokenPending) return;
+    let value = tokenPending;
+    if (!force) {
+      const trailing = value.match(/\s+$/)?.[0] || "";
+      value = value.slice(0, value.length - trailing.length);
+      tokenPending = trailing;
+    } else {
+      tokenPending = "";
+    }
+    if (value) callbacks.onToken?.(value);
+  };
 
   const abortFromCaller = () => controller.abort("cancelled");
   options.signal?.addEventListener("abort", abortFromCaller, { once: true });
@@ -117,7 +131,12 @@ export async function safeChatStream(
         }
 
         if (event === "token") {
-          if (!terminal) callbacks.onToken?.(data);
+          if (!terminal) {
+            tokenPending += data;
+            // Hold trailing whitespace until the next non-whitespace token so
+            // the UI cannot trim a legitimate word boundary at chunk edges.
+            flushTokens(false);
+          }
           continue;
         }
 
@@ -147,6 +166,7 @@ export async function safeChatStream(
 
         if (event === "done") {
           if (terminal === "error" || terminal === "cancelled") continue;
+          flushTokens(true);
           terminal = "done";
           try {
             const payload = JSON.parse(data);
