@@ -1,17 +1,11 @@
-"""航司数据客户端 - 静态 JSON 加载 (Sprint C)
-
-- 不进 SQLite, 直接读 functions/aog-api/data/airlines.json
-- 启动时一次性 load 到内存 (OFFLINE 兼容: 文件不存在 → 空 list, 不崩)
-- 公开 list / get / search 三方法 (同步)
-- 单例 (reset_airlines_client for test)
-
-Sprint C 数据模型 1:1 对齐 aog-web/functions/aog-api/data/airlines.json
-"""
+"""Airline data client with production verification and conflict isolation."""
 from __future__ import annotations
 
+import copy
 import json
 import logging
 import re
+from collections import defaultdict
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -19,47 +13,107 @@ from aog_web.config import get_settings
 
 logger = logging.getLogger(__name__)
 
+# Public product terminology.  Juneyao is a Star Alliance Connecting Partner,
+# not a full alliance member; HU and JD are separate operating airlines.
+_NAME_OVERRIDES = {
+    "HU": {"name_cn": "海南航空", "name_short": "海航"},
+    "JD": {"name_cn": "首都航空", "name_short": "首都航"},
+}
+_ALLIANCE_OVERRIDES = {
+    "HO": "星空联盟优连伙伴",
+}
+
+
+def _canonical_phone(value: str) -> str:
+    return re.sub(r"\D", "", value or "")
+
+
+def _canonical_email(value: str) -> str:
+    return (value or "").strip().casefold()
+
 
 class AirlinesClient:
-    """航司客户端 (内存, 静态数据)"""
+    """Load, verify and expose the airline registry.
+
+    Duplicate contact points across different IATA operators are fail-closed:
+    the conflicting contact is removed from public output and the record is
+    marked for data-governance review instead of guessing a replacement.
+    """
 
     def __init__(self, data_path: Optional[Path] = None):
-        if data_path is None:
-            data_path = get_settings().airlines_data_path
-        self.data_path = data_path
+        self.data_path = data_path or get_settings().airlines_data_path
         self._airlines: List[Dict[str, Any]] = []
         self._by_iata: Dict[str, Dict[str, Any]] = {}
-        self._loaded = False
         self._load()
 
     def _load(self) -> None:
-        """启动时 load 一次. 文件不存在或损坏 → 空 list + warning"""
         if not self.data_path.exists():
-            logger.warning(
-                "airlines.json not found at %s, returning empty list", self.data_path
-            )
+            logger.warning("airlines registry missing: %s", self.data_path)
             self._airlines = []
             self._by_iata = {}
             return
         try:
-            with open(self.data_path, "r", encoding="utf-8") as f:
-                data = json.load(f)
-            if not isinstance(data, list):
-                logger.error("airlines.json root must be list, got %s", type(data))
-                self._airlines = []
-                self._by_iata = {}
-                return
-            self._airlines = data
-            self._by_iata = {
-                a.get("iata", "").upper(): a for a in data if a.get("iata")
-            }
-            logger.info(
-                "AirlinesClient loaded %d airlines from %s", len(data), self.data_path
-            )
-        except Exception as e:
-            logger.exception("Failed to load airlines.json: %s", e)
+            data = json.loads(self.data_path.read_text(encoding="utf-8"))
+        except Exception as exc:
+            logger.exception("airlines registry unreadable: %s", exc)
             self._airlines = []
             self._by_iata = {}
+            return
+        if not isinstance(data, list):
+            logger.error("airlines registry root must be a list")
+            self._airlines = []
+            self._by_iata = {}
+            return
+
+        rows = [copy.deepcopy(item) for item in data if isinstance(item, dict)]
+        for row in rows:
+            iata = str(row.get("iata") or "").upper()
+            row["iata"] = iata
+            row.update(_NAME_OVERRIDES.get(iata, {}))
+            if iata in _ALLIANCE_OVERRIDES:
+                row["alliance"] = _ALLIANCE_OVERRIDES[iata]
+            row["verification_status"] = (
+                "VERIFIED" if row.get("verified") and row.get("verified_at") else "UNVERIFIED"
+            )
+            if not row.get("verified_at"):
+                row["verified"] = False
+                row["verification_issue"] = "缺少 verified_at，不得作为生产联系方式"
+
+        phone_owners: dict[str, set[str]] = defaultdict(set)
+        email_owners: dict[str, set[str]] = defaultdict(set)
+        for row in rows:
+            iata = str(row.get("iata") or "")
+            contact = row.get("aog_contact") or {}
+            phone = _canonical_phone(str(contact.get("phone") or ""))
+            email = _canonical_email(str(contact.get("email") or ""))
+            if phone:
+                phone_owners[phone].add(iata)
+            if email:
+                email_owners[email].add(iata)
+
+        for row in rows:
+            iata = str(row.get("iata") or "")
+            contact = dict(row.get("aog_contact") or {})
+            issues: list[str] = []
+            phone = _canonical_phone(str(contact.get("phone") or ""))
+            email = _canonical_email(str(contact.get("email") or ""))
+            if phone and len(phone_owners[phone]) > 1:
+                issues.append("AOG 电话与其他航司冲突")
+                contact.pop("phone", None)
+            if email and len(email_owners[email]) > 1:
+                issues.append("AOG 邮箱与其他航司冲突")
+                contact.pop("email", None)
+            if issues:
+                row["verified"] = False
+                row["verification_status"] = "CONFLICT"
+                row["verification_issue"] = "；".join(issues)
+            row["aog_contact"] = contact
+
+        self._airlines = rows
+        self._by_iata = {
+            str(row.get("iata")): row for row in rows if row.get("iata")
+        }
+        logger.info("AirlinesClient loaded %d governed records", len(rows))
 
     def list(
         self,
@@ -67,61 +121,52 @@ class AirlinesClient:
         alliance: Optional[str] = None,
         letter: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
-        """航司列表. 排序: IATA 字母序 (拼音 fallback)."""
         result = self._airlines
         if letter:
-            letter = letter.upper()
+            initial = letter.upper()
             result = [
-                a for a in result
-                if (a.get("iata") or "").upper().startswith(letter)
-                or (a.get("name_cn") or "").startswith(letter)
+                row
+                for row in result
+                if str(row.get("iata") or "").upper().startswith(initial)
+                or str(row.get("name_cn") or "").startswith(initial)
             ]
         if alliance:
-            result = [a for a in result if a.get("alliance") == alliance]
+            result = [row for row in result if row.get("alliance") == alliance]
         if hub:
-            # 过滤包含特定 city_code 的航司
-            result = [a for a in result if any(
-                (h.get("city_code") or "") == hub for h in a.get("hubs", [])
-            )]
-        # 排序: IATA 字母序
-        return sorted(result, key=lambda a: (a.get("iata") or ""))
+            result = [
+                row
+                for row in result
+                if any((item.get("city_code") or "") == hub for item in row.get("hubs", []))
+            ]
+        return sorted((copy.deepcopy(row) for row in result), key=lambda row: row.get("iata", ""))
 
     def get(self, iata: str) -> Optional[Dict[str, Any]]:
-        """按 IATA 2-letter code 查航司详情"""
-        if not iata:
-            return None
-        return self._by_iata.get(iata.upper())
+        row = self._by_iata.get((iata or "").upper())
+        return copy.deepcopy(row) if row else None
 
     def search(self, q: str, limit: int = 20) -> List[Dict[str, Any]]:
-        """按 IATA / ICAO / 中文名 / 英文名 / 常用简称 模糊搜索"""
-        if not q or not q.strip():
+        query = (q or "").strip().casefold()
+        if not query:
             return []
-        q_lower = q.strip().lower()
-        pattern = re.compile(re.escape(q_lower), re.IGNORECASE)
-        result = []
-        for a in self._airlines:
-            haystack = " ".join([
-                a.get("iata", ""),
-                a.get("icao", ""),
-                a.get("name_cn", ""),
-                a.get("name_en", ""),
-                a.get("name_short", ""),
-            ])
-            if pattern.search(haystack):
-                result.append(a)
-                if len(result) >= limit:
+        output: list[dict[str, Any]] = []
+        for row in self._airlines:
+            haystack = " ".join(
+                str(row.get(key) or "")
+                for key in ("iata", "icao", "name_cn", "name_en", "name_short")
+            ).casefold()
+            if query in haystack:
+                output.append(copy.deepcopy(row))
+                if len(output) >= limit:
                     break
-        return result
+        return output
 
     def count(self) -> int:
         return len(self._airlines)
 
     def reload(self) -> None:
-        """重载 (测试用)"""
         self._load()
 
 
-# ===== 单例 + reset =====
 _client: Optional[AirlinesClient] = None
 
 
