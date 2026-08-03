@@ -13,19 +13,11 @@ artifact without rebuilding the knowledge records.
 from __future__ import annotations
 
 import copy
-import json
 import sqlite3
 from pathlib import Path
 from typing import Any, Iterable
 
 _PUBLIC_REVIEW_STATUSES = {"VERIFIED"}
-_RESTRICTED_REVIEW_STATUSES = {
-    "UNVERIFIED",
-    "STALE",
-    "MISSING",
-    "FIXTURE",
-    "REDACTED",
-}
 
 
 def _connect(db_path: str | Path) -> sqlite3.Connection:
@@ -119,8 +111,8 @@ def apply_city_release_policy(city: dict[str, Any], *, view_count: int = 0) -> d
     """Return a public-safe city representation.
 
     VERIFIED records retain their already permission-filtered operational fields.
-    Every other review state is fail-closed: the UI receives identity, source and
-    status metadata, but not actionable contacts, stock, fleet or free text.
+    Every other review state is fail-closed: identity, provenance and review state
+    remain visible, while actionable values and free text are empty.
     """
     safe = copy.deepcopy(city)
     trust = safe.get("trust") or {}
@@ -137,7 +129,7 @@ def apply_city_release_policy(city: dict[str, Any], *, view_count: int = 0) -> d
         safe["contacts"] = []
         safe["warehouse"] = {"location": "[需审核]", "main": []}
         safe["logistics"] = {"rail": "[需审核]", "air": "[需审核]", "road": "[需审核]"}
-        safe["content_md"] = "数据尚未通过人工审核，暂不提供可执行保障信息。"
+        safe["content_md"] = ""
         safe["operational_notice"] = "数据未审核，禁止用于实际 AOG 处置。"
     else:
         safe["contacts"] = contacts
@@ -171,23 +163,17 @@ def production_stats(db_path: str | Path, *, airline_count: int = 0) -> dict[str
             "TRIM(COALESCE(content_md, '')) <> '' AND LOWER(TRIM(COALESCE(content_md, ''))) <> 'sheet1'"
         )
         city_count = _count_where(con, "cities")
-        mapped_city_count = _count_where(
-            con, "cities", "TRIM(COALESCE(iata, '')) <> ''"
-        )
+        mapped_city_count = _count_where(con, "cities", "TRIM(COALESCE(iata, '')) <> ''")
         experience_count = _count_where(con, "experiences", exp_where)
         core_plan_count = _count_where(con, "core_plans")
         verified_city_count = _count_where(
             con, "cities", "UPPER(COALESCE(review_status, 'UNVERIFIED')) = 'VERIFIED'"
         )
         unverified_city_count = max(0, city_count - verified_city_count)
-        total_views = int(
-            con.execute("SELECT COALESCE(SUM(view_count), 0) FROM city_usage").fetchone()[0]
-        )
+        total_views = int(con.execute("SELECT COALESCE(SUM(view_count), 0) FROM city_usage").fetchone()[0])
         indexed_total = 0
         if _table_exists(con, "index_stats"):
-            row = con.execute(
-                "SELECT indexed_total FROM index_stats WHERE id = 1"
-            ).fetchone()
+            row = con.execute("SELECT indexed_total FROM index_stats WHERE id = 1").fetchone()
             indexed_total = int(row[0] or 0) if row else 0
 
     return {
