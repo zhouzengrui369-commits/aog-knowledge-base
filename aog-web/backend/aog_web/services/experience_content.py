@@ -12,7 +12,9 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable
 
-_MIN_MEANINGFUL_CHARS = 40
+# Short AOG checklists can be useful while still concise.  Thirty-two cleaned
+# characters excludes headings/placeholders but keeps a compact actionable step.
+_MIN_MEANINGFUL_CHARS = 32
 _PLACEHOLDER_ONLY = {
     "sheet1",
     "暂无详细内容",
