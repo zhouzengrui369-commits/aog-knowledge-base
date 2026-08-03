@@ -9,17 +9,15 @@ export const metadata: Metadata = {
     template: "%s · AOG 知识库",
   },
   description: "航材 AOG 智能伙伴 — 城市预案、保障经验、AI 对话一站式查询",
-  metadataBase: new URL("http://localhost:3000"),
+  metadataBase: new URL(process.env.NEXT_PUBLIC_SITE_URL || "http://localhost:3000"),
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="zh-CN">
-      <body className="font-sans text-ink-900 bg-white antialiased">
-        {/* Sprint A: 整个 SPA 套 AuthGate, 未登录显示密码页 */}
+      <body className="bg-white font-sans text-ink-900 antialiased">
         <AuthGate>
           {children}
-          {/* ChatWidget 全局挂载（悬浮右下角） */}
           <ChatWidget />
         </AuthGate>
       </body>
