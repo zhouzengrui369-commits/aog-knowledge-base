@@ -1,10 +1,9 @@
-import { notFound } from "next/navigation";
 import Link from "next/link";
 import type { Metadata } from "next";
 import { NavBar } from "@/components/nav-bar";
 import { ExperienceToc } from "@/components/experience-toc";
 import { ExperienceContentView } from "@/components/experience-content";
-import { getExperience, getExperiences, getCities } from "@/lib/api";
+import { getExperience, getExperiences } from "@/lib/api";
 import { ExperienceCard } from "@/components/experience-card";
 import {
   normalizeCategory,
@@ -14,15 +13,37 @@ import {
   fmtDate,
   cn,
 } from "@/lib/utils";
-import { Download, Bot, ChevronLeft, Sparkles } from "lucide-react";
-import type { City } from "@/lib/types";
+import { Download, Bot, ChevronLeft } from "lucide-react";
+import type { ExperienceContent } from "@/lib/types";
 
 interface PageProps {
   params: Promise<{ id: string }>;
 }
 
+function parseContent(md: string): ExperienceContent[] {
+  if (!md.trim()) return [];
+  const lines = md.split("\n");
+  const sections: ExperienceContent[] = [];
+  let current: ExperienceContent | null = null;
+
+  for (const line of lines) {
+    const heading = line.match(/^(#{1,4})\s+(.+)$/);
+    if (heading) {
+      if (current) sections.push(current);
+      current = { h: heading[2].trim(), type: "p", text: "" };
+      continue;
+    }
+    if (!current) {
+      current = { h: "经验正文", type: "p", text: "" };
+    }
+    current.text = `${current.text || ""}${current.text ? "\n" : ""}${line}`;
+  }
+
+  if (current) sections.push(current);
+  return sections.filter((section) => (section.text || "").trim() || section.h);
+}
+
 export async function generateStaticParams() {
-  // 跟 T2 mockup 里的 featured 经验对齐, 其他经验 client-side 加载
   const featured = [
     "b787-windshield-aog",
     "aog-workflow-r1",
@@ -33,44 +54,47 @@ export async function generateStaticParams() {
 }
 
 export async function generateMetadata({ params }: PageProps): Promise<Metadata> {
-  // Build-time fix: skip API call, use static metadata to avoid 60s page timeout
-  // when SCF backend is slow. The actual title is set client-side by ExperienceDetailClient.
-  const { id } = await params;
-  return { title: `经验详情 · AOG 知识库` };
+  await params;
+  return { title: "经验详情 · AOG 知识库" };
 }
 
 export default async function ExperiencePage({ params }: PageProps) {
   const { id } = await params;
-  // 用 1s timeout 拉数据, 失败 fallback to client component
+  const decodedId = decodeURIComponent(id);
   const exp = await Promise.race([
-    getExperience(decodeURIComponent(id)),
-    new Promise<null>((r) => setTimeout(() => r(null), 1000)),
+    getExperience(decodedId),
+    new Promise<null>((resolve) => setTimeout(() => resolve(null), 1000)),
   ]).catch(() => null);
+
   if (!exp) {
     const { ExperienceDetailClient } = await import("@/components/experience-detail-client");
-    return <ExperienceDetailClient id={decodeURIComponent(id)} />;
+    return <ExperienceDetailClient id={decodedId} />;
   }
 
   const all = (await Promise.race([
     getExperiences(),
-    new Promise<any[]>((r) => setTimeout(() => r([]), 1000)),
+    new Promise<any[]>((resolve) => setTimeout(() => resolve([]), 1000)),
   ]).catch(() => [])) ?? [];
   const relatedIds = exp.related || [];
-  let related = all.filter((e) => relatedIds.includes(e.id) && e.id !== exp.id);
+  let related = all.filter((item) => relatedIds.includes(item.id) && item.id !== exp.id);
   if (related.length < 3) {
     const sameTopic = all.filter(
-      (e) => e.id !== exp.id && (e.category === exp.category || e.topic === exp.topic)
+      (item) =>
+        item.id !== exp.id &&
+        (item.category === exp.category || item.topic === exp.topic)
     );
-    for (const e of sameTopic) {
+    for (const item of sameTopic) {
       if (related.length >= 3) break;
-      if (!related.find((r) => r.id === e.id)) related.push(e);
+      if (!related.find((candidate) => candidate.id === item.id)) related.push(item);
     }
   }
   related = related.slice(0, 3);
 
   const topic = normalizeCategory(exp.category || exp.topic);
-  const st = STATUS_LABEL[normalizeExpStatus(exp.status)];
-  const sections = exp.content || [];
+  const status = STATUS_LABEL[normalizeExpStatus(exp.status)];
+  const sections = exp.content?.length
+    ? exp.content
+    : parseContent(exp.content_md || "");
 
   return (
     <>
@@ -87,13 +111,13 @@ export default async function ExperiencePage({ params }: PageProps) {
           <span className="mx-1">/</span>
           <span className="text-ink-700">{exp.title}</span>
         </nav>
-        <div className="mt-3 flex flex-wrap items-center gap-1.5 text-[11px] text-ink-500">
-          <span>相关航站：</span>
-          <span className="text-ink-400">（build 时跳过）</span>
-        </div>
+        {process.env.NEXT_PUBLIC_DEBUG === "true" && (
+          <div className="mt-3 rounded-md border border-dashed border-amber-300 bg-amber-50 px-3 py-2 text-[11px] text-amber-800">
+            开发诊断：相关航站由运行时数据源提供，生产环境不显示此提示。
+          </div>
+        )}
       </div>
 
-      {/* Article header */}
       <section className="mx-auto max-w-7xl px-4 pt-4 sm:px-6 lg:px-8">
         <div className="rounded-2xl border border-ink-100 bg-white p-6 shadow-soft">
           <div className="flex flex-wrap items-center gap-2">
@@ -108,11 +132,11 @@ export default async function ExperiencePage({ params }: PageProps) {
             <span
               className={cn(
                 "inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-xs font-medium",
-                st.cls
+                status.cls
               )}
             >
-              <span className={cn("h-1.5 w-1.5 rounded-full", st.dot)} />
-              {st.text}
+              <span className={cn("h-1.5 w-1.5 rounded-full", status.dot)} />
+              {status.text}
             </span>
           </div>
           <h1 className="mt-2 text-2xl font-bold text-ink-900 sm:text-3xl">{exp.title}</h1>
@@ -143,9 +167,9 @@ export default async function ExperiencePage({ params }: PageProps) {
           </div>
           {(exp.tags || []).length > 0 && (
             <div className="mt-3 flex flex-wrap gap-1.5">
-              {exp.tags!.map((t) => (
-                <span key={t} className="rounded bg-ink-50 px-2 py-0.5 text-xs text-ink-500">
-                  #{t}
+              {exp.tags!.map((tag) => (
+                <span key={tag} className="rounded bg-ink-50 px-2 py-0.5 text-xs text-ink-500">
+                  #{tag}
                 </span>
               ))}
             </div>
@@ -153,7 +177,6 @@ export default async function ExperiencePage({ params }: PageProps) {
         </div>
       </section>
 
-      {/* Body grid: content + TOC */}
       <section className="mx-auto max-w-7xl px-4 py-6 sm:px-6 lg:px-8">
         <div className="grid grid-cols-1 gap-6 lg:grid-cols-[1fr_240px]">
           <article className="rounded-2xl border border-ink-100 bg-white p-6 shadow-soft">
@@ -165,13 +188,12 @@ export default async function ExperiencePage({ params }: PageProps) {
         </div>
       </section>
 
-      {/* Related experiences */}
       {related.length > 0 && (
         <section className="mx-auto max-w-7xl px-4 pb-12 sm:px-6 lg:px-8">
           <h2 className="mb-3 text-lg font-semibold text-ink-900">相关经验</h2>
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
-            {related.map((r) => (
-              <ExperienceCard key={r.id} exp={r} />
+            {related.map((item) => (
+              <ExperienceCard key={item.id} exp={item} />
             ))}
           </div>
         </section>
@@ -187,30 +209,6 @@ export default async function ExperiencePage({ params }: PageProps) {
           </div>
         </div>
       </footer>
-    </>
-  );
-}
-
-async function RelatedCityChips() {
-  // 1s timeout race — build 时 SCF cold start 30-60s 会卡 60s page timeout
-  const cities = (await Promise.race([
-    getCities(),
-    new Promise<City[]>((r) => setTimeout(() => r([]), 1000)),
-  ]).catch(() => [])) as City[];
-  const featured = cities.filter((c) =>
-    ["B-北京大兴", "S-上海浦东", "G-广州白云"].includes(c.code)
-  );
-  return (
-    <>
-      {featured.map((c) => (
-        <Link
-          key={c.code}
-          href={`/city/${encodeURIComponent(c.code)}`}
-          className="rounded-full bg-ink-50 px-2.5 py-1 hover:bg-primary-50 hover:text-primary"
-        >
-          {c.name}（{c.region}）
-        </Link>
-      ))}
     </>
   );
 }
