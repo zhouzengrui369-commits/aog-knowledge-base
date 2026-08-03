@@ -5,7 +5,8 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Home, Plane, Search } from "lucide-react";
 import { NavBar } from "@/components/nav-bar";
-import { getCities, getExperiences } from "@/lib/api";
+import { getCities } from "@/lib/api";
+import { getProductionStats } from "@/lib/production-api";
 import type { City } from "@/lib/types";
 
 export default function NotFound() {
@@ -17,10 +18,10 @@ export default function NotFound() {
 
   useEffect(() => {
     let cancelled = false;
-    Promise.all([getCities(), getExperiences()]).then(([cityRows, experiences]) => {
+    Promise.all([getCities(), getProductionStats()]).then(([cityRows, stats]) => {
       if (cancelled) return;
       setCities(cityRows ?? []);
-      setExperienceCount((experiences ?? []).length);
+      setExperienceCount(stats?.experiences ?? null);
 
       const match = window.location.pathname.match(/^\/city\/([^/]+)$/);
       if (!match) return;
