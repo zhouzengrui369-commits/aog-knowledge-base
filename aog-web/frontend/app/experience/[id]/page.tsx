@@ -40,6 +40,7 @@ export async function generateMetadata(): Promise<Metadata> {
 export default async function ExperiencePage({ params }: PageProps) {
   const { id } = await params;
   const decodedId = decodeURIComponent(id);
+  const showDebug = process.env.NEXT_PUBLIC_DEBUG === "true";
   const exp = await Promise.race([
     getExperience(decodedId),
     new Promise<null>((resolve) => setTimeout(() => resolve(null), 1000)),
@@ -71,6 +72,7 @@ export default async function ExperiencePage({ params }: PageProps) {
       <NavBar active="experiences" />
       <div className="mx-auto max-w-7xl px-4 pt-6 sm:px-6 lg:px-8">
         <nav className="text-xs text-ink-500"><Link href="/">首页</Link><span className="mx-1">/</span><Link href="/experiences">保障经验</Link><span className="mx-1">/</span><span>{exp.title}</span></nav>
+        {showDebug && <div className="mt-3 rounded-md border border-dashed border-amber-300 bg-amber-50 px-3 py-2 text-[11px] text-amber-800">开发诊断：experience_id={decodedId}；生产构建不显示。</div>}
       </div>
       <section className="mx-auto max-w-7xl px-4 pt-4 sm:px-6 lg:px-8">
         <div className="rounded-2xl border border-ink-100 bg-white p-6 shadow-soft">
