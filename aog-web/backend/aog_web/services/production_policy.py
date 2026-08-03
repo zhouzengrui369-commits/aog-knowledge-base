@@ -1,15 +1,4 @@
-"""Production truth and release-safety policy for AOG public surfaces.
-
-This module centralises three contracts that previously drifted between pages:
-
-* public statistics are calculated from the live SQLite database;
-* unverified city records are fail-closed before leaving the API;
-* city access counters are durable and never fabricated by the frontend.
-
-It deliberately uses a small sqlite3 side table instead of changing the pipeline
-schema.  The table is idempotent and can be created against an existing release
-artifact without rebuilding the knowledge records.
-"""
+"""Production truth and release-safety policy for AOG public surfaces."""
 from __future__ import annotations
 
 import copy
@@ -28,7 +17,6 @@ def _connect(db_path: str | Path) -> sqlite3.Connection:
 
 
 def ensure_usage_schema(db_path: str | Path) -> None:
-    """Create the durable city usage table if it does not exist."""
     with _connect(db_path) as con:
         con.execute(
             """
@@ -43,7 +31,6 @@ def ensure_usage_schema(db_path: str | Path) -> None:
 
 
 def increment_city_view(db_path: str | Path, city_code: str) -> int:
-    """Atomically increment and return a city's access count."""
     ensure_usage_schema(db_path)
     with _connect(db_path) as con:
         con.execute(
@@ -80,7 +67,6 @@ def city_view_counts(db_path: str | Path) -> dict[str, int]:
 
 
 def _dedupe_contacts(contacts: Iterable[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Deduplicate contacts by their public identity while preserving order."""
     result: list[dict[str, Any]] = []
     seen: set[tuple[str, tuple[str, ...], str, str]] = set()
     for raw in contacts:
@@ -89,7 +75,7 @@ def _dedupe_contacts(contacts: Iterable[dict[str, Any]]) -> list[dict[str, Any]]
         item = copy.deepcopy(raw)
         phones_raw = item.get("phone") or []
         phones = (
-            [str(v).strip() for v in phones_raw if str(v).strip()]
+            [str(value).strip() for value in phones_raw if str(value).strip()]
             if isinstance(phones_raw, list)
             else [str(phones_raw).strip()] if str(phones_raw).strip() else []
         )
@@ -108,12 +94,7 @@ def _dedupe_contacts(contacts: Iterable[dict[str, Any]]) -> list[dict[str, Any]]
 
 
 def apply_city_release_policy(city: dict[str, Any], *, view_count: int = 0) -> dict[str, Any]:
-    """Return a public-safe city representation.
-
-    VERIFIED records retain their already permission-filtered operational fields.
-    Every other review state is fail-closed: identity, provenance and review state
-    remain visible, while actionable values and free text are empty.
-    """
+    """Apply the fail-closed public release policy to a decoded city record."""
     safe = copy.deepcopy(city)
     trust = safe.get("trust") or {}
     status = str(trust.get("review_status") or "UNVERIFIED").upper()
@@ -138,12 +119,9 @@ def apply_city_release_policy(city: dict[str, Any], *, view_count: int = 0) -> d
 
 
 def _table_exists(con: sqlite3.Connection, name: str) -> bool:
-    return (
-        con.execute(
-            "SELECT 1 FROM sqlite_master WHERE type='table' AND name = ?", (name,)
-        ).fetchone()
-        is not None
-    )
+    return con.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name = ?", (name,)
+    ).fetchone() is not None
 
 
 def _count_where(con: sqlite3.Connection, table: str, where: str = "1=1") -> int:
@@ -153,12 +131,23 @@ def _count_where(con: sqlite3.Connection, table: str, where: str = "1=1") -> int
 
 
 def production_stats(db_path: str | Path, *, airline_count: int = 0) -> dict[str, Any]:
-    """Calculate the single public statistics payload from SQLite."""
+    """Calculate the public statistics payload after publication flags are current."""
     ensure_usage_schema(db_path)
+    # The first page loaded after a cold start may be the homepage.  Reuse the
+    # same deterministic migration as the experience API so stats cannot report
+    # zero merely because `/api/experiences` has not been called yet.
+    try:
+        from aog_web.services.experience_content import ensure_experience_content_flags
+
+        ensure_experience_content_flags(db_path)
+    except RuntimeError as exc:
+        if "experiences table is missing" not in str(exc):
+            raise
+
     with _connect(db_path) as con:
         columns = {
             str(row[1]) for row in con.execute("PRAGMA table_info(experiences)").fetchall()
-        }
+        } if _table_exists(con, "experiences") else set()
         exp_where = "has_content = 1" if "has_content" in columns else (
             "TRIM(COALESCE(content_md, '')) <> '' AND LOWER(TRIM(COALESCE(content_md, ''))) <> 'sheet1'"
         )
