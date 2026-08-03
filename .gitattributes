@@ -1,0 +1,6 @@
+# Markdown review evidence uses two trailing spaces for intentional hard breaks.
+# Keep code whitespace checks strict while avoiding false positives in these
+# historical, human-authored review and operations documents.
+docs/ops/*.md whitespace=-trailing-space
+reports/product-review-20260802/*.md whitespace=-trailing-space
+reports/product-review-20260802/evidence/*.md whitespace=-trailing-space
