@@ -137,7 +137,7 @@ describe("EXP-AOG-20260803 focused retest contracts", () => {
   it("guards terminal SSE state so late done cannot overwrite error/cancel", () => {
     const stream = source("lib/chat-stream.ts");
     expect(stream).toContain('terminal === "error" || terminal === "cancelled"');
-    expect(stream).toContain("References are an intermediate retrieval result").toBe(false);
+    expect(stream).not.toContain("References are an intermediate retrieval result");
     const state = source("lib/chat-state.ts");
     expect(state).toContain("References are an intermediate retrieval result");
   });
