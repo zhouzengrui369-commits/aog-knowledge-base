@@ -98,8 +98,7 @@ async def login(req: LoginRequest, request: Request, response: Response) -> Logi
         path="/",
     )
     logger.info("auth.login success; httpOnly cookie issued")
-    # token remains in the response for CLI compatibility, but the browser does
-    # not persist it in localStorage.
+    # CLI compatibility only; browser clients use the httpOnly cookie.
     return LoginResponse(token=issued["token"], expires_in=issued["expires_in"])
 
 
@@ -115,7 +114,10 @@ async def verify(
     authorization: Optional[str] = Header(default=None),
     aog_session: Optional[str] = Cookie(default=None),
 ) -> VerifyResponse:
-    token = _bearer_token(authorization) or aog_session
+    bearer = _bearer_token(authorization)
+    if authorization and not bearer and not aog_session:
+        return VerifyResponse(valid=False, reason="malformed")
+    token = bearer or aog_session
     if not token:
         return VerifyResponse(valid=False, reason="missing")
     try:
