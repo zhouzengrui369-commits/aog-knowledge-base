@@ -20,12 +20,13 @@ describe("AOG production UI contracts", () => {
     expect(runtime).toContain("getProductionStats");
   });
 
-  it("does not hardcode the wrong airport on the 404 page", () => {
+  it("does not hardcode the wrong airport or count on the 404 page", () => {
     const text = source("app/not-found.tsx");
     expect(text).not.toContain("PKX · 华东");
     expect(text).not.toContain("上海浦东</div>");
     expect(text).toContain("getCities");
-    expect(text).toContain("getExperiences");
+    expect(text).toContain("getProductionStats");
+    expect(text).not.toContain("getExperiences");
   });
 
   it("keeps unfinished course versions out of navigation", () => {
