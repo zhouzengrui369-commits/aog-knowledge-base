@@ -2,6 +2,7 @@
 
 import * as React from "react";
 import { AlertTriangle, Loader2, Lock, ShieldCheck } from "lucide-react";
+import { clearAllChatSessions } from "@/lib/chat-state";
 import styles from "./auth-gate.module.css";
 
 const API_BASE = (process.env.NEXT_PUBLIC_API_BASE || "http://localhost:8000").replace(/\/api\/?$/, "");
@@ -42,6 +43,7 @@ function markVerified(
 ) {
   if (typeof window === "undefined") return;
   if (value) {
+    if (options.rotate) clearAllChatSessions(window.sessionStorage);
     window.sessionStorage.setItem(SESSION_MARKER, "true");
     let sessionId = options.rotate ? null : window.sessionStorage.getItem(AUTH_SESSION_ID_KEY);
     if (!sessionId) {
@@ -50,6 +52,7 @@ function markVerified(
     }
     emitAuthSession({ sessionId, reason: options.reason || "verified" });
   } else {
+    clearAllChatSessions(window.sessionStorage);
     window.sessionStorage.removeItem(SESSION_MARKER);
     window.sessionStorage.removeItem(AUTH_SESSION_ID_KEY);
     emitAuthSession({ sessionId: null, reason: options.reason || "invalid" });
