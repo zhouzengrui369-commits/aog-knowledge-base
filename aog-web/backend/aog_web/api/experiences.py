@@ -1,17 +1,22 @@
 """GET /api/experiences, /api/experience/{id} - CONTRACT §2.4 + §2.5
 
-list endpoint 不返 content_md (避 SCF 6MB HTTP 上限)
-- 2026-07-17: NJX 拍板 default limit=3 (前 15 经验 + 完整 content_md → 6MB+ 触发 502)
-- 单条 /api/experience/{id} 仍返完整 (含 content_md)
+List responses omit ``content_md`` to stay below the SCF response-size limit.
+P0-1 publication gate: records marked ``has_content=false`` are excluded from
+both the public list and direct detail access.
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import List, Optional
 
 from fastapi import APIRouter, HTTPException, Query, Request
 
 from aog_web.models.experience import ExperienceSummary
+from aog_web.services.experience_content import (
+    contentful_experience_ids,
+    filter_contentful_experiences,
+)
 from aog_web.services.sqlite_client import get_sqlite_client
 
 logger = logging.getLogger(__name__)
@@ -20,9 +25,15 @@ router = APIRouter(prefix="/api", tags=["experiences"])
 
 
 # SCF 6MB HTTP response limit - 经验 content_md 平均 400KB, 15 条超 6MB
-# NJX 2026-07-17 拍板 default=3 (列表页 3 条够用), max=15 (全量导出/调试用)
+# NJX 2026-07-17 拍板 default=3, max=15.
 MAX_LIST_LIMIT = 15
 DEFAULT_LIST_LIMIT = 3
+
+
+async def _published_ids() -> set[str]:
+    """Return durable publication flags without blocking the event loop."""
+    client = get_sqlite_client()
+    return await asyncio.to_thread(contentful_experience_ids, client.db_path)
 
 
 @router.get("/experiences", response_model=List[ExperienceSummary])
@@ -39,23 +50,34 @@ async def list_experiences(
     ),
     offset: int = Query(0, ge=0, description="跳过的条数 (default 0)"),
 ) -> List[ExperienceSummary]:
-    """经验列表 - 不含 content_md (避 SCF 6MB limit)
+    """Return only experiences with verified non-empty content.
 
-    过滤 (category/status/q) + 分页 (limit/offset) 都在 service 层
-    list 拿全集 (in-memory), 然后 slice; 数据规模 < 100 条, 无需 SQL LIMIT
+    Filtering happens before pagination so the default page still contains up
+    to three usable experiences instead of empty shells.
     """
     client = get_sqlite_client()
+    published_ids = await _published_ids()
     all_exps = await client.list_experiences(category=category, status=status, q=q)
-    sliced = all_exps[offset : offset + limit]
-    # 去掉 content_md (heavy) - 走 Pydantic model 自动 exclude
+    visible = filter_contentful_experiences(all_exps, published_ids)
+    sliced = visible[offset : offset + limit]
     return [ExperienceSummary.model_validate(e) for e in sliced]
 
 
 @router.get("/experience/{exp_id}")
 async def get_experience(request: Request, exp_id: str) -> dict:
-    """经验详情 - 返完整 (含 content_md)"""
+    """Return a complete experience only when it passed the content gate."""
+    published_ids = await _published_ids()
+    if exp_id not in published_ids:
+        raise HTTPException(
+            status_code=404,
+            detail={"error": "experience not published", "id": exp_id},
+        )
+
     client = get_sqlite_client()
     exp = await client.get_experience(exp_id)
     if exp is None:
-        raise HTTPException(status_code=404, detail={"error": "experience not found", "id": exp_id})
+        raise HTTPException(
+            status_code=404,
+            detail={"error": "experience not found", "id": exp_id},
+        )
     return exp
