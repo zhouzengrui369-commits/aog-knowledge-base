@@ -384,39 +384,46 @@ async def chat(request: Request, body: ChatRequest) -> ChatResponse:
     if safety_response is not None:
         return safety_response
     policy = await _retrieve_with_policy(request, body)
-    if policy.blocked:
-        answer = blocked_city_answer(policy.blocked_targets)
-        return ChatResponse(
-            answer=answer,
-            sections=_blocked_sections(policy),
-            references=_blocked_references(policy),
-            model="verification-policy",
-            latency_ms=int((time.monotonic() - started) * 1000),
-        )
 
-    references = [_reference_from_hit(hit) for hit in policy.hits[:5]]
-    if not policy.hits:
+    # NJX 8/4 12:02 拍板 "修报错": UNVERIFIED 城市不再 return early, fall through 到 grounded
+    # FTS5 retrieval (跟 b390629d chat.py 行为一致). 严守 PII 风险:
+    #   - 只取 VERIFIED eligible hits 进 LLM context (不暴露 UNVERIFIED 城市 contact / 库存 / 物流 / 预案正文)
+    #   - 仍返 _blocked_references 让用户看到 UNVERIFIED 城市状态 (UI 透明度)
+    #   - 系统提示词 (SYSTEM_PROMPT) 仍强调 "不得把任何状态改写、提升或概括成更高等级"
+    # 跟 b390629d 行为差异: 多了 _blocked_references (让用户知道 city 资料 UNVERIFIED) + 严守 PII-7a v2
+    grounded_hits = [
+        hit
+        for hit in policy.hits
+        if (hit.get("metadata") or {}).get("verification_status") == "VERIFIED"
+    ]
+    blocked_refs = _blocked_references(policy) if policy.blocked else []
+
+    references = [_reference_from_hit(hit) for hit in grounded_hits[:5]]
+    if not grounded_hits:
+        # 没 VERIFIED grounded, 仍返 "暂未找到可用于操作的已核验资料" (严守 fail-closed 兜底)
         return ChatResponse(
             answer="暂未找到可用于操作的已核验资料。请补充城市、件号或机型，或联系数据核验负责人。",
             sections=None,
-            references=[_no_match_reference()],
+            references=([_no_match_reference()] + blocked_refs)[:5] or [_no_match_reference()],
             model="verification-policy",
             latency_ms=int((time.monotonic() - started) * 1000),
         )
 
     llm = get_llm(settings=request.app.state.settings)
     try:
-        raw_answer = await llm.chat(_messages(body.q, policy.hits), max_tokens=4000)
+        raw_answer = await llm.chat(_messages(body.q, grounded_hits), max_tokens=4000)
     except Exception as exc:
         logger.error("safe LLM call failed: %s", exc)
         raise HTTPException(502, detail={"error": "upstream LLM error"}) from exc
     finally:
         await llm.close()
     answer, sections = _parse_sections(_public_answer(raw_answer))
+    # 拼 grounded references + blocked city references (UI 透明度)
+    combined_refs = (references + blocked_refs)[:5] or [_no_match_reference()]
     return ChatResponse(
         answer=answer,
         sections=sections,
-        references=references or [_no_match_reference()],
+        references=combined_refs,
         model=llm.model,
         latency_ms=int((time.monotonic() - started) * 1000),
     )
@@ -486,18 +493,26 @@ async def chat_stream(request: Request, body: ChatRequest) -> StreamingResponse:
                 return
             policy = await _retrieve_with_policy(request, body)
 
-            references = (
-                _blocked_references(policy)
-                if policy.blocked
-                else [_reference_from_hit(hit) for hit in policy.hits[:5]]
-            )
-            if not references:
-                references = [_no_match_reference()]
+            # NJX 8/4 12:02 拍板 "修报错": UNVERIFIED 城市 fall through 到 grounded (跟 b390629d 一致)
+            # 严守 PII: 只取 VERIFIED eligible hits 进 LLM context
+            grounded_hits = [
+                hit
+                for hit in policy.hits
+                if (hit.get("metadata") or {}).get("verification_status") == "VERIFIED"
+            ]
+            blocked_refs = _blocked_references(policy) if policy.blocked else []
+            grounded_refs = [_reference_from_hit(hit) for hit in grounded_hits[:5]]
+            references = (grounded_refs + blocked_refs)[:5] or [_no_match_reference()]
+            is_blocked_only = policy.blocked and not grounded_hits
             yield _sse_format(
                 json.dumps(
                     {
                         "references": [reference.model_dump() for reference in references],
-                        "model": "verification-policy" if policy.blocked or not policy.hits else request.app.state.settings.MINIMAX_MODEL,
+                        "model": (
+                            "verification-policy"
+                            if is_blocked_only
+                            else request.app.state.settings.MINIMAX_MODEL
+                        ),
                         "policy": {
                             "target_codes": policy.target_codes,
                             "blocked": policy.blocked,
@@ -510,25 +525,8 @@ async def chat_stream(request: Request, body: ChatRequest) -> StreamingResponse:
             )
             yield _status_event("generating", started, refs_count=len(references))
 
-            if policy.blocked:
-                answer = blocked_city_answer(policy.blocked_targets)
-                async for event in _emit_text(answer):
-                    if first_token_ms is None:
-                        first_token_ms = int((time.monotonic() - started) * 1000)
-                    yield event
-                yield _sse_format(
-                    json.dumps(
-                        {"sections": [section.model_dump() for section in _blocked_sections(policy)]},
-                        ensure_ascii=False,
-                    ),
-                    event="sections",
-                )
-                latency = int((time.monotonic() - started) * 1000)
-                yield _status_event("done", started, first_token_ms=first_token_ms, latency_ms=latency)
-                yield _sse_format(json.dumps({"latency_ms": latency, "first_token_ms": first_token_ms}), event="done")
-                return
-
-            if not policy.hits:
+            if is_blocked_only:
+                # 没 VERIFIED grounded, 仍返 "暂未找到可用于操作的已核验资料" (严守 fail-closed 兜底)
                 answer = "暂未找到可用于操作的已核验资料。请补充城市、件号或机型，或联系数据核验负责人。"
                 async for event in _emit_text(answer):
                     if first_token_ms is None:

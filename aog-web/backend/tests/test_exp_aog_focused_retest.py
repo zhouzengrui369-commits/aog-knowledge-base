@@ -138,6 +138,10 @@ def test_context_includes_code_assigned_verification_status() -> None:
 
 @pytest.mark.asyncio
 async def test_unverified_stream_keeps_refs_intermediate_until_done(client, seeded_sqlite) -> None:
+    # NJX 8/4 12:02 拍板 "修报错": UNVERIFIED 城市不再 return early 阻断 grounded,
+    # fall through 到 grounded FTS5 retrieval (跟 b390629d chat.py 行为一致).
+    # 严守 PII 风险: LLM context 只含 VERIFIED eligible hits (annotation_hit 强制 verification_status=VERIFIED).
+    # Test 仍验证: phase 顺序 queued → retrieving → refs → generating → token → done, 没 error.
     response = await client.post(
         "/api/chat/stream",
         json={"q": "上海浦东 AOG 如何处置"},
@@ -156,7 +160,8 @@ async def test_unverified_stream_keeps_refs_intermediate_until_done(client, seed
     positions = [stream.find(marker) for marker in markers]
     assert all(position >= 0 for position in positions), stream[:1000]
     assert positions == sorted(positions)
-    assert "UNVERIFIED / 不可用于操作" in stream
+    # R3 commit 3 (NJX 12:02 拍板) 后: UNVERIFIED 走 grounded, 不再返 "UNVERIFIED / 不可用于操作" 边界答案
+    # 仍验证 grounded 流完整性: phase 顺序 + token 事件 + 没 error
     assert "event: error" not in stream
 
 
