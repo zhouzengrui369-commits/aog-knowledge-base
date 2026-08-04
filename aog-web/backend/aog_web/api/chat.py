@@ -137,14 +137,17 @@ _VALID_SECTION_TYPES = {
 
 
 def _parse_sections(answer: str) -> Tuple[str, Optional[List[ChatSection]]]:
-    """V30 治本: 解析 LLM 输出里的 ===JSON_START===...===JSON_END=== sentinel 段
+    """V30 治本: 解析 LLM 输出里的 ===JSON_START===...===JSON_END=== sentinel 段.
+
+    R3 commit 7 (NJX 8/4 15:36 拍板): fallback 拆 markdown ## headers 成 sections.
+    NJX 期望 chat 答案 "思考过程 + 输出网页格式" 拆解成 thinking / answer 卡片.
 
     返回 (clean_answer, sections):
       - clean_answer: 去掉 sentinel 段后的纯 markdown (sentinel 段不返给前端, 避免双渲染)
       - sections: 解析成功 = List[ChatSection], 失败 = None (前端 fallback markdown 渲染)
 
     容错 (P0 治本):
-      - 没 sentinel 段 → (answer, None) 完整保留
+      - 没 sentinel 段 → 走 markdown ## headers 拆 sections (R3 commit 7 fallback)
       - JSON parse 失败 → (clean, None) clean 不含 sentinel
       - sections 不是 list / 全部不合法 → (clean, None)
       - 任何 type 非法 / pydantic 校验失败 → skip 这个 section, 其他 section 保留
@@ -153,7 +156,8 @@ def _parse_sections(answer: str) -> Tuple[str, Optional[List[ChatSection]]]:
         return answer, None
     match = _JSON_SECTION_RE.search(answer)
     if not match:
-        return answer, None
+        # R3 commit 7: 没 sentinel 段时, fallback 拆 markdown ## / ### / - headers 成 sections
+        return _parse_markdown_sections(answer)
     # 构造 clean_answer: 去掉 sentinel 段
     clean_answer = (answer[: match.start()] + answer[match.end() :]).strip()
     # 解析 JSON
@@ -198,6 +202,129 @@ def _parse_sections(answer: str) -> Tuple[str, Optional[List[ChatSection]]]:
         len(sections), skipped,
     )
     return clean_answer, sections
+
+
+def _parse_markdown_sections(answer: str) -> Tuple[str, Optional[List[ChatSection]]]:
+    """R3 commit 7: fallback 拆 markdown ## / ### / - headers / 1. / table 成 sections.
+    没 sentinel 段时, 把 markdown 答案拆成 sections 让 frontend 渲染成 structured cards.
+    """
+    if not answer:
+        return answer, None
+    sections: List[ChatSection] = []
+    lines = answer.split("\n")
+    i = 0
+    pending_paragraph: List[str] = []
+    pending_list: List[str] = []
+    pending_list_ordered = False
+    pending_table: List[List[str]] = []
+
+    def _flush_paragraph() -> None:
+        nonlocal pending_paragraph
+        if pending_paragraph:
+            text = "\n".join(pending_paragraph).strip()
+            if text:
+                sections.append(ChatSection(type="paragraph", text=text))
+            pending_paragraph = []
+
+    def _flush_list() -> None:
+        nonlocal pending_list, pending_list_ordered
+        if pending_list:
+            sections.append(ChatSection(
+                type="ordered_list" if pending_list_ordered else "list",
+                items=pending_list,
+            ))
+            pending_list = []
+            pending_list_ordered = False
+
+    def _flush_table() -> None:
+        nonlocal pending_table
+        if len(pending_table) >= 2:
+            sections.append(ChatSection(
+                type="table",
+                header=pending_table[0],
+                rows=pending_table[1:],
+            ))
+        elif pending_table:
+            # 单行表格 fallback 当 paragraph
+            sections.append(ChatSection(
+                type="paragraph",
+                text=" | ".join(pending_table[0]),
+            ))
+        pending_table = []
+
+    while i < len(lines):
+        line = lines[i].rstrip()
+        stripped = line.strip()
+
+        # 空行 → flush
+        if not stripped:
+            _flush_paragraph()
+            _flush_list()
+            _flush_table()
+            i += 1
+            continue
+
+        # ## / ### heading
+        m = re.match(r"^(#{1,3})\s+(.+)$", stripped)
+        if m:
+            _flush_paragraph()
+            _flush_list()
+            _flush_table()
+            level = len(m.group(1))
+            text = m.group(2).strip()
+            sections.append(ChatSection(type="heading", level=level, text=text))
+            i += 1
+            continue
+
+        # - list item
+        m = re.match(r"^[-*]\s+(.+)$", stripped)
+        if m:
+            _flush_paragraph()
+            _flush_table()
+            if not pending_list:
+                pending_list_ordered = False
+            pending_list.append(m.group(1).strip())
+            i += 1
+            continue
+
+        # 1. / 2. ordered list item
+        m = re.match(r"^\d+\.\s+(.+)$", stripped)
+        if m:
+            _flush_paragraph()
+            _flush_table()
+            if not pending_list:
+                pending_list_ordered = True
+            pending_list.append(m.group(1).strip())
+            i += 1
+            continue
+
+        # table row | ... |
+        if stripped.startswith("|") and stripped.endswith("|"):
+            _flush_paragraph()
+            _flush_list()
+            cells = [c.strip() for c in stripped[1:-1].split("|")]
+            pending_table.append(cells)
+            i += 1
+            continue
+
+        # 普通 paragraph 行
+        _flush_list()
+        _flush_table()
+        pending_paragraph.append(stripped)
+        i += 1
+
+    # 结尾 flush
+    _flush_paragraph()
+    _flush_list()
+    _flush_table()
+
+    if not sections:
+        return answer, None
+    logger.info(
+        "[R3 commit 7] parsed %d sections from markdown (no sentinel) fallback",
+        len(sections),
+    )
+    return answer, sections
 
 
 def _build_references(refs: List[Dict[str, Any]]) -> List[Reference]:
