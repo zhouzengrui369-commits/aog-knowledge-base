@@ -328,7 +328,7 @@ export function ChatWidget() {
       await safeChatStream(
         { q: question },
         {
-          onStatus: ({ phase, first_token_ms, latency_ms, message, raw_hits_count, sections_count, context_mode }) => setMessages((current) => current.map((message) => {
+          onStatus: ({ phase, first_token_ms, latency_ms, message: thinkingMessage, raw_hits_count, sections_count, context_mode }) => setMessages((current) => current.map((message) => {
             if (message.id !== id) return message;
             const phased = updatePhase(message, phase);
             return {
@@ -337,7 +337,9 @@ export function ChatWidget() {
               latencyMs: latency_ms ?? phased.latencyMs,
               slow: phase === "done" || phase === "error" || phase === "cancelled" ? false : phased.slow,
               // R3 commit 10: 思考步骤动态文案贯穿流式
-              phaseMessage: message ?? phased.phaseMessage,
+              // 修复 onStatus callback 内 message 命名冲突 (后端推的 message 字符串 vs setMessages current message object),
+              // 用 thinkingMessage 别名避免 setMessages callback 内 message shadow, 防止 phaseMessage 被设成 object
+              phaseMessage: thinkingMessage ?? phased.phaseMessage,
               rawHitsCount: raw_hits_count ?? phased.rawHitsCount,
               sectionsCount: sections_count ?? phased.sectionsCount,
               contextMode: context_mode ?? phased.contextMode,
