@@ -47,6 +47,16 @@ _PRIVATE_BLOCK_RE = re.compile(
     re.IGNORECASE,
 )
 
+# R3 commit 13 (NJX 20:30 拍板 "输出结果显示代码, 不是 html 可视化表达"): 实时 strip
+# ===JSON_START===...===JSON_END=== sentinel 段, 避免流式时显示 sentinel 段原样 (纯文本
+# JSON), 让 frontend 走 MarkdownFallback 渲染 (sections 由 done 时 sections event 单独推).
+# 跟 chat.py 严守一致 (chat.py L36: _JSON_SECTION_RE = re.compile(
+#     r"===JSON_START===\s*([\s\S]+?)\s*===JSON_END===", re.MULTILINE)).
+_JSON_SENTINEL_RE = re.compile(
+    r"===JSON_START===[\s\S]*?===JSON_END===",
+    re.MULTILINE,
+)
+
 SYSTEM_PROMPT = """你是 AOG（飞机停场维修）应急保障知识库的 AI 助手。
 
 强制核验策略（由代码决定，模型无权修改）：
@@ -648,13 +658,22 @@ async def chat_stream(request: Request, body: ChatRequest) -> StreamingResponse:
             in_private = False
             open_tag = "<think>"
             close_tag = "</think>"
-            # R3 commit 12 (NJX 20:21 拍板 "思考过程仍然没有流式输出"): 推 token 时同步推
+            # R3 commit 12 (NJX 20:21 拍板 "思考步骤仍然没有流式输出"): 推 token 时同步推
             # status event 推 stream_progress, 让 frontend StatusLine 实时显示流式进度
             # (例如"正在流式生成答案 (已推 200 字符), 严守 PII 不暴露 phone/email"). 每 200
             # 字符推一次 (避免 SSE 事件太频繁影响性能), 让 NJX 看到流式过程一直在动.
+            #
+            # R3 commit 13 (NJX 20:30 拍板 "输出结果显示代码, 不是 html 可视化表达"): 推 token
+            # 前实时 strip ===JSON_START===...===JSON_END=== sentinel 段 (避免流式时显示
+            # sentinel 段原样纯文本). 累积 full_buffer + pending 同步 strip (跨 token
+            # sentinel 段也能 strip, 不会因为 token boundary 漏掉).
             char_count = 0
             last_status_chars = 0
             async for delta in llm.stream_chat(_messages(body.q, context_hits, mode=context_mode), max_tokens=4000):
+                # 实时 strip sentinel 段 (避免 LLM 末尾的 ===JSON_START===...===JSON_END=== 段被
+                # 原样推到 frontend 显示成纯文本 JSON, 应该是前端解析 sections 后渲染成
+                # 结构化卡片)
+                delta = _JSON_SENTINEL_RE.sub("", delta)
                 full_buffer.append(delta)
                 char_count += len(delta)
                 pending += delta
@@ -666,16 +685,23 @@ async def chat_stream(request: Request, body: ChatRequest) -> StreamingResponse:
                             if safe_cut:
                                 public_delta = pending[:safe_cut]
                                 if public_delta:
-                                    if first_token_ms is None:
-                                        first_token_ms = int((time.monotonic() - started) * 1000)
-                                    yield _sse_format(public_delta, event="token")
+                                    # 推 token 时再 strip 一次 sentinel 段 (双保险, 避免跨 token
+                                    # 边界时漏 strip; 例如 sentinel 段第一个 token 是 "===JSON_START==="
+                                    # 末尾, 第二个 token 是 "...", 累积后才完整, 此时 strip 完整)
+                                    public_delta = _JSON_SENTINEL_RE.sub("", public_delta)
+                                    if public_delta:
+                                        if first_token_ms is None:
+                                            first_token_ms = int((time.monotonic() - started) * 1000)
+                                        yield _sse_format(public_delta, event="token")
                             pending = pending[safe_cut:]
                             break
                         if start_idx:
                             public_delta = pending[:start_idx]
-                            if first_token_ms is None:
-                                first_token_ms = int((time.monotonic() - started) * 1000)
-                            yield _sse_format(public_delta, event="token")
+                            public_delta = _JSON_SENTINEL_RE.sub("", public_delta)
+                            if public_delta:
+                                if first_token_ms is None:
+                                    first_token_ms = int((time.monotonic() - started) * 1000)
+                                yield _sse_format(public_delta, event="token")
                         pending = pending[start_idx + len(open_tag) :]
                         in_private = True
                     else:
@@ -700,11 +726,16 @@ async def chat_stream(request: Request, body: ChatRequest) -> StreamingResponse:
                         ),
                     )
             if pending and not in_private:
-                if first_token_ms is None:
-                    first_token_ms = int((time.monotonic() - started) * 1000)
-                yield _sse_format(pending, event="token")
+                pending = _JSON_SENTINEL_RE.sub("", pending)
+                if pending:
+                    if first_token_ms is None:
+                        first_token_ms = int((time.monotonic() - started) * 1000)
+                    yield _sse_format(pending, event="token")
 
-            clean_full = _public_answer("".join(full_buffer))
+            # R3 commit 13: done 时 clean_full 也 strip sentinel 段 (双保险, 避免 LLM 流式
+            # 末尾 sentinel 段没被 strip 影响 message.text, 让 frontend 走 MarkdownFallback
+            # 渲染时不含 sentinel 段原样纯文本)
+            clean_full = _public_answer(_JSON_SENTINEL_RE.sub("", "".join(full_buffer)))
             _, sections = _parse_sections(clean_full)
             if sections:
                 yield _sse_format(
