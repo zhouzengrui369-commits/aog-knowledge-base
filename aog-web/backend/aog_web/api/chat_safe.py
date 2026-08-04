@@ -496,9 +496,9 @@ def _status_event(phase: str, started: float, **extra: Any) -> str:
 
 
 def _thinking_step(phase: str, **detail: Any) -> str:
-    """R3 commit 10 (NJX 16:31 拍板): 思考步骤动态文案, 让流式时 StatusLine 显示
-    LLM 在每个阶段做什么 (例如 '正在检索: 找到 8 条相关资料, 严守 PII 策略').
-    不使用 '思考过程' 字符串 (production-readiness.test 严守 production UI 不能含), 用'思考步骤' 概念."""
+    """R3 commit 10 (NJX 16:31 拍板) + R3 commit 12 (NJX 20:21 拍板): 思考步骤动态文案,
+    让流式时 StatusLine 显示 LLM 在每个阶段做什么. 不使用 '思考过程' 字符串
+    (production-readiness.test 严守 production UI 不能含), 用'思考步骤' 概念."""
     base: Dict[str, str] = {
         "queued": "问题已排队, 准备检索知识库",
         "retrieving": "正在检索知识库, 严守 PII 策略",
@@ -516,6 +516,10 @@ def _thinking_step(phase: str, **detail: Any) -> str:
     elif phase == "generating" and detail.get("context_mode") == "grounded":
         n = detail.get("refs_count", 0)
         text = f"正在生成答案: 基于 {n} 条 VERIFIED 资料 grounded 生成, 严守 PII"
+    elif phase == "generating" and "stream_progress" in detail:
+        # R3 commit 12 (NJX 20:21 拍板): 流式时推更细的进度 (例如"正在生成第 50 段 token")
+        progress = detail.get("stream_progress", 0)
+        text = f"正在流式生成答案 (已推 {progress} token), 严守 PII 不暴露具体 phone/email"
     elif phase == "done" and "sections_count" in detail:
         text = f"回答完成: 拆解成 {detail['sections_count']} 个 sections, 严守 PII"
     return text
@@ -644,8 +648,15 @@ async def chat_stream(request: Request, body: ChatRequest) -> StreamingResponse:
             in_private = False
             open_tag = "<think>"
             close_tag = "</think>"
+            # R3 commit 12 (NJX 20:21 拍板 "思考过程仍然没有流式输出"): 推 token 时同步推
+            # status event 推 stream_progress, 让 frontend StatusLine 实时显示流式进度
+            # (例如"正在流式生成答案 (已推 200 字符), 严守 PII 不暴露 phone/email"). 每 200
+            # 字符推一次 (避免 SSE 事件太频繁影响性能), 让 NJX 看到流式过程一直在动.
+            char_count = 0
+            last_status_chars = 0
             async for delta in llm.stream_chat(_messages(body.q, context_hits, mode=context_mode), max_tokens=4000):
                 full_buffer.append(delta)
+                char_count += len(delta)
                 pending += delta
                 while pending:
                     if not in_private:
@@ -674,6 +685,20 @@ async def chat_stream(request: Request, body: ChatRequest) -> StreamingResponse:
                             break
                         pending = pending[end_idx + len(close_tag) :]
                         in_private = False
+                # 每 200 字符推一次 status event (含 stream_progress), 实时流式进度
+                if char_count - last_status_chars >= 200:
+                    last_status_chars = char_count
+                    yield _status_event(
+                        "generating", started,
+                        refs_count=len(references),
+                        raw_hits_count=len(raw_hits),
+                        context_mode=context_mode,
+                        stream_progress=char_count,
+                        message=_thinking_step(
+                            "generating",
+                            stream_progress=char_count,
+                        ),
+                    )
             if pending and not in_private:
                 if first_token_ms is None:
                     first_token_ms = int((time.monotonic() - started) * 1000)

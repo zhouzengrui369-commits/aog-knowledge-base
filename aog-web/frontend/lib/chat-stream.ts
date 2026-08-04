@@ -15,6 +15,9 @@ export interface ChatStatusPayload {
   raw_hits_count?: number;
   sections_count?: number;
   context_mode?: "grounded" | "unverified_titles" | "safety-policy";
+  // R3 commit 12 (NJX 20:21 拍板): 推 token 时同步推 stream_progress (字符数),
+  // 让 frontend StatusLine 实时显示流式进度 (例如"正在流式生成答案 (已推 200 字符)")
+  stream_progress?: number;
 }
 
 export interface SafeChatStreamCallbacks {

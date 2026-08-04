@@ -28,6 +28,8 @@ export interface ChatMessageState {
   rawHitsCount?: number;
   sectionsCount?: number;
   contextMode?: "grounded" | "unverified_titles" | "safety-policy";
+  // R3 commit 12 (NJX 20:21 拍板): 实时流式进度 (字符数), 让 StatusLine 显示 LLM 推到第几个字符
+  streamProgress?: number;
 }
 
 export interface ChatSessionSnapshot {

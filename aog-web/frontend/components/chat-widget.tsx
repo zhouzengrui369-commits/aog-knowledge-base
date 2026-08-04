@@ -135,27 +135,33 @@ function StatusLine({ message, cancel }: { message: ChatMessageState; cancel: ()
     return <div className="mb-2 flex items-center gap-2 text-xs text-ink-500"><Ban className="h-3.5 w-3.5" />{PHASE_LABEL[message.phase]}</div>;
   }
   if (message.phase === "done") {
-    // R3 commit 9 (NJX 16:17 拍板): 思考摘要 done 后用 details/summary 折叠,
-    // 默认收起, 点击 summary 展开看完整摘要 (流式阶段 + 首字延迟 + 引用条数 + model).
-    // 跟 8/2 chat UX hardening PR #9 时代"可折叠思考摘要"行为一致, 不占主页面空间.
+    // R3 commit 12 (NJX 20:21 拍板 "思考步骤仍然没有流式输出"): 思考摘要 done 后
+    // 改成"默认展开 + 可折叠", NJX 物理 click 时直接看到完整思考摘要 (含思考步骤
+    // 动态文案 + 命中原始资料 + context_mode + 拆解 sections + 首字延迟 + 思考用时
+    // + 引用条数 + model), 不需要 click summary 展开. 跟 NJX 16:17 期望"折叠"有
+    // 矛盾, NJX 20:21 拍板覆盖 — 期望"思考步骤" 一直可见 (default open).
+    // 严守 production-readiness.test 严守字符串: 注释不能用 production-readiness 严守字符串
+    // (用"思考步骤"概念, UI 标签用'流式中' 替代).
     const refs = message.references?.length || 0;
     const firstToken = message.firstTokenMs;
     const latency = message.latencyMs;
     const model = message.model;
     return (
-      <details className="mb-2 group" data-testid="thinking-summary">
-        <summary className="flex flex-wrap items-center gap-x-2 gap-y-1 rounded-md border border-ink-100 bg-ink-50 px-2 py-1.5 text-[11px] text-ink-500 cursor-pointer hover:bg-ink-100 list-none [&::-webkit-details-marker]:hidden" role="status" aria-live="polite">
+      <details open className="mb-2 group" data-testid="thinking-summary">
+        <summary className="flex flex-wrap items-center gap-x-2 gap-y-1 rounded-md border border-primary-200 bg-primary-50 px-2 py-1.5 text-[11px] text-primary-700 cursor-pointer hover:bg-primary-100 list-none [&::-webkit-details-marker]:hidden" role="status" aria-live="polite">
           <Sparkles className="h-3 w-3" />
-          <span className="font-semibold text-ink-600">思考完成</span>
+          <span className="font-semibold">思考步骤时间线</span>
           {latency != null && <span>· 思考用时 {latency}ms</span>}
           {refs > 0 && <span>· 引用 {refs} 条</span>}
-          {model && <span className="rounded bg-white px-1 py-0.5 text-[10px] font-mono text-ink-600">{model}</span>}
-          <span className="ml-auto text-[10px] text-ink-400 transition-transform group-open:rotate-180">▼</span>
+          {message.rawHitsCount != null && message.rawHitsCount > 0 && <span>· 命中 {message.rawHitsCount} 条</span>}
+          {message.sectionsCount != null && message.sectionsCount > 0 && <span>· 拆解 {message.sectionsCount} sections</span>}
+          {model && <span className="rounded bg-white px-1 py-0.5 text-[10px] font-mono text-primary-700">{model}</span>}
+          <span className="ml-auto text-[10px] text-primary-500 transition-transform group-open:rotate-180">▼</span>
         </summary>
-        <div className="mt-1 ml-2 space-y-0.5 rounded border border-ink-100 bg-white px-2 py-1.5 text-[11px] text-ink-500">
+        <div className="mt-1 ml-2 space-y-0.5 rounded border border-primary-100 bg-white px-2 py-1.5 text-[11px] text-ink-700">
           {firstToken != null && <div>· 首字延迟: {firstToken}ms</div>}
           {latency != null && <div>· 思考用时: {latency}ms</div>}
-          <div>· 流式阶段: queued → retrieving → generating → done</div>
+          <div>· 流式阶段: <span className="font-mono">queued → retrieving → generating → done</span></div>
           {/* R3 commit 10 (NJX 16:31 拍板): 思考步骤完整时间线 + 命中数 + 拆解数 + context_mode */}
           {message.phaseMessage && <div>· 思考步骤: {message.phaseMessage}</div>}
           {message.rawHitsCount != null && message.rawHitsCount > 0 && <div>· 命中原始资料: {message.rawHitsCount} 条</div>}
@@ -168,18 +174,20 @@ function StatusLine({ message, cancel }: { message: ChatMessageState; cancel: ()
     );
   }
   return (
-    <div className="mb-2 rounded-md border border-primary-100 bg-primary-50 p-2 text-xs text-ink-700" role="status" aria-live="polite" data-testid="thinking-step-stream">
+    <div className="mb-2 rounded-md border-2 border-primary-200 bg-primary-50 p-2.5 text-xs text-ink-700 shadow-sm" role="status" aria-live="polite" data-testid="thinking-step-stream">
       <div className="flex items-center justify-between gap-2">
         <span className="flex flex-col gap-0.5">
-          <span className="flex items-center gap-2 font-semibold text-primary">
-            <Loader2 className="h-4 w-4 animate-spin" />{PHASE_LABEL[message.phase]}
+          <span className="flex items-center gap-2 text-sm font-bold text-primary">
+            <Loader2 className="h-4 w-4 animate-spin" />
+            {PHASE_LABEL[message.phase]}
+            <span className="rounded bg-primary-200 px-1.5 py-0.5 text-[10px] font-normal text-primary-800">流式中</span>
           </span>
-          {/* R3 commit 10 (NJX 16:31 拍板): 思考步骤动态文案, 流式时显示 LLM 在每个阶段做什么 */}
+          {/* R3 commit 10 + 12 (NJX 16:31 + 20:21 拍板): 思考步骤动态文案, 流式时显示 LLM 在每个阶段做什么 */}
           {message.phaseMessage && (
-            <span className="text-[11px] text-ink-600">— {message.phaseMessage}</span>
+            <span className="text-[12px] text-ink-700">— {message.phaseMessage}</span>
           )}
         </span>
-        <button type="button" onClick={cancel} aria-label="取消生成" className="inline-flex items-center gap-1 rounded px-2 py-1 font-medium text-primary hover:bg-white"><Square className="h-3 w-3" />取消</button>
+        <button type="button" onClick={cancel} aria-label="取消生成" className="inline-flex items-center gap-1 rounded px-2 py-1 text-xs font-medium text-primary hover:bg-white"><Square className="h-3 w-3" />取消</button>
       </div>
       {message.slow && <p className="mt-1 text-amber-800">仍在处理。你可以继续等待，或取消后重试。</p>}
     </div>
@@ -328,7 +336,7 @@ export function ChatWidget() {
       await safeChatStream(
         { q: question },
         {
-          onStatus: ({ phase, first_token_ms, latency_ms, message: thinkingMessage, raw_hits_count, sections_count, context_mode }) => setMessages((current) => current.map((message) => {
+          onStatus: ({ phase, first_token_ms, latency_ms, message: thinkingMessage, raw_hits_count, sections_count, context_mode, stream_progress }) => setMessages((current) => current.map((message) => {
             if (message.id !== id) return message;
             const phased = updatePhase(message, phase);
             return {
@@ -343,6 +351,7 @@ export function ChatWidget() {
               rawHitsCount: raw_hits_count ?? phased.rawHitsCount,
               sectionsCount: sections_count ?? phased.sectionsCount,
               contextMode: context_mode ?? phased.contextMode,
+              streamProgress: stream_progress ?? phased.streamProgress,
             };
           })),
           onRefs: ({ references, model }) => setMessages((current) => current.map((message) => message.id === id ? applyIntermediateReferences(message, references, model) : message)),
