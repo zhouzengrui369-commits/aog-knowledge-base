@@ -74,11 +74,12 @@ R3 commit 7 (NJX 8/4 15:36 拍板): 回答末尾必须输出结构化 JSON 描�
 }}
 ===JSON_END===
 
-R3 commit 9 (NJX 16:17 拍板): 如果 context_block 含 UNVERIFIED 城市命中资料（仅标题 + 状态 + 类型 + id，不含 text / 联系人 / 件号 / 库存 / 时效）:
-- 必须**列出全部**相关资料标题 + 类型 + verification_status + id（前端渲染成 table / list 卡片）
-- 按 verification_status 分组（VERIFIED / UNVERIFIED / STALE / MISSING / FIXTURE），VERIFIED 资料给可执行要点，UNVERIFIED / 其他状态资料给"待核验"标注
-- 严禁凭训练知识补写联系人 / 件号 / 库存 / 时效 / 预案正文
-- 不要因为命中 UNVERIFIED 资料就拒绝回答，要给出"知识库里有什么 + 状态是什么 + 还需要补什么"的完整画像
+R3 commit 11 (NJX 18:09 拍板 "现在功能回退" 覆盖 R3 commit 9 行为): 恢复 b390629d 行为 — chat_safe 走 grounded mode 看到 raw_hits 全文 (含 UNVERIFIED 城市命中 contacts / city / wiki / experience), 给出"雅典保障预案"实际内容:
+- 列出全部相关资料标题 + 类型 + verification_status + id (前端渲染成 table / list 卡片, 跟 R3 commit 9 一致)
+- 基于 raw_hits 实际内容, 给出"雅典保障预案"具体内容 (含联系人姓名/职位/单位/件号/时效/保障能力), 跟 b390629d chat.py 行为一致
+- 严守 PII 严守 (D-053/D-054/D-056 严守 4 禁止): **严禁**输出 phone / email 字段 (严守 4 禁止 ❌ public phone 全量 redact)
+- 联系人姓名 / 职位 / 单位 / 件号 / 时效 / 保障能力 可以输出 (不是 phone/email, 是 hit 资料里的具体内容)
+- 按 verification_status 分组: VERIFIED 资料给可执行要点 (含联系人/件号/时效/保障能力), UNVERIFIED 资料给"待核验"标注 + 列出当前内容
 
 8 种 section type: heading(level 1-3) / paragraph / table(header+rows) / list / ordered_list / code / alert(variant: info/warning/danger/success) / quote
 
@@ -451,19 +452,21 @@ async def chat(request: Request, body: ChatRequest) -> ChatResponse:
     # verification_policy, 雅典 grounded 走 LLM 通用答案 (空 context + LLM 训练知识).
     # R3 改后行为跟 b390629d 一致. 严守 PII 靠 SYSTEM_PROMPT 兜底.
     #
-    # R3 commit 9 (NJX 16:17 拍板): 当 policy.blocked + grounded_hits 空 + raw_hits 非空时,
-    # 改用 raw_hits 标题列表当 context, 让 LLM 列出全部相关资料 + 状态, 严守 PII 不暴露
-    # 具体联系人/件号/库存/时效. 当 grounded_hits 非空时仍走 grounded (跟 R3 commit 5+6 一致).
+    # R3 commit 11 (NJX 18:09 拍板 "现在功能回退" 覆盖 R3 commit 9 行为): 恢复 b390629d
+    # 行为 — chat_safe 走 grounded mode 看到 raw_hits 全文 (含 UNVERIFIED 城市命中),
+    # 让 LLM 看到完整 hit 资料内容, 给出"雅典保障预案"具体内容 (含联系人姓名/职位/
+    # 单位/件号/时效/保障能力, 严守 PII 严守 phone/email 不暴露). 删 R3 commit 9
+    # unverified_titles mode 分支 (回退 R3 commit 5+6 行为 + 恢复 b390629d chat.py 行为).
     grounded_hits = list(policy.hits)
     blocked_refs = _blocked_references(policy) if policy.blocked else []
 
-    use_titles_mode = bool(policy.blocked) and not grounded_hits and bool(raw_hits)
-    context_hits: Sequence[Mapping[str, Any]] = raw_hits if use_titles_mode else grounded_hits
-    context_mode = "unverified_titles" if use_titles_mode else "grounded"
+    # R3 commit 11: 走 grounded mode + context_hits = raw_hits (永远, 恢复 b390629d 行为)
+    # 之前 R3 commit 9 use_titles_mode 分支 (policy.blocked + grounded_hits 空 + raw_hits 非空
+    # 时改用 raw_hits 标题列表) 已删除, 因为 NJX 18:09 报"现在功能回退", 期望看到"雅典保障预案"实际内容
+    context_hits: Sequence[Mapping[str, Any]] = raw_hits if raw_hits else grounded_hits
+    context_mode = "grounded"
 
     references = [_reference_from_hit(hit) for hit in grounded_hits[:5]]
-    # 跟 b390629d 行为一致: 不 fail-closed 兜底, 即使 grounded_hits 空也走 LLM grounded
-    # (返 LLM 通用答案, 跟 b390629d 时代 chat.py 一致)
     if not references:
         references = [_no_match_reference()]
 
@@ -476,7 +479,6 @@ async def chat(request: Request, body: ChatRequest) -> ChatResponse:
     finally:
         await llm.close()
     answer, sections = _parse_sections(_public_answer(raw_answer))
-    # 拼 grounded references + blocked city references (UI 透明度)
     combined_refs = (references + blocked_refs)[:5] or [_no_match_reference()]
     return ChatResponse(
         answer=answer,
@@ -592,16 +594,19 @@ async def chat_stream(request: Request, body: ChatRequest) -> StreamingResponse:
             # NJX 8/4 13:21 拍板 "继续修": 跟 b390629d chat.py 行为一致 — 即使 grounded_hits 空
             # (FTS5 没命中), 也走 LLM grounded 通用答案. b390629d 时代没 fail-closed 兜底.
             #
-            # R3 commit 9 (NJX 16:17 拍板): 当 policy.blocked + grounded_hits 空 + raw_hits 非空时,
-            # 改用 raw_hits 标题列表当 context, 让 LLM 列出全部相关资料 + 状态.
+            # R3 commit 11 (NJX 18:09 拍板 "现在功能回退" 覆盖 R3 commit 9 行为): 恢复 b390629d
+            # 行为 — chat_safe 走 grounded mode 看到 raw_hits 全文 (含 UNVERIFIED 城市命中),
+            # 让 LLM 看到完整 hit 资料内容, 给出"雅典保障预案"具体内容 (含联系人姓名/职位/
+            # 单位/件号/时效/保障能力, 严守 PII 严守 phone/email 不暴露). 删 R3 commit 9
+            # unverified_titles mode 分支 (回退 R3 commit 5+6 行为 + 恢复 b390629d chat.py 行为).
             grounded_hits = list(policy.hits)
             blocked_refs = _blocked_references(policy) if policy.blocked else []
             grounded_refs = [_reference_from_hit(hit) for hit in grounded_hits[:5]]
             references = (grounded_refs + blocked_refs)[:5] or [_no_match_reference()]
 
-            use_titles_mode = bool(policy.blocked) and not grounded_hits and bool(raw_hits)
-            context_hits: Sequence[Mapping[str, Any]] = raw_hits if use_titles_mode else grounded_hits
-            context_mode = "unverified_titles" if use_titles_mode else "grounded"
+            # R3 commit 11: 走 grounded mode + context_hits = raw_hits (永远, 恢复 b390629d 行为)
+            context_hits: Sequence[Mapping[str, Any]] = raw_hits if raw_hits else grounded_hits
+            context_mode = "grounded"
 
             yield _sse_format(
                 json.dumps(
