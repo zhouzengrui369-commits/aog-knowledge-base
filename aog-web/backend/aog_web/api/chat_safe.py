@@ -20,6 +20,15 @@ from aog_web.api.chat import _parse_sections, _sse_format
 from aog_web.models.chat import ChatRequest, ChatResponse, ChatSection, Reference
 from aog_web.services.fts5_client import get_fts5_client
 from aog_web.services.llm import get_llm
+from aog_web.services.safety_intent import (
+    BOUNDARY_ANSWERS,
+    EXACT_IDENTIFIER_NOT_GROUNDED,
+    SYSTEM_RULE_BYPASS,
+    classify_safety_intent,
+    extract_exact_identifiers,
+    grounded_exact_identifier_check,
+    sanitize_public_answer,
+)
 from aog_web.services.sqlite_client import get_sqlite_client
 from aog_web.services.verification_policy import (
     VERIFIED,
@@ -138,8 +147,91 @@ def _no_match_reference() -> Reference:
     )
 
 
+def _safety_policy_reference(intent: str) -> Reference:
+    """Non-clickable, audit-only reference for a code-enforced safety policy."""
+    return Reference(
+        id=f"__safety_policy__:{intent}",
+        title=f"安全策略（{intent}）",
+        href=None,
+        snippet="由代码决定的安全策略；不调用模型，不返回可执行答案。",
+        score=0.0,
+        available=False,
+        source_type="policy",
+        verification_status="UNVERIFIED",
+        reason="safety-policy intent 不返回可点击资料",
+    )
+
+
+def _exact_identifier_policy_reference(kind: str, token: str) -> Reference:
+    return Reference(
+        id=f"__exact_identifier__:{kind}:{token[:12]}",
+        title=f"件号/标识未 grounded（{kind}）",
+        href=None,
+        snippet="未在 VERIFIED 资料中精确匹配。请补充件号或型号。",
+        score=0.0,
+        available=False,
+        source_type="policy",
+        verification_status="UNVERIFIED",
+        reason="EXACT_IDENTIFIER_NOT_GROUNDED 不返回可点击资料",
+    )
+
+
 def _public_answer(text: str) -> str:
-    return _PRIVATE_BLOCK_RE.sub("", text or "").strip()
+    cleaned = _PRIVATE_BLOCK_RE.sub("", text or "").strip()
+    return sanitize_public_answer(cleaned)
+
+
+async def _enforce_safety_intent(
+    request: Request, body: ChatRequest, started: float
+) -> Optional[ChatResponse]:
+    """Run SafetyIntentPolicy + ExactIdentifierGate before any LLM call.
+
+    Returns a fully-built ChatResponse if the question must be answered by
+    code (high-risk intent or ungrounded exact identifier); otherwise
+    returns None and the caller proceeds to verification-policy +
+    LLM-driven generation.
+    """
+    intents = classify_safety_intent(body.q)
+    if intents:
+        primary = intents[0]
+        answer = sanitize_public_answer(BOUNDARY_ANSWERS[primary])
+        return ChatResponse(
+            answer=answer,
+            sections=None,
+            references=[_safety_policy_reference(primary)],
+            model="safety-policy",
+            latency_ms=int((time.monotonic() - started) * 1000),
+        )
+    identifiers = extract_exact_identifiers(body.q)
+    if identifiers:
+        settings = request.app.state.settings
+        raw_hits = await _raw_retrieval(request, body)
+        sqlite = get_sqlite_client()
+        cities = await sqlite.list_cities()
+        policy = apply_retrieval_policy(
+            raw_hits,
+            cities=cities,
+            question=body.q,
+            context_codes=body.context_codes,
+        )
+        all_grounded, missing = grounded_exact_identifier_check(
+            identifiers, policy.hits
+        )
+        if not all_grounded:
+            answer = sanitize_public_answer(
+                BOUNDARY_ANSWERS[EXACT_IDENTIFIER_NOT_GROUNDED]
+            )
+            return ChatResponse(
+                answer=answer,
+                sections=None,
+                references=[
+                    _exact_identifier_policy_reference(kind, token)
+                    for kind, token in missing[:3]
+                ],
+                model="safety-policy",
+                latency_ms=int((time.monotonic() - started) * 1000),
+            )
+    return None
 
 
 def _blocked_sections(policy: RetrievalPolicyResult) -> List[ChatSection]:
@@ -288,6 +380,9 @@ def _messages(question: str, hits: Sequence[Mapping[str, Any]]) -> List[Dict[str
 @router.post("/chat", response_model=ChatResponse)
 async def chat(request: Request, body: ChatRequest) -> ChatResponse:
     started = time.monotonic()
+    safety_response = await _enforce_safety_intent(request, body, started)
+    if safety_response is not None:
+        return safety_response
     policy = await _retrieve_with_policy(request, body)
     if policy.blocked:
         answer = blocked_city_answer(policy.blocked_targets)
@@ -349,6 +444,46 @@ async def chat_stream(request: Request, body: ChatRequest) -> StreamingResponse:
         try:
             yield _status_event("queued", started)
             yield _status_event("retrieving", started)
+            safety_response = await _enforce_safety_intent(request, body, started)
+            if safety_response is not None:
+                yield _sse_format(
+                    json.dumps(
+                        {
+                            "references": [
+                                reference.model_dump()
+                                for reference in safety_response.references
+                            ],
+                            "model": safety_response.model,
+                            "policy": {
+                                "intent": "safety-policy",
+                                "source": "code-enforced",
+                            },
+                        },
+                        ensure_ascii=False,
+                    ),
+                    event="refs",
+                )
+                yield _status_event(
+                    "generating", started, refs_count=len(safety_response.references)
+                )
+                async for event in _emit_text(safety_response.answer):
+                    if first_token_ms is None:
+                        first_token_ms = int((time.monotonic() - started) * 1000)
+                    yield event
+                latency = int((time.monotonic() - started) * 1000)
+                yield _status_event(
+                    "done",
+                    started,
+                    first_token_ms=first_token_ms,
+                    latency_ms=latency,
+                )
+                yield _sse_format(
+                    json.dumps(
+                        {"latency_ms": latency, "first_token_ms": first_token_ms}
+                    ),
+                    event="done",
+                )
+                return
             policy = await _retrieve_with_policy(request, body)
 
             references = (
