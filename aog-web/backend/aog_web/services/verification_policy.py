@@ -24,6 +24,39 @@ _ALLOWED_REVIEW_STATUSES = {
 _CITY_LINKED_TYPES = {"city", "city_contacts", "wiki"}
 _CURATED_ACTIVE = {"现行", "active", "published", "current", "verified"}
 
+# City / flight context intent keywords.  When the user question contains
+# at least one of these, an IATA fallback match is considered trustworthy;
+# otherwise 3-letter IATA codes (AOG, MEL, AMS, BAV, PEK, BKK, LAX, HND,
+# FCO, IST, JFK, ...) collide with aviation acronyms (Aircraft on Ground,
+# Minimum Equipment List, Amsterdam, Baotou, Beijing, Bangkok, Los Angeles,
+# Tokyo Haneda, Rome, Istanbul, New York JFK, ...) and must not be used
+# as a city intent signal in isolation.
+#
+# Keep this list hand-curated and domain-agnostic; do NOT add business
+# acronyms (AOG, MEL, AMS, ...) as intent keywords or we re-introduce the
+# same false positive for the literal acronym questions.
+_CITY_INTENT_KEYWORDS = (
+    "飞", "到", "在", "去", "从", "经停", "备降", "落地", "停场",
+    "起降", "起飞", "降落", "出港", "进港", "回程", "回基地",
+    "航材", "保障", "机场", "航站", "航站楼", "城市代号",
+    "航班", "航线", "航段", "航程", "开通", "开航", "通航",
+    "基地", "外站", "驻外", "出差", "前往", "抵达", "离开",
+)
+_CITY_INTENT_RE = re.compile("|".join(re.escape(w) for w in _CITY_INTENT_KEYWORDS))
+
+
+def _has_city_intent(question: str) -> bool:
+    """Return True if the question contains a city/flight context verb.
+
+    Used to gate IATA fallback in detect_target_cities so that aviation
+    acronyms (AOG, MEL, AMS, BAV, PEK, BKK, LAX, HND, FCO, IST, JFK, ...)
+    are not misread as city IATA codes when the user is actually asking
+    about an aviation domain concept, not a specific city.
+    """
+    if not question:
+        return False
+    return bool(_CITY_INTENT_RE.search(question))
+
 
 @dataclass(frozen=True)
 class CityTrustRecord:
@@ -139,17 +172,40 @@ def detect_target_cities(
 
     q = (question or "").strip()
     q_fold = q.casefold()
+    q_upper = q.upper()
+    has_intent = _has_city_intent(q)
+
     for record in sorted(records, key=lambda item: max(len(item.code), len(item.name)), reverse=True):
-        matched = bool(record.code and record.code.casefold() in q_fold)
-        matched = matched or bool(record.name and record.name.casefold() in q_fold)
-        if record.iata:
-            matched = matched or bool(
-                re.search(rf"(?<![A-Z0-9]){re.escape(record.iata)}(?![A-Z0-9])", q.upper())
+        # Stage 1: strict match on Chinese code ("A-鞍山（暂停）") or
+        # Chinese name ("鞍山").  These cannot collide with aviation
+        # acronyms and are always trusted.
+        strict = bool(record.code and record.code.casefold() in q_fold)
+        strict = strict or bool(record.name and record.name.casefold() in q_fold)
+        if strict:
+            if record not in selected:
+                selected.append(record)
+            continue
+
+        # Stage 2: pinyin match (Chinese-friendly transcription).
+        if record.pinyin and record.pinyin in q_fold:
+            if record not in selected:
+                selected.append(record)
+            continue
+
+        # Stage 3: IATA fallback — only allowed when the question
+        # contains an explicit city/flight context verb.  Bare 3-letter
+        # IATA codes (AOG, MEL, AMS, BAV, PEK, BKK, LAX, HND, FCO, IST,
+        # JFK, ...) collide with aviation acronyms (Aircraft on Ground,
+        # Minimum Equipment List, Amsterdam, Baotou, Beijing, Bangkok,
+        # Los Angeles, Tokyo Haneda, Rome, Istanbul, New York JFK, ...)
+        # so the fallback is rejected when the question does not
+        # actually reference a city or flight context.
+        if has_intent and record.iata:
+            iata_hit = bool(
+                re.search(rf"(?<![A-Z0-9]){re.escape(record.iata)}(?![A-Z0-9])", q_upper)
             )
-        if record.pinyin:
-            matched = matched or record.pinyin in q_fold
-        if matched and record not in selected:
-            selected.append(record)
+            if iata_hit and record not in selected:
+                selected.append(record)
     return selected
 
 
