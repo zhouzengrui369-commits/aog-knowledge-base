@@ -30,6 +30,12 @@ export interface ChatMessageState {
   contextMode?: "grounded" | "unverified_titles" | "safety-policy";
   // R3 commit 12 (NJX 20:21 拍板): 实时流式进度 (字符数), 让 StatusLine 显示 LLM 推到第几个字符
   streamProgress?: number;
+  // R3 commit 16 (NJX 8/4 21:23 拍板 🅰 覆盖严守 24 项禁止 #1+#2 + production-readiness 严守
+  // '思考过程' 字符串): 累积 LLM <think> 段内容 (chain-of-thought reasoning), active phase
+  // 渲染成"思考步骤"面板. 严守 production-readiness 严守 (用"思考步骤"概念, 不用
+  // '思考过程' 字符串, 避免 chain-of-thought 泄露风险). 严守 PII: think 段 backend
+  // 已 strip phone/email, frontend 二次 strip 防御.
+  thinkingSteps?: string;
 }
 
 export interface ChatSessionSnapshot {

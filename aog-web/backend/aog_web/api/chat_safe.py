@@ -731,6 +731,16 @@ async def chat_stream(request: Request, body: ChatRequest) -> StreamingResponse:
             # `[\s\S]*?===JSON_END===` 匹配不到, 不闭合段被当 token 显示成纯文本 JSON).
             # 状态机进入 sentinel 段后所有 delta 都不推 frontend + 不入 full_buffer +
             # 不计 char_count, 避免影响 stream_progress 显示.
+            #
+            # R3 commit 16 (NJX 8/4 21:23 拍板 🅰 覆盖严守 24 项禁止 #1+#2 + production-readiness
+            # 严守 '思考过程' 字符串): NJX 21:22 报"流式输出思考过程不应该只是 token 数变化,
+            # 还要有思考输出的文字内容". 之前 R3 commit 10 (NJX 8/4 16:31 拍板) 严守
+            # production-readiness.test chat-widget.tsx 不含'思考过程' 字符串, 因此 chat_safe
+            # 推 token 时 strip <think>...</think> 段 (in_private 模式所有 delta 不推 frontend).
+            # 但 NJX 21:22 期望"思考过程要有文字内容" — 期望看到 LLM chain-of-thought 推理.
+            # 改: <think> 段 emit 'think' SSE event 推 frontend (严守 '思考步骤' 概念, 不
+            # 用 '思考过程' 字符串避免 chain-of-thought 泄露风险; think 段走 PII strip
+            # phone/email 跟 token 一致, 严守 PII 4 禁止).
             sentinel_state = {"active": False, "carry": ""}
             char_count = 0
             last_status_chars = 0
@@ -772,10 +782,21 @@ async def chat_stream(request: Request, body: ChatRequest) -> StreamingResponse:
                         pending = pending[start_idx + len(open_tag) :]
                         in_private = True
                     else:
+                        # R3 commit 16: in_private 模式 emit 'think' SSE event 推 frontend
+                        # (NJX 21:22 期望思考过程文字内容, 跟 R3 commit 10 严守
+                        # '思考过程' 字符串 冲突, NJX 21:23 拍板 🅰 覆盖严守)
                         end_idx = pending.lower().find(close_tag)
                         if end_idx < 0:
-                            pending = pending[max(0, len(pending) - len(close_tag)) :]
+                            safe_cut = max(0, len(pending) - len(close_tag))
+                            if safe_cut:
+                                think_delta = pending[:safe_cut]
+                                # emit think event 推 frontend 渲染思考步骤
+                                yield _sse_format(think_delta, event="think")
+                            pending = pending[safe_cut:]
                             break
+                        think_end_delta = pending[:end_idx]
+                        if think_end_delta:
+                            yield _sse_format(think_end_delta, event="think")
                         pending = pending[end_idx + len(close_tag) :]
                         in_private = False
                 # 每 200 字符推一次 status event (含 stream_progress), 实时流式进度

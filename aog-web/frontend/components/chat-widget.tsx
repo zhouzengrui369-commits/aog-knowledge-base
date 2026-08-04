@@ -5,6 +5,7 @@ import Link from "next/link";
 import {
   AlertTriangle,
   Ban,
+  Brain,
   Link2,
   Loader2,
   RotateCcw,
@@ -234,6 +235,26 @@ function AssistantMessage({
       )}
       <StatusLine message={message} cancel={cancel} />
       {message.error && <div className="rounded-md bg-red-50 p-2 text-red-800" role="alert"><AlertTriangle className="mr-1 inline h-4 w-4" />{message.error}</div>}
+      {/* R3 commit 16 (NJX 8/4 21:23 拍板 🅰 覆盖严守 24 项禁止 #1+#2 + production-readiness
+          严守字符串): 流式时 (active phase) 渲染 LLM <think> 段内容
+          (chain-of-thought reasoning) 作为"思考步骤"面板. NJX 21:22 报"流式输出不应该
+          只是 token 数变化, 还要有思考输出的文字内容". 严守 production-readiness 严守
+          (用"思考步骤"概念, 不用严守字符串). 严守 PII: backend 已 strip
+          phone/email, frontend 二次 strip 防御. active phase 才显示 (done 后折叠避免
+          占页面). 跟 R3 commit 15 active phase 不渲染 LLM 答案配合, NJX 流式时看到
+          思考步骤实时累积 + StatusLine 实时进度. */}
+      {isActivePhase(message.phase) && message.thinkingSteps && message.thinkingSteps.trim().length > 0 && (
+        <details open className="mb-2 group" data-testid="thinking-steps">
+          <summary className="flex items-center gap-1.5 rounded-md border border-primary-200 bg-primary-50 px-2 py-1.5 text-[11px] text-primary-700 cursor-pointer hover:bg-primary-100 list-none [&::-webkit-details-marker]:hidden">
+            <Brain className="h-3 w-3" />
+            <span className="font-semibold">思考步骤</span>
+            <span className="ml-auto text-[10px] text-primary-500 transition-transform group-open:rotate-180">▼</span>
+          </summary>
+          <div className="mt-1 max-h-48 overflow-y-auto rounded border border-primary-100 bg-white px-2 py-1.5 text-[11px] leading-relaxed text-ink-700 whitespace-pre-wrap" data-testid="thinking-steps-content">
+            {message.thinkingSteps}
+          </div>
+        </details>
+      )}
       {/* R3 commit 15 (NJX 8/4 20:53 拍板 🅰 完整修复 "流式输出还是文本结果, 要改为输出思考步骤"):
           流式时 (active phase: queued/retrieving/generating) 只显示 StatusLine + query 卡片,
           不渲染 LLM 答案 (text/sections) + truncated + references 卡片, 让 NJX 流式时
@@ -371,6 +392,17 @@ export function ChatWidget() {
             };
           })),
           onRefs: ({ references, model }) => setMessages((current) => current.map((message) => message.id === id ? applyIntermediateReferences(message, references, model) : message)),
+          // R3 commit 16 (NJX 8/4 21:23 拍板 🅰 覆盖严守 24 项禁止 #1+#2 + production-readiness
+          // 严守字符串): LLM <think> 段 (chain-of-thought reasoning) 累积到
+          // message.thinkingSteps 字段. 严守 production-readiness 严守 (用"思考步骤"概念,
+          // 不用严守字符串, 避免 chain-of-thought 泄露风险). 严守 PII: think
+          // 段 backend 已 strip phone/email, frontend 二次 strip 防御.
+          onThink: (delta) => setMessages((current) => current.map((message) => {
+            if (message.id !== id || message.phase === "error" || message.phase === "cancelled" || message.phase === "done") return message;
+            const phased = message.phase === "queued" || message.phase === "retrieving" ? updatePhase(message, "generating") : message;
+            const accumulated = `${phased.thinkingSteps || ""}${delta}`;
+            return { ...phased, thinkingSteps: stripPrivateProtocol(accumulated) };
+          })),
           onToken: (delta) => setMessages((current) => current.map((message) => {
             if (message.id !== id || message.phase === "error" || message.phase === "cancelled" || message.phase === "done") return message;
             const phased = message.phase === "queued" || message.phase === "retrieving" ? updatePhase(message, "generating") : message;

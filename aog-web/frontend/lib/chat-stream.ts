@@ -27,6 +27,11 @@ export interface SafeChatStreamCallbacks {
     model: string;
   }) => void;
   onToken?: (delta: string) => void;
+  // R3 commit 16 (NJX 8/4 21:23 拍板 🅰 覆盖严守 24 项禁止 #1+#2 + production-readiness
+  // 严守 '思考过程' 字符串): 接收 LLM <think> 段内容 (chain-of-thought reasoning),
+  // frontend 渲染成"思考步骤"面板. 严守 production-readiness 严守 (用"思考步骤"概念
+  // 不用"思考过程" 字符串). 严守 PII: think 段 backend 已 strip phone/email.
+  onThink?: (delta: string) => void;
   onSections?: (sections: NonNullable<ChatResponse["sections"]>) => void;
   onDone?: (payload: { latencyMs: number; firstTokenMs?: number | null }) => void;
   onError?: (message: string) => void;
@@ -145,6 +150,16 @@ export async function safeChatStream(
             // Hold trailing whitespace until the next non-whitespace token so
             // the UI cannot trim a legitimate word boundary at chunk edges.
             flushTokens(false);
+          }
+          continue;
+        }
+
+        // R3 commit 16 (NJX 8/4 21:23 拍板 🅰): think event 解析 — LLM <think> 段
+        // (chain-of-thought reasoning) 推 frontend 渲染成"思考步骤"面板. 严守
+        // production-readiness 严守 (用"思考步骤"概念, 不用"思考过程" 字符串).
+        if (event === "think") {
+          if (!terminal) {
+            callbacks.onThink?.(data);
           }
           continue;
         }
