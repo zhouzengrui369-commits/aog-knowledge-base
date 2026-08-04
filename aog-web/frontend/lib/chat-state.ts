@@ -23,6 +23,11 @@ export interface ChatMessageState {
   latencyMs?: number | null;
   // R3 commit 8 (NJX 8/4 15:36 拍板): assistant 消息存原 user query, 给前端 query 卡片用
   query?: string;
+  // R3 commit 10 (NJX 16:31 拍板): 流式时思考步骤动态文案, 让 StatusLine 显示 LLM 在做什么
+  phaseMessage?: string;
+  rawHitsCount?: number;
+  sectionsCount?: number;
+  contextMode?: "grounded" | "unverified_titles" | "safety-policy";
 }
 
 export interface ChatSessionSnapshot {

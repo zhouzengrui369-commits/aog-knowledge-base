@@ -9,6 +9,12 @@ export interface ChatStatusPayload {
   first_token_ms?: number | null;
   latency_ms?: number;
   refs_count?: number;
+  // R3 commit 10 (NJX 16:31 拍板): 思考步骤动态文案, 让流式时 StatusLine 显示
+  // LLM 在每个阶段做什么 (例如 "正在检索: 找到 8 条相关资料, 严守 PII 策略")
+  message?: string;
+  raw_hits_count?: number;
+  sections_count?: number;
+  context_mode?: "grounded" | "unverified_titles" | "safety-policy";
 }
 
 export interface SafeChatStreamCallbacks {

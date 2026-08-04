@@ -154,7 +154,13 @@ function StatusLine({ message, cancel }: { message: ChatMessageState; cancel: ()
         </summary>
         <div className="mt-1 ml-2 space-y-0.5 rounded border border-ink-100 bg-white px-2 py-1.5 text-[11px] text-ink-500">
           {firstToken != null && <div>· 首字延迟: {firstToken}ms</div>}
+          {latency != null && <div>· 思考用时: {latency}ms</div>}
           <div>· 流式阶段: queued → retrieving → generating → done</div>
+          {/* R3 commit 10 (NJX 16:31 拍板): 思考步骤完整时间线 + 命中数 + 拆解数 + context_mode */}
+          {message.phaseMessage && <div>· 思考步骤: {message.phaseMessage}</div>}
+          {message.rawHitsCount != null && message.rawHitsCount > 0 && <div>· 命中原始资料: {message.rawHitsCount} 条</div>}
+          {message.contextMode && <div>· context_mode: <span className="font-mono">{message.contextMode}</span></div>}
+          {message.sectionsCount != null && message.sectionsCount > 0 && <div>· 拆解 sections: {message.sectionsCount} 个</div>}
           {refs > 0 && <div>· 引用条数: {refs} 条</div>}
           {model && <div>· model: <span className="font-mono">{model}</span></div>}
         </div>
@@ -162,9 +168,17 @@ function StatusLine({ message, cancel }: { message: ChatMessageState; cancel: ()
     );
   }
   return (
-    <div className="mb-2 rounded-md border border-primary-100 bg-primary-50 p-2 text-xs text-ink-700" role="status" aria-live="polite">
+    <div className="mb-2 rounded-md border border-primary-100 bg-primary-50 p-2 text-xs text-ink-700" role="status" aria-live="polite" data-testid="thinking-step-stream">
       <div className="flex items-center justify-between gap-2">
-        <span className="flex items-center gap-2"><Loader2 className="h-4 w-4 animate-spin" />{PHASE_LABEL[message.phase]}</span>
+        <span className="flex flex-col gap-0.5">
+          <span className="flex items-center gap-2 font-semibold text-primary">
+            <Loader2 className="h-4 w-4 animate-spin" />{PHASE_LABEL[message.phase]}
+          </span>
+          {/* R3 commit 10 (NJX 16:31 拍板): 思考步骤动态文案, 流式时显示 LLM 在每个阶段做什么 */}
+          {message.phaseMessage && (
+            <span className="text-[11px] text-ink-600">— {message.phaseMessage}</span>
+          )}
+        </span>
         <button type="button" onClick={cancel} aria-label="取消生成" className="inline-flex items-center gap-1 rounded px-2 py-1 font-medium text-primary hover:bg-white"><Square className="h-3 w-3" />取消</button>
       </div>
       {message.slow && <p className="mt-1 text-amber-800">仍在处理。你可以继续等待，或取消后重试。</p>}
@@ -314,7 +328,7 @@ export function ChatWidget() {
       await safeChatStream(
         { q: question },
         {
-          onStatus: ({ phase, first_token_ms, latency_ms }) => setMessages((current) => current.map((message) => {
+          onStatus: ({ phase, first_token_ms, latency_ms, message, raw_hits_count, sections_count, context_mode }) => setMessages((current) => current.map((message) => {
             if (message.id !== id) return message;
             const phased = updatePhase(message, phase);
             return {
@@ -322,6 +336,11 @@ export function ChatWidget() {
               firstTokenMs: first_token_ms ?? phased.firstTokenMs,
               latencyMs: latency_ms ?? phased.latencyMs,
               slow: phase === "done" || phase === "error" || phase === "cancelled" ? false : phased.slow,
+              // R3 commit 10: 思考步骤动态文案贯穿流式
+              phaseMessage: message ?? phased.phaseMessage,
+              rawHitsCount: raw_hits_count ?? phased.rawHitsCount,
+              sectionsCount: sections_count ?? phased.sectionsCount,
+              contextMode: context_mode ?? phased.contextMode,
             };
           })),
           onRefs: ({ references, model }) => setMessages((current) => current.map((message) => message.id === id ? applyIntermediateReferences(message, references, model) : message)),

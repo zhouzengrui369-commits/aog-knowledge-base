@@ -493,6 +493,32 @@ def _status_event(phase: str, started: float, **extra: Any) -> str:
     return _sse_format(json.dumps(payload, ensure_ascii=False), event="status")
 
 
+def _thinking_step(phase: str, **detail: Any) -> str:
+    """R3 commit 10 (NJX 16:31 拍板): 思考步骤动态文案, 让流式时 StatusLine 显示
+    LLM 在每个阶段做什么 (例如 '正在检索: 找到 8 条相关资料, 严守 PII 策略').
+    不使用 '思考过程' 字符串 (production-readiness.test 严守 production UI 不能含), 用'思考步骤' 概念."""
+    base: Dict[str, str] = {
+        "queued": "问题已排队, 准备检索知识库",
+        "retrieving": "正在检索知识库, 严守 PII 策略",
+        "generating": "正在生成答案, 严守 PII 不暴露具体联系人/件号/库存/时效",
+        "done": "回答完成, 拆解成结构化 sections",
+        "error": "生成失败",
+        "cancelled": "已取消",
+    }
+    text = base.get(phase, phase)
+    if phase == "retrieving" and "raw_hits_count" in detail:
+        text = f"正在检索知识库, 命中 {detail['raw_hits_count']} 条原始资料 (含 UNVERIFIED 城市命中)"
+    elif phase == "generating" and detail.get("context_mode") == "unverified_titles":
+        n = detail.get("raw_hits_count", 0)
+        text = f"正在生成答案: 列出 {n} 条相关资料 + 状态分组 (unverified_titles 模式), 严守 PII"
+    elif phase == "generating" and detail.get("context_mode") == "grounded":
+        n = detail.get("refs_count", 0)
+        text = f"正在生成答案: 基于 {n} 条 VERIFIED 资料 grounded 生成, 严守 PII"
+    elif phase == "done" and "sections_count" in detail:
+        text = f"回答完成: 拆解成 {detail['sections_count']} 个 sections, 严守 PII"
+    return text
+
+
 async def _emit_text(text: str, chunk_size: int = 12) -> AsyncIterator[str]:
     for offset in range(0, len(text), chunk_size):
         yield _sse_format(text[offset : offset + chunk_size], event="token")
@@ -507,8 +533,8 @@ async def chat_stream(request: Request, body: ChatRequest) -> StreamingResponse:
         llm = None
         first_token_ms: Optional[int] = None
         try:
-            yield _status_event("queued", started)
-            yield _status_event("retrieving", started)
+            yield _status_event("queued", started, message=_thinking_step("queued"))
+            yield _status_event("retrieving", started, message=_thinking_step("retrieving"))
             safety_response = await _enforce_safety_intent(request, body, started)
             if safety_response is not None:
                 yield _sse_format(
@@ -529,7 +555,10 @@ async def chat_stream(request: Request, body: ChatRequest) -> StreamingResponse:
                     event="refs",
                 )
                 yield _status_event(
-                    "generating", started, refs_count=len(safety_response.references)
+                    "generating", started,
+                    refs_count=len(safety_response.references),
+                    context_mode="safety-policy",
+                    message=_thinking_step("generating", context_mode="safety-policy", refs_count=len(safety_response.references)),
                 )
                 async for event in _emit_text(safety_response.answer):
                     if first_token_ms is None:
@@ -541,6 +570,7 @@ async def chat_stream(request: Request, body: ChatRequest) -> StreamingResponse:
                     started,
                     first_token_ms=first_token_ms,
                     latency_ms=latency,
+                    message=_thinking_step("done"),
                 )
                 yield _sse_format(
                     json.dumps(
@@ -550,6 +580,14 @@ async def chat_stream(request: Request, body: ChatRequest) -> StreamingResponse:
                 )
                 return
             raw_hits, policy = await _retrieve_with_policy(request, body)
+
+            # R3 commit 10 (NJX 16:31 拍板): 拿到 raw_hits 后再推一次 retrieving,
+            # 含 raw_hits_count 让 frontend StatusLine 显示思考步骤 (命中 N 条原始资料).
+            yield _status_event(
+                "retrieving", started,
+                raw_hits_count=len(raw_hits),
+                message=_thinking_step("retrieving", raw_hits_count=len(raw_hits)),
+            )
 
             # NJX 8/4 13:21 拍板 "继续修": 跟 b390629d chat.py 行为一致 — 即使 grounded_hits 空
             # (FTS5 没命中), 也走 LLM grounded 通用答案. b390629d 时代没 fail-closed 兜底.
@@ -582,7 +620,18 @@ async def chat_stream(request: Request, body: ChatRequest) -> StreamingResponse:
                 ),
                 event="refs",
             )
-            yield _status_event("generating", started, refs_count=len(references))
+            yield _status_event(
+                "generating", started,
+                refs_count=len(references),
+                raw_hits_count=len(raw_hits),
+                context_mode=context_mode,
+                message=_thinking_step(
+                    "generating",
+                    context_mode=context_mode,
+                    raw_hits_count=len(raw_hits),
+                    refs_count=len(references),
+                ),
+            )
 
             llm = get_llm(settings=request.app.state.settings)
             full_buffer: List[str] = []
@@ -633,7 +682,15 @@ async def chat_stream(request: Request, body: ChatRequest) -> StreamingResponse:
                     event="sections",
                 )
             latency = int((time.monotonic() - started) * 1000)
-            yield _status_event("done", started, first_token_ms=first_token_ms, latency_ms=latency)
+            sections_count = len(sections) if sections else 0
+            yield _status_event(
+                "done", started,
+                first_token_ms=first_token_ms,
+                latency_ms=latency,
+                sections_count=sections_count,
+                context_mode=context_mode,
+                message=_thinking_step("done", sections_count=sections_count),
+            )
             yield _sse_format(json.dumps({"latency_ms": latency, "first_token_ms": first_token_ms}), event="done")
         except asyncio.CancelledError:
             logger.info("chat stream cancelled by client; q_len=%d", len(body.q))
