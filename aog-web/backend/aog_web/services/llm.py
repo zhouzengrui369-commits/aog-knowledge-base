@@ -79,6 +79,20 @@ class MockLLM:
 
         return f"⚠️ Mock 模式 · {base}{refs_hint}\n\n如需更精准回答, 请在 .env 配置 MINIMAX_API_KEY 后重启。"
 
+    async def stream_chat(
+        self, messages: List[Dict[str, str]], **kwargs: Any
+    ) -> Any:  # AsyncIterator[str]
+        """Mock 流式接口 (R3 commit 6 补齐, 跟 chat() 返同样内容, yield chunks)."""
+        # 严守 chat() 行为一致 (单 str)
+        full = await self.chat(messages, **kwargs)
+        # 切成 chunk 模拟流式 (每行一个 chunk)
+        import asyncio
+        for line in full.split("\n"):
+            if line:
+                yield line + "\n"
+                await asyncio.sleep(0)
+        yield ""  # 终止信号
+
     async def close(self) -> None:
         pass
 
