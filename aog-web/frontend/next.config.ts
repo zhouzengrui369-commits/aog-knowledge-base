@@ -5,7 +5,17 @@ import type { NextConfig } from "next";
 //   - production 仍用 output:export, 静态托管需要纯静态 out/
 const isDev = process.env.NODE_ENV !== 'production';
 
+// FOCUSED-RETEST-2026-08-04 (R2 successor, NJX 8/4 09:28 拍板 D):
+//   Bind Next.js build identity to the candidate commit.  This is the
+//   ONLY allowed next.config.ts modification in the R2 candidate.
+//   Production build refuses to proceed if neither APP_COMMIT_SHA nor
+//   GITHUB_SHA is set; local development falls back to a stable tag.
 const nextConfig: NextConfig = {
+  // Bind buildId to candidate commit (FROZEN_REPLAYABLE_ARTIFACT contract).
+  generateBuildId: async () =>
+    process.env.APP_COMMIT_SHA ||
+    process.env.GITHUB_SHA ||
+    "local-development",
   reactStrictMode: true,
   // 静态导出 (CloudBase 静态托管需要纯静态 out/) — 只在 production
   ...(isDev ? {} : { output: 'export' as const }),
