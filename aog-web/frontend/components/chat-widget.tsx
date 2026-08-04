@@ -33,9 +33,13 @@ const STARTERS = ["B787 风挡 AOG 怎么处理？", "北京大兴有哪些已�
 const SLOW_THRESHOLD_MS = 8_000;
 
 function stripPrivateProtocol(text: string): string {
+  // R3 commit 14 (NJX 8/4 20:30 拍板修根因): 旧正则 `===JSON_START===[\s\S]*?===JSON_END===`
+  // 只能匹配完整闭合 sentinel 段, LLM 在 max_tokens 截断时不闭合 ===JSON_END=== 时整段漏
+  // strip, 渲染时显示成纯文本 JSON. 改: 加 `(?:===JSON_END===|$)` 让不闭合段也匹配 (匹配到
+  // 字符串末尾). 跟 chat_safe._JSON_SENTINEL_RE R3 commit 14 改一致 (defense-in-depth).
   return text
     .replace(/<(think|thinking|reasoning)>[\s\S]*?<\/\1>/gi, "")
-    .replace(/===JSON_START===[\s\S]*?===JSON_END===/g, "")
+    .replace(/===JSON_START===[\s\S]*?(?:===JSON_END===|$)/g, "")
     .replace(/\[(?:city|experience|wiki|core)[^\]]*:[^\]]*\]/gi, "")
     .trim();
 }
@@ -195,9 +199,15 @@ function StatusLine({ message, cancel }: { message: ChatMessageState; cancel: ()
 }
 
 function VerificationBadge({ reference }: { reference: ChatReference }) {
+  // R3 commit 15 (NJX 8/4 20:53 拍板 🅰 完整修复覆盖严守 24 项禁止 #1+#2): 改
+  // verification_status 显示为友好中文, 治"'未核验'是啥意思, 谁来核验" 拍板.
+  // machine-readable status 字段值保持 UNVERIFIED / VERIFIED 不变 (后端 / DB / 测试
+  // 依赖), 显示层翻译为"待核验 (值班 AOG 协调员核验)" / "已核验".
   const status = reference.verification_status || "UNVERIFIED";
   const safe = status === "VERIFIED";
-  return <span className={`ml-1 rounded px-1.5 py-0.5 text-[9px] font-semibold ${safe ? "bg-emerald-50 text-emerald-800" : "bg-amber-50 text-amber-900"}`}>{status}</span>;
+  const displayText = safe ? "已核验" : "待核验 (值班 AOG 协调员核验)";
+  const tooltip = safe ? "已核验资料，可作为可执行依据" : "资料待核验，使用前请值班 AOG 协调员核验";
+  return <span title={tooltip} className={`ml-1 rounded px-1.5 py-0.5 text-[9px] font-semibold ${safe ? "bg-emerald-50 text-emerald-800" : "bg-amber-50 text-amber-900"}`}>{displayText}</span>;
 }
 
 function AssistantMessage({
@@ -224,9 +234,15 @@ function AssistantMessage({
       )}
       <StatusLine message={message} cancel={cancel} />
       {message.error && <div className="rounded-md bg-red-50 p-2 text-red-800" role="alert"><AlertTriangle className="mr-1 inline h-4 w-4" />{message.error}</div>}
-      {message.sections?.length ? <div className="space-y-1">{message.sections.map((section, index) => <Section key={index} section={section} />)}</div> : <MarkdownFallback text={message.text} />}
-      {message.truncated && <div className="mt-2 rounded-md border border-amber-200 bg-amber-50 p-2 text-xs text-amber-900">回答可能不完整。<button type="button" onClick={retry} className="ml-1 inline-flex items-center gap-1 font-semibold underline"><RotateCcw className="h-3 w-3" />重新生成</button></div>}
-      {(message.references || []).length > 0 && (
+      {/* R3 commit 15 (NJX 8/4 20:53 拍板 🅰 完整修复 "流式输出还是文本结果, 要改为输出思考步骤"):
+          流式时 (active phase: queued/retrieving/generating) 只显示 StatusLine + query 卡片,
+          不渲染 LLM 答案 (text/sections) + truncated + references 卡片, 让 NJX 流式时
+          视觉焦点在思考步骤上, done 后才完整渲染答案 + 引用. 跟之前 R3 commit 10 + 12
+          (StatusLine 流式状态 dynamic 文案 + stream_progress 实时进度) 配合, 让 NJX
+          流式时持续看到思考步骤 + 实时进度, 不被 LLM 答案分心. */}
+      {!isActivePhase(message.phase) && (message.sections?.length ? <div className="space-y-1">{message.sections.map((section, index) => <Section key={index} section={section} />)}</div> : <MarkdownFallback text={message.text} />)}
+      {!isActivePhase(message.phase) && message.truncated && <div className="mt-2 rounded-md border border-amber-200 bg-amber-50 p-2 text-xs text-amber-900">回答可能不完整。<button type="button" onClick={retry} className="ml-1 inline-flex items-center gap-1 font-semibold underline"><RotateCcw className="h-3 w-3" />重新生成</button></div>}
+      {!isActivePhase(message.phase) && (message.references || []).length > 0 && (
         <div className="mt-3 border-t border-ink-100 pt-2">
           <div className="mb-1 text-[11px] font-semibold text-ink-500">依据</div>
           {message.references!.map((reference, index) => {

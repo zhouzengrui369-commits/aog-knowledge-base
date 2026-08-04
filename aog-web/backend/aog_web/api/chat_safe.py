@@ -52,10 +52,59 @@ _PRIVATE_BLOCK_RE = re.compile(
 # JSON), 让 frontend 走 MarkdownFallback 渲染 (sections 由 done 时 sections event 单独推).
 # 跟 chat.py 严守一致 (chat.py L36: _JSON_SECTION_RE = re.compile(
 #     r"===JSON_START===\s*([\s\S]+?)\s*===JSON_END===", re.MULTILINE)).
+#
+# R3 commit 14 (NJX 8/4 20:30 拍板 "输出结果显示代码, 不是 html 可视化表达" 修根因):
+# 旧正则 `===JSON_START===[\s\S]*?===JSON_END===` 只能匹配完整闭合 sentinel 段. LLM 在
+# max_tokens=4000 截断时可能只输出 `===JSON_START===` 没闭合 `===JSON_END===`, 旧正则匹配
+# 不到, 整个不闭合段被当 token 推到 frontend 显示成纯文本 JSON. 改:
+# - 加 `|\Z` 让正则匹配字符串末尾 (无 ===JSON_END=== 时也 strip 到末尾, defense-in-depth)
+# - 加 _filter_sentinel_segment 状态机函数处理跨 token 边界 (每个 delta 是流式片段, 单独
+#   re.sub 匹配不到拆开 ===JSON_START===, 必须跨 delta 累积)
+# - 状态机进入 sentinel 段后所有 delta 都不推 frontend (更直接, 不依赖正则匹配)
 _JSON_SENTINEL_RE = re.compile(
-    r"===JSON_START===[\s\S]*?===JSON_END===",
+    r"===JSON_START===[\s\S]*?(?:===JSON_END===|\Z)",
     re.MULTILINE,
 )
+_SENTINEL_START = "===JSON_START==="
+_SENTINEL_END = "===JSON_END==="
+
+
+def _filter_sentinel_segment(delta: str, state: dict) -> str:
+    """R3 commit 14 (NJX 8/4 20:30 拍板修根因): 状态机过滤 sentinel 段, 处理
+    不闭合情况 (旧 _JSON_SENTINEL_RE 匹配不到 ===JSON_END=== 时整段漏 strip).
+
+    state: {"active": bool, "carry": str} 状态字典, 函数内 mut 修改
+    - active=False 时: 累积 carry + delta, 检测 ===JSON_START===, 没找到保留
+      carry 末尾 (SENTINEL_START 长度 - 1) 字符避免跨 token 拆开, 剩余 emit
+    - active=True 时: 累积 carry + delta, 检测 ===JSON_END===, 全部 strip 直到
+      找到; 找到后 emit ===JSON_END=== 之后的内容
+    返回: 过滤后的 delta (可能空, 空时 caller 应该 skip 该 delta).
+    """
+    combined = state["carry"] + delta
+    if not state["active"]:
+        idx = combined.find(_SENTINEL_START)
+        if idx < 0:
+            keep = len(_SENTINEL_START) - 1
+            if len(combined) > keep:
+                state["carry"] = combined[-keep:]
+                return combined[:-keep]
+            state["carry"] = combined
+            return ""
+        # 进入 sentinel 段
+        before = combined[:idx]
+        state["active"] = True
+        state["carry"] = combined[idx + len(_SENTINEL_START):]
+        return before
+    # 已在 sentinel 段中, 找 ===JSON_END===
+    idx = combined.find(_SENTINEL_END)
+    if idx < 0:
+        state["carry"] = combined
+        return ""
+    # 退出 sentinel 段
+    after = combined[idx + len(_SENTINEL_END):]
+    state["active"] = False
+    state["carry"] = ""
+    return after
 
 SYSTEM_PROMPT = """你是 AOG（飞机停场维修）应急保障知识库的 AI 助手。
 
@@ -90,6 +139,14 @@ R3 commit 11 (NJX 18:09 拍板 "现在功能回退" 覆盖 R3 commit 9 行为): 
 - 严守 PII 严守 (D-053/D-054/D-056 严守 4 禁止): **严禁**输出 phone / email 字段 (严守 4 禁止 ❌ public phone 全量 redact)
 - 联系人姓名 / 职位 / 单位 / 件号 / 时效 / 保障能力 可以输出 (不是 phone/email, 是 hit 资料里的具体内容)
 - 按 verification_status 分组: VERIFIED 资料给可执行要点 (含联系人/件号/时效/保障能力), UNVERIFIED 资料给"待核验"标注 + 列出当前内容
+
+R3 commit 15 (NJX 8/4 20:53 拍板 🅰 完整修复覆盖严守 24 项禁止 #1+#2): 改 LLM 回答风格, 治"输出的雅典保障方案不达标" + "'未核验'是啥意思, 谁来核验" 拍板. 之前 LLM 看到 raw_hits 全是 UNVERIFIED 自己加了一大段"未核验" 免责内容 (5-6 行) — 不达标, NJX 期望简洁. 改:
+- **先列实质内容** (联系人 / 件号 / 航材保障 / 求援资源), **不** 上来就大段"未核验"免责声明
+- **末尾一句话标注** (≤ 30 字): "本回答基于待核验资料, 请值班 AOG 协调员核验后使用" (不重复, 不展开)
+- **友好翻译 UNVERIFIED**: 在资料清单里用 "待核验 (值班 AOG 协调员核验)" 替代硬编码 "UNVERIFIED", 明确"谁核验"
+- **不输出大段免责** (如 "严禁直接外发" / "所有联系人、件号、库存与时效信息在执行前必须经当值 AOG 协调员核验后方可使用" / "以下内容仅供 AOG 应急场景参考, 现场关键决策前必须经值班 AOG 主管/航材经理电话复核" 等 5+ 行免责)
+- **不重复免责**: 不要在每个 section 都加"未经核验"提示, 一次结尾说清楚即可
+- 严守 PII (phone/email 仍不输出, 跟 R3 commit 11 一致)
 
 8 种 section type: heading(level 1-3) / paragraph / table(header+rows) / list / ordered_list / code / alert(variant: info/warning/danger/success) / quote
 
@@ -488,7 +545,7 @@ async def chat(request: Request, body: ChatRequest) -> ChatResponse:
         raise HTTPException(502, detail={"error": "upstream LLM error"}) from exc
     finally:
         await llm.close()
-    answer, sections = _parse_sections(_public_answer(raw_answer))
+    answer, sections = _parse_sections(_public_answer(_JSON_SENTINEL_RE.sub("", raw_answer)))
     combined_refs = (references + blocked_refs)[:5] or [_no_match_reference()]
     return ChatResponse(
         answer=answer,
@@ -667,12 +724,22 @@ async def chat_stream(request: Request, body: ChatRequest) -> StreamingResponse:
             # 前实时 strip ===JSON_START===...===JSON_END=== sentinel 段 (避免流式时显示
             # sentinel 段原样纯文本). 累积 full_buffer + pending 同步 strip (跨 token
             # sentinel 段也能 strip, 不会因为 token boundary 漏掉).
+            #
+            # R3 commit 14 (NJX 8/4 20:30 拍板修根因): 加 sentinel_state 状态机 (mut dict)
+            # 跨 delta 累积 carry 检测 ===JSON_START=== / ===JSON_END===, 处理 LLM 在
+            # max_tokens=4000 截断时不闭合 sentinel 段的情况 (旧 _JSON_SENTINEL_RE 正则
+            # `[\s\S]*?===JSON_END===` 匹配不到, 不闭合段被当 token 显示成纯文本 JSON).
+            # 状态机进入 sentinel 段后所有 delta 都不推 frontend + 不入 full_buffer +
+            # 不计 char_count, 避免影响 stream_progress 显示.
+            sentinel_state = {"active": False, "carry": ""}
             char_count = 0
             last_status_chars = 0
             async for delta in llm.stream_chat(_messages(body.q, context_hits, mode=context_mode), max_tokens=4000):
-                # 实时 strip sentinel 段 (避免 LLM 末尾的 ===JSON_START===...===JSON_END=== 段被
-                # 原样推到 frontend 显示成纯文本 JSON, 应该是前端解析 sections 后渲染成
-                # 结构化卡片)
+                # R3 commit 14: 状态机过滤 sentinel 段 (处理不闭合情况)
+                delta = _filter_sentinel_segment(delta, sentinel_state)
+                if not delta:
+                    continue
+                # 兼容保留: 旧 _JSON_SENTINEL_RE 双保险 (状态机已 strip, 这里 sub 是空操作)
                 delta = _JSON_SENTINEL_RE.sub("", delta)
                 full_buffer.append(delta)
                 char_count += len(delta)
