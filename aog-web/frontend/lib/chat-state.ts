@@ -21,6 +21,8 @@ export interface ChatMessageState {
   slow?: boolean;
   firstTokenMs?: number | null;
   latencyMs?: number | null;
+  // R3 commit 8 (NJX 8/4 15:36 拍板): assistant 消息存原 user query, 给前端 query 卡片用
+  query?: string;
 }
 
 export interface ChatSessionSnapshot {

@@ -130,9 +130,27 @@ const PHASE_LABEL: Record<ChatPhase, string> = {
 };
 
 function StatusLine({ message, cancel }: { message: ChatMessageState; cancel: () => void }) {
-  if (!message.phase || message.phase === "done") return null;
+  if (!message.phase) return null;
   if (message.phase === "error" || message.phase === "cancelled") {
     return <div className="mb-2 flex items-center gap-2 text-xs text-ink-500"><Ban className="h-3.5 w-3.5" />{PHASE_LABEL[message.phase]}</div>;
+  }
+  if (message.phase === "done") {
+    // R3 commit 8 (NJX 8/4 15:36 拍板): 思考过程摘要 done 后保留, 显示思考用时 + 引用条数 + model
+    // 不再 return null — 用户能看到"思考完成 + 首字 Xms + 思考用时 Yms + 引用 Z 条 + model"
+    const refs = message.references?.length || 0;
+    const firstToken = message.firstTokenMs;
+    const latency = message.latencyMs;
+    const model = message.model;
+    return (
+      <div className="mb-2 flex flex-wrap items-center gap-x-2 gap-y-1 rounded-md border border-ink-100 bg-ink-50 px-2 py-1.5 text-[11px] text-ink-500" role="status" aria-live="polite">
+        <Sparkles className="h-3 w-3" />
+        <span className="font-semibold text-ink-600">思考完成</span>
+        {firstToken != null && <span>· 首字 {firstToken}ms</span>}
+        {latency != null && <span>· 思考用时 {latency}ms</span>}
+        {refs > 0 && <span>· 引用 {refs} 条</span>}
+        {model && <span className="rounded bg-white px-1 py-0.5 text-[10px] font-mono text-ink-600">{model}</span>}
+      </div>
+    );
   }
   return (
     <div className="mb-2 rounded-md border border-primary-100 bg-primary-50 p-2 text-xs text-ink-700" role="status" aria-live="polite">
@@ -166,6 +184,13 @@ function AssistantMessage({
 }) {
   return (
     <div className="rounded-lg bg-white p-3 text-sm shadow-sm">
+      {message.query && (
+        <div className="mb-2 flex items-start gap-1.5 rounded-md border border-ink-200 bg-ink-50 px-2 py-1.5 text-xs text-ink-600" data-testid="query-card">
+          <Link2 className="mt-0.5 h-3 w-3 shrink-0" />
+          <span className="shrink-0 text-ink-500">问题</span>
+          <span className="font-medium text-ink-700">{message.query}</span>
+        </div>
+      )}
       <StatusLine message={message} cancel={cancel} />
       {message.error && <div className="rounded-md bg-red-50 p-2 text-red-800" role="alert"><AlertTriangle className="mr-1 inline h-4 w-4" />{message.error}</div>}
       {message.sections?.length ? <div className="space-y-1">{message.sections.map((section, index) => <Section key={index} section={section} />)}</div> : <MarkdownFallback text={message.text} />}
@@ -268,7 +293,8 @@ export function ChatWidget() {
     setMessages((current) => [
       ...current,
       { id: `u-${id}`, role: "user", text: question },
-      { id, role: "assistant", text: "", phase: "queued", references: [], slow: false },
+      // R3 commit 8 (NJX 8/4 15:36 拍板): assistant message 存原 user query, 给 query 卡片用
+      { id, role: "assistant", text: "", phase: "queued", query: question, references: [], slow: false },
     ]);
 
     const slowTimer = window.setTimeout(() => {
