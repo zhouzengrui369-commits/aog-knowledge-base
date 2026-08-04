@@ -74,6 +74,12 @@ R3 commit 7 (NJX 8/4 15:36 拍板): 回答末尾必须输出结构化 JSON 描�
 }}
 ===JSON_END===
 
+R3 commit 9 (NJX 16:17 拍板): 如果 context_block 含 UNVERIFIED 城市命中资料（仅标题 + 状态 + 类型 + id，不含 text / 联系人 / 件号 / 库存 / 时效）:
+- 必须**列出全部**相关资料标题 + 类型 + verification_status + id（前端渲染成 table / list 卡片）
+- 按 verification_status 分组（VERIFIED / UNVERIFIED / STALE / MISSING / FIXTURE），VERIFIED 资料给可执行要点，UNVERIFIED / 其他状态资料给"待核验"标注
+- 严禁凭训练知识补写联系人 / 件号 / 库存 / 时效 / 预案正文
+- 不要因为命中 UNVERIFIED 资料就拒绝回答，要给出"知识库里有什么 + 状态是什么 + 还需要补什么"的完整画像
+
 8 种 section type: heading(level 1-3) / paragraph / table(header+rows) / list / ordered_list / code / alert(variant: info/warning/danger/success) / quote
 
 JSON 注意事项:
@@ -114,6 +120,25 @@ def _build_context_block(hits: Sequence[Mapping[str, Any]]) -> str:
         source_type = _source_type(hit) or "unknown"
         lines.append(
             f"{index}. [verification_status={status}; source_type={source_type}; title={title}] {snippet}"
+        )
+    return "\n".join(lines)
+
+
+def _build_titles_only_block(hits: Sequence[Mapping[str, Any]]) -> str:
+    """R3 commit 9 (NJX 16:17 拍板): UNVERIFIED 城市命中 hits 只列 metadata
+    (title + type + verification_status + id), 不传 text / phone / email / 联系人 / 件号 / 库存 / 时效,
+    让 LLM 列出全部相关资料标题 + 状态 + 链接, 严守 PII."""
+    if not hits:
+        return "（无相关命中资料）"
+    lines: List[str] = []
+    for index, hit in enumerate(hits[:10], 1):
+        meta = _metadata(hit)
+        title = str(meta.get("title") or hit.get("title") or _source_id(hit) or "来源")
+        source_type = _source_type(hit) or "unknown"
+        status = str(meta.get("verification_status") or meta.get("review_status") or "UNVERIFIED")
+        hit_id = str(hit.get("id") or _source_id(hit) or "")
+        lines.append(
+            f"{index}. [verification_status={status}; source_type={source_type}; id={hit_id}] {title}"
         )
     return "\n".join(lines)
 
@@ -363,7 +388,9 @@ async def _raw_retrieval(request: Request, body: ChatRequest) -> List[Dict[str, 
         return []
 
 
-async def _retrieve_with_policy(request: Request, body: ChatRequest) -> RetrievalPolicyResult:
+async def _retrieve_with_policy(
+    request: Request, body: ChatRequest
+) -> tuple[List[Dict[str, Any]], RetrievalPolicyResult]:
     raw_hits = await _raw_retrieval(request, body)
     sqlite = get_sqlite_client()
     cities = await sqlite.list_cities()
@@ -373,29 +400,39 @@ async def _retrieve_with_policy(request: Request, body: ChatRequest) -> Retrieva
         question=body.q,
         context_codes=body.context_codes,
     )
+    final_raw_hits: List[Dict[str, Any]] = raw_hits
     if not result.blocked and not result.hits:
-        fallback = await _sqlite_fallback_hits(body.q)
+        final_raw_hits = await _sqlite_fallback_hits(body.q)
         result = apply_retrieval_policy(
-            fallback,
+            final_raw_hits,
             cities=cities,
             question=body.q,
             context_codes=body.context_codes,
         )
     logger.info(
-        "verification policy: targets=%s blocked=%s eligible=%d quarantined=%d",
+        "verification policy: targets=%s blocked=%s eligible=%d quarantined=%d raw=%d",
         result.target_codes,
         [target.review_status for target in result.blocked_targets],
         len(result.hits),
         result.quarantined_count,
+        len(final_raw_hits),
     )
-    return result
+    return final_raw_hits, result
 
 
-def _messages(question: str, hits: Sequence[Mapping[str, Any]]) -> List[Dict[str, str]]:
+def _messages(
+    question: str,
+    hits: Sequence[Mapping[str, Any]],
+    mode: str = "grounded",
+) -> List[Dict[str, str]]:
+    if mode == "unverified_titles":
+        block = _build_titles_only_block(hits)
+    else:
+        block = _build_context_block(hits[:5])
     return [
         {
             "role": "system",
-            "content": SYSTEM_PROMPT.format(context_block=_build_context_block(hits[:5])),
+            "content": SYSTEM_PROMPT.format(context_block=block),
         },
         {"role": "user", "content": question},
     ]
@@ -407,14 +444,22 @@ async def chat(request: Request, body: ChatRequest) -> ChatResponse:
     safety_response = await _enforce_safety_intent(request, body, started)
     if safety_response is not None:
         return safety_response
-    policy = await _retrieve_with_policy(request, body)
+    raw_hits, policy = await _retrieve_with_policy(request, body)
 
     # NJX 8/4 13:21 拍板 "继续修": 跟 b390629d chat.py 行为一致 — 即使 grounded_hits 空
     # (FTS5 没命中), 也走 LLM grounded 通用答案. b390629d 时代没 fail-closed 兜底, 没
     # verification_policy, 雅典 grounded 走 LLM 通用答案 (空 context + LLM 训练知识).
     # R3 改后行为跟 b390629d 一致. 严守 PII 靠 SYSTEM_PROMPT 兜底.
+    #
+    # R3 commit 9 (NJX 16:17 拍板): 当 policy.blocked + grounded_hits 空 + raw_hits 非空时,
+    # 改用 raw_hits 标题列表当 context, 让 LLM 列出全部相关资料 + 状态, 严守 PII 不暴露
+    # 具体联系人/件号/库存/时效. 当 grounded_hits 非空时仍走 grounded (跟 R3 commit 5+6 一致).
     grounded_hits = list(policy.hits)
     blocked_refs = _blocked_references(policy) if policy.blocked else []
+
+    use_titles_mode = bool(policy.blocked) and not grounded_hits and bool(raw_hits)
+    context_hits: Sequence[Mapping[str, Any]] = raw_hits if use_titles_mode else grounded_hits
+    context_mode = "unverified_titles" if use_titles_mode else "grounded"
 
     references = [_reference_from_hit(hit) for hit in grounded_hits[:5]]
     # 跟 b390629d 行为一致: 不 fail-closed 兜底, 即使 grounded_hits 空也走 LLM grounded
@@ -424,8 +469,7 @@ async def chat(request: Request, body: ChatRequest) -> ChatResponse:
 
     llm = get_llm(settings=request.app.state.settings)
     try:
-        # _messages 用 grounded_hits 拼 context_block, 即使空也走 LLM
-        raw_answer = await llm.chat(_messages(body.q, grounded_hits), max_tokens=4000)
+        raw_answer = await llm.chat(_messages(body.q, context_hits, mode=context_mode), max_tokens=4000)
     except Exception as exc:
         logger.error("safe LLM call failed: %s", exc)
         raise HTTPException(502, detail={"error": "upstream LLM error"}) from exc
@@ -505,14 +549,22 @@ async def chat_stream(request: Request, body: ChatRequest) -> StreamingResponse:
                     event="done",
                 )
                 return
-            policy = await _retrieve_with_policy(request, body)
+            raw_hits, policy = await _retrieve_with_policy(request, body)
 
             # NJX 8/4 13:21 拍板 "继续修": 跟 b390629d chat.py 行为一致 — 即使 grounded_hits 空
             # (FTS5 没命中), 也走 LLM grounded 通用答案. b390629d 时代没 fail-closed 兜底.
+            #
+            # R3 commit 9 (NJX 16:17 拍板): 当 policy.blocked + grounded_hits 空 + raw_hits 非空时,
+            # 改用 raw_hits 标题列表当 context, 让 LLM 列出全部相关资料 + 状态.
             grounded_hits = list(policy.hits)
             blocked_refs = _blocked_references(policy) if policy.blocked else []
             grounded_refs = [_reference_from_hit(hit) for hit in grounded_hits[:5]]
             references = (grounded_refs + blocked_refs)[:5] or [_no_match_reference()]
+
+            use_titles_mode = bool(policy.blocked) and not grounded_hits and bool(raw_hits)
+            context_hits: Sequence[Mapping[str, Any]] = raw_hits if use_titles_mode else grounded_hits
+            context_mode = "unverified_titles" if use_titles_mode else "grounded"
+
             yield _sse_format(
                 json.dumps(
                     {
@@ -522,6 +574,8 @@ async def chat_stream(request: Request, body: ChatRequest) -> StreamingResponse:
                             "target_codes": policy.target_codes,
                             "blocked": policy.blocked,
                             "quarantined_count": policy.quarantined_count,
+                            "raw_hits_count": len(raw_hits),
+                            "context_mode": context_mode,
                         },
                     },
                     ensure_ascii=False,
@@ -536,7 +590,7 @@ async def chat_stream(request: Request, body: ChatRequest) -> StreamingResponse:
             in_private = False
             open_tag = "<think>"
             close_tag = "</think>"
-            async for delta in llm.stream_chat(_messages(body.q, grounded_hits), max_tokens=4000):
+            async for delta in llm.stream_chat(_messages(body.q, context_hits, mode=context_mode), max_tokens=4000):
                 full_buffer.append(delta)
                 pending += delta
                 while pending:

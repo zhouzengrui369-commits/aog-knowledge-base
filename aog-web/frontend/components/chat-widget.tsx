@@ -135,21 +135,30 @@ function StatusLine({ message, cancel }: { message: ChatMessageState; cancel: ()
     return <div className="mb-2 flex items-center gap-2 text-xs text-ink-500"><Ban className="h-3.5 w-3.5" />{PHASE_LABEL[message.phase]}</div>;
   }
   if (message.phase === "done") {
-    // R3 commit 8 (NJX 8/4 15:36 拍板): 思考过程摘要 done 后保留, 显示思考用时 + 引用条数 + model
-    // 不再 return null — 用户能看到"思考完成 + 首字 Xms + 思考用时 Yms + 引用 Z 条 + model"
+    // R3 commit 9 (NJX 16:17 拍板): 思考摘要 done 后用 details/summary 折叠,
+    // 默认收起, 点击 summary 展开看完整摘要 (流式阶段 + 首字延迟 + 引用条数 + model).
+    // 跟 8/2 chat UX hardening PR #9 时代"可折叠思考摘要"行为一致, 不占主页面空间.
     const refs = message.references?.length || 0;
     const firstToken = message.firstTokenMs;
     const latency = message.latencyMs;
     const model = message.model;
     return (
-      <div className="mb-2 flex flex-wrap items-center gap-x-2 gap-y-1 rounded-md border border-ink-100 bg-ink-50 px-2 py-1.5 text-[11px] text-ink-500" role="status" aria-live="polite">
-        <Sparkles className="h-3 w-3" />
-        <span className="font-semibold text-ink-600">思考完成</span>
-        {firstToken != null && <span>· 首字 {firstToken}ms</span>}
-        {latency != null && <span>· 思考用时 {latency}ms</span>}
-        {refs > 0 && <span>· 引用 {refs} 条</span>}
-        {model && <span className="rounded bg-white px-1 py-0.5 text-[10px] font-mono text-ink-600">{model}</span>}
-      </div>
+      <details className="mb-2 group" data-testid="thinking-summary">
+        <summary className="flex flex-wrap items-center gap-x-2 gap-y-1 rounded-md border border-ink-100 bg-ink-50 px-2 py-1.5 text-[11px] text-ink-500 cursor-pointer hover:bg-ink-100 list-none [&::-webkit-details-marker]:hidden" role="status" aria-live="polite">
+          <Sparkles className="h-3 w-3" />
+          <span className="font-semibold text-ink-600">思考完成</span>
+          {latency != null && <span>· 思考用时 {latency}ms</span>}
+          {refs > 0 && <span>· 引用 {refs} 条</span>}
+          {model && <span className="rounded bg-white px-1 py-0.5 text-[10px] font-mono text-ink-600">{model}</span>}
+          <span className="ml-auto text-[10px] text-ink-400 transition-transform group-open:rotate-180">▼</span>
+        </summary>
+        <div className="mt-1 ml-2 space-y-0.5 rounded border border-ink-100 bg-white px-2 py-1.5 text-[11px] text-ink-500">
+          {firstToken != null && <div>· 首字延迟: {firstToken}ms</div>}
+          <div>· 流式阶段: queued → retrieving → generating → done</div>
+          {refs > 0 && <div>· 引用条数: {refs} 条</div>}
+          {model && <div>· model: <span className="font-mono">{model}</span></div>}
+        </div>
+      </details>
     );
   }
   return (
