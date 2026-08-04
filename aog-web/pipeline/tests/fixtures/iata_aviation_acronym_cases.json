@@ -1,0 +1,110 @@
+[
+  {
+    "id": "IATA-01",
+    "q": "B787 风挡 AOG 怎么处理？",
+    "mode": "grounded",
+    "expected_target_codes": [],
+    "expected_unblocked": true,
+    "rationale": "AOG is the aviation acronym for 'Aircraft on Ground' (D-063 + R3). The 鞍山 city iata=AOG is a paused record and must not be selected as the question's city target. No city/flight context verb in the question; iata fallback must be gated off."
+  },
+  {
+    "id": "IATA-02",
+    "q": "B787 1号风挡 AOG 应如何处置？",
+    "mode": "grounded",
+    "expected_target_codes": [],
+    "expected_unblocked": true,
+    "rationale": "Same as IATA-01; the user is asking about the Aircraft on Ground handling procedure, not the city of 鞍山 (iata=AOG, paused)."
+  },
+  {
+    "id": "IATA-03",
+    "q": "B787 1号风挡裂纹 MEL 放行标准是什么？",
+    "mode": "grounded",
+    "expected_target_codes": [],
+    "expected_unblocked": true,
+    "rationale": "MEL here is 'Minimum Equipment List' (aviation domain concept). 墨尔本 iata=MEL and （待开航）H-哈巴罗夫斯克（待开航）iata=MEL must NOT be selected."
+  },
+  {
+    "id": "IATA-04",
+    "q": "PEK 文件传输协议",
+    "mode": "grounded",
+    "expected_target_codes": [],
+    "expected_unblocked": true,
+    "rationale": "PEK here is a generic acronym / file transfer concept. 北京首都 iata=PEK (paused) must NOT be selected."
+  },
+  {
+    "id": "IATA-05",
+    "q": "AMS 协议栈 实现",
+    "mode": "grounded",
+    "expected_target_codes": [],
+    "expected_unblocked": true,
+    "rationale": "AMS here is a generic acronym (e.g. 'Account Management System'). 阿姆斯特丹 iata=AMS (paused) must NOT be selected."
+  },
+  {
+    "id": "IATA-06",
+    "q": "B787 MEL 放行 章节 4",
+    "mode": "grounded",
+    "expected_target_codes": [],
+    "expected_unblocked": true,
+    "rationale": "MEL is the aviation domain concept, not 墨尔本 airport. No city/flight context verb."
+  },
+  {
+    "id": "IATA-07",
+    "q": "AOG 风挡怎么换？",
+    "mode": "grounded",
+    "expected_target_codes": [],
+    "expected_unblocked": true,
+    "rationale": "Bare AOG acronym without city/flight context. Must NOT select 鞍山."
+  },
+  {
+    "id": "IATA-08",
+    "q": "B787 飞 AOG 准备",
+    "mode": "grounded",
+    "expected_target_codes": [
+      "A-鞍山（暂停）"
+    ],
+    "expected_unblocked": false,
+    "rationale": "Intent verb '飞' + AOG iata: the user is genuinely talking about flying to 鞍山 airport (iata=AOG). IATA fallback is legitimate here. 鞍山 is UNVERIFIED, so policy will block it → boundary answer."
+  },
+  {
+    "id": "IATA-09",
+    "q": "B787 备降 AOG 怎么准备？",
+    "mode": "grounded",
+    "expected_target_codes": [
+      "A-鞍山（暂停）"
+    ],
+    "expected_unblocked": false,
+    "rationale": "Intent verb '备降' + AOG iata: genuine city intent. 鞍山 UNVERIFIED → policy blocked."
+  },
+  {
+    "id": "IATA-10",
+    "q": "B787 落地 MEL 准备",
+    "mode": "grounded",
+    "expected_target_codes": [
+      "M-墨尔本",
+      "（待开航）H-哈巴罗夫斯克（待开航）",
+      "（待开航）M-墨尔本（待开航）"
+    ],
+    "expected_unblocked": false,
+    "rationale": "Intent verb '落地' + MEL iata: genuine city intent. Three records share iata=MEL (墨尔本, 待开航 H-哈巴罗夫斯克, 待开航 M-墨尔本); all UNVERIFIED → all blocked."
+  },
+  {
+    "id": "IATA-11",
+    "q": "B787 飞北京大兴 准备",
+    "mode": "grounded",
+    "expected_target_codes": [
+      "B-北京大兴"
+    ],
+    "expected_unblocked": false,
+    "rationale": "Strict Chinese name '北京大兴' match (stage 1). 北京大兴 is UNVERIFIED in the production owner data → policy blocks → boundary answer. (B390629d-era chat.py would have skipped the policy and answered grounded; the chat_safe.py + R3 behaviour here is correct.)"
+  },
+  {
+    "id": "IATA-12",
+    "q": "北京大兴机场怎么走？",
+    "mode": "grounded",
+    "expected_target_codes": [
+      "B-北京大兴"
+    ],
+    "expected_unblocked": false,
+    "rationale": "Intent verb '机场' + strict name match '北京大兴'. 北京大兴 UNVERIFIED → policy blocks → boundary answer."
+  }
+]
