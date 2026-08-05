@@ -2,21 +2,61 @@
 
 import * as React from "react";
 import { AlertTriangle, Loader2, Lock, ShieldCheck } from "lucide-react";
+import { clearAllChatSessions } from "@/lib/chat-state";
 import styles from "./auth-gate.module.css";
 
 const API_BASE = (process.env.NEXT_PUBLIC_API_BASE || "http://localhost:8000").replace(/\/api\/?$/, "");
 const SESSION_MARKER = "aog_session_verified";
+export const AUTH_SESSION_ID_KEY = "aog_auth_session_id";
+export const AUTH_SESSION_EVENT = "aog:auth-session";
 
-/** Compatibility helper: returns no credential, only whether this tab verified a cookie. */
+interface AuthSessionEventDetail {
+  sessionId: string | null;
+  reason: "verified" | "login" | "logout" | "expired" | "invalid" | "missing";
+}
+
+function createSessionId(): string {
+  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+    return crypto.randomUUID();
+  }
+  return `session-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+}
+
+function emitAuthSession(detail: AuthSessionEventDetail) {
+  if (typeof window === "undefined") return;
+  window.dispatchEvent(new CustomEvent<AuthSessionEventDetail>(AUTH_SESSION_EVENT, { detail }));
+}
+
 export function getToken(): string | null {
   if (typeof window === "undefined") return null;
   return window.sessionStorage.getItem(SESSION_MARKER) === "true" ? "httpOnly-cookie" : null;
 }
 
-function markVerified(value: boolean) {
+export function getAuthSessionId(): string | null {
+  if (typeof window === "undefined") return null;
+  return window.sessionStorage.getItem(AUTH_SESSION_ID_KEY);
+}
+
+function markVerified(
+  value: boolean,
+  options: { rotate?: boolean; reason?: AuthSessionEventDetail["reason"] } = {}
+) {
   if (typeof window === "undefined") return;
-  if (value) window.sessionStorage.setItem(SESSION_MARKER, "true");
-  else window.sessionStorage.removeItem(SESSION_MARKER);
+  if (value) {
+    if (options.rotate) clearAllChatSessions(window.sessionStorage);
+    window.sessionStorage.setItem(SESSION_MARKER, "true");
+    let sessionId = options.rotate ? null : window.sessionStorage.getItem(AUTH_SESSION_ID_KEY);
+    if (!sessionId) {
+      sessionId = createSessionId();
+      window.sessionStorage.setItem(AUTH_SESSION_ID_KEY, sessionId);
+    }
+    emitAuthSession({ sessionId, reason: options.reason || "verified" });
+  } else {
+    clearAllChatSessions(window.sessionStorage);
+    window.sessionStorage.removeItem(SESSION_MARKER);
+    window.sessionStorage.removeItem(AUTH_SESSION_ID_KEY);
+    emitAuthSession({ sessionId: null, reason: options.reason || "invalid" });
+  }
 }
 
 export default function AuthGate({ children }: { children: React.ReactNode }) {
@@ -37,15 +77,16 @@ export default function AuthGate({ children }: { children: React.ReactNode }) {
       });
       const body = response.ok ? await response.json() : null;
       if (body?.valid) {
-        markVerified(true);
+        markVerified(true, { reason: "verified" });
         setStatus("authed");
       } else {
-        markVerified(false);
+        const reason = body?.reason === "expired" ? "expired" : body?.reason === "missing" ? "missing" : "invalid";
+        markVerified(false, { reason });
         setStatus("unauth");
       }
     } catch {
-      // Network failure must not destroy a valid cookie.  The user can retry
-      // without entering the password again when the backend returns.
+      // A transient network failure preserves both the httpOnly cookie and the
+      // session namespace. It does not expose or duplicate credentials.
       setStatus("offline");
     }
   }, []);
@@ -53,6 +94,22 @@ export default function AuthGate({ children }: { children: React.ReactNode }) {
   React.useEffect(() => {
     verify();
   }, [verify]);
+
+  React.useEffect(() => {
+    const logout = async () => {
+      try {
+        await fetch(`${API_BASE}/api/auth/logout`, {
+          method: "POST",
+          credentials: "include",
+        });
+      } finally {
+        markVerified(false, { reason: "logout" });
+        setStatus("unauth");
+      }
+    };
+    window.addEventListener("aog:logout", logout);
+    return () => window.removeEventListener("aog:logout", logout);
+  }, []);
 
   React.useEffect(() => {
     if (status === "unauth") {
@@ -82,7 +139,9 @@ export default function AuthGate({ children }: { children: React.ReactNode }) {
         setError(`登录失败（HTTP ${response.status}）`);
         return;
       }
-      markVerified(true);
+      // A successful login rotates the namespace so a prior identity/session
+      // can never recover its chat context.
+      markVerified(true, { rotate: true, reason: "login" });
       setPassword("");
       setStatus("authed");
     } catch {
@@ -109,7 +168,7 @@ export default function AuthGate({ children }: { children: React.ReactNode }) {
         <div className={styles.card}>
           <AlertTriangle size={28} className={styles.icon} />
           <h1 className={styles.title}>暂时无法连接 AOG 服务</h1>
-          <p className={styles.subtitle}>登录凭据未被清除，服务恢复后可直接重试。</p>
+          <p className={styles.subtitle}>登录凭据和当前会话命名空间未被清除，服务恢复后可直接重试。</p>
           <button type="button" className={styles.submit} onClick={verify}>重新连接</button>
         </div>
       </div>
@@ -140,7 +199,7 @@ export default function AuthGate({ children }: { children: React.ReactNode }) {
             <span>{submitting ? "登录中…" : "登录"}</span>
           </button>
         </form>
-        <p className={styles.hint}>登录态使用 httpOnly Cookie 保存，24 小时内路由切换无需重复输入。</p>
+        <p className={styles.hint}>登录态使用 httpOnly Cookie 保存；登出、过期或新身份登录时会清理本标签页的 AI 会话。</p>
       </div>
     </div>
   );

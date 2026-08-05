@@ -37,8 +37,9 @@ describe("AOG production UI contracts", () => {
 
   it("never renders model chain-of-thought in production", () => {
     const text = source("components/chat-widget.tsx");
-    expect(text).toContain("DEBUG_THOUGHTS");
     expect(text).toContain("stripPrivateProtocol");
+    expect(text).toContain("think|thinking|reasoning");
+    expect(text).not.toContain("NEXT_PUBLIC_DEBUG_THOUGHTS");
     expect(text).not.toContain("思考中");
     expect(text).not.toContain("思考过程");
     expect(text).not.toContain("dangerouslySetInnerHTML");

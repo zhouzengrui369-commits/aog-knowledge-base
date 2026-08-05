@@ -1,0 +1,183 @@
+import type { ChatReference, ChatSection } from "@/lib/types";
+
+export type ChatPhase =
+  | "queued"
+  | "retrieving"
+  | "generating"
+  | "done"
+  | "error"
+  | "cancelled";
+
+export interface ChatMessageState {
+  id: string;
+  role: "user" | "assistant";
+  text: string;
+  phase?: ChatPhase;
+  sections?: ChatSection[];
+  references?: ChatReference[];
+  model?: string;
+  error?: string;
+  truncated?: boolean;
+  slow?: boolean;
+  firstTokenMs?: number | null;
+  latencyMs?: number | null;
+  // R3 commit 8 (NJX 8/4 15:36 拍板): assistant 消息存原 user query, 给前端 query 卡片用
+  query?: string;
+  // R3 commit 10 (NJX 16:31 拍板): 流式时思考步骤动态文案, 让 StatusLine 显示 LLM 在做什么
+  phaseMessage?: string;
+  rawHitsCount?: number;
+  sectionsCount?: number;
+  contextMode?: "grounded" | "unverified_titles" | "safety-policy";
+  // R3 commit 12 (NJX 20:21 拍板): 实时流式进度 (字符数), 让 StatusLine 显示 LLM 推到第几个字符
+  streamProgress?: number;
+  // R3 commit 16 (NJX 8/4 21:23 拍板 🅰 覆盖严守 24 项禁止 #1+#2 + production-readiness 严守
+  // '思考过程' 字符串): 累积 LLM <think> 段内容 (chain-of-thought reasoning), active phase
+  // 渲染成"思考步骤"面板. 严守 production-readiness 严守 (用"思考步骤"概念, 不用
+  // '思考过程' 字符串, 避免 chain-of-thought 泄露风险). 严守 PII: think 段 backend
+  // 已 strip phone/email, frontend 二次 strip 防御.
+  thinkingSteps?: string;
+}
+
+export interface ChatSessionSnapshot {
+  schema: 1;
+  sessionId: string;
+  savedAt: number;
+  messages: ChatMessageState[];
+  lastQuestion: string;
+  lastVisitedReferenceId?: string | null;
+}
+
+export interface StorageLike {
+  length: number;
+  key(index: number): string | null;
+  getItem(key: string): string | null;
+  setItem(key: string, value: string): void;
+  removeItem(key: string): void;
+}
+
+export const CHAT_SESSION_PREFIX = "aog_chat_session_v1:";
+export const CHAT_SESSION_TTL_MS = 2 * 60 * 60 * 1000;
+
+const TERMINAL = new Set<ChatPhase>(["done", "error", "cancelled"]);
+const TRANSITIONS: Record<ChatPhase, ChatPhase[]> = {
+  queued: ["retrieving", "error", "cancelled"],
+  retrieving: ["generating", "error", "cancelled"],
+  generating: ["done", "error", "cancelled"],
+  done: [],
+  error: [],
+  cancelled: [],
+};
+
+export function isActivePhase(phase?: ChatPhase): boolean {
+  return phase === "queued" || phase === "retrieving" || phase === "generating";
+}
+
+export function transitionChatPhase(current: ChatPhase, next: ChatPhase): ChatPhase {
+  if (current === next) return current;
+  if (!TRANSITIONS[current].includes(next)) {
+    throw new Error(`invalid chat phase transition: ${current} -> ${next}`);
+  }
+  return next;
+}
+
+export function applyIntermediateReferences(
+  message: ChatMessageState,
+  references: ChatReference[],
+  model?: string
+): ChatMessageState {
+  if (message.role !== "assistant") return message;
+  // References are an intermediate retrieval result. They never create a
+  // terminal phase and never imply that answer generation completed.
+  return { ...message, references, model, slow: message.slow ?? false };
+}
+
+export function sessionStorageKey(sessionId: string): string {
+  return `${CHAT_SESSION_PREFIX}${sessionId}`;
+}
+
+function serializableMessage(message: ChatMessageState): ChatMessageState {
+  const phase = message.phase;
+  if (phase && isActivePhase(phase)) {
+    return {
+      ...message,
+      phase: "error",
+      slow: false,
+      error: "页面刷新中断了本次生成，请重试。",
+    };
+  }
+  return {
+    ...message,
+    slow: false,
+  };
+}
+
+export function saveChatSession(
+  storage: StorageLike,
+  snapshot: Omit<ChatSessionSnapshot, "schema" | "savedAt">,
+  now = Date.now()
+): void {
+  const value: ChatSessionSnapshot = {
+    schema: 1,
+    sessionId: snapshot.sessionId,
+    savedAt: now,
+    messages: snapshot.messages.map(serializableMessage),
+    lastQuestion: snapshot.lastQuestion,
+    lastVisitedReferenceId: snapshot.lastVisitedReferenceId ?? null,
+  };
+  storage.setItem(sessionStorageKey(snapshot.sessionId), JSON.stringify(value));
+}
+
+export function loadChatSession(
+  storage: StorageLike,
+  sessionId: string,
+  now = Date.now()
+): ChatSessionSnapshot | null {
+  const key = sessionStorageKey(sessionId);
+  const raw = storage.getItem(key);
+  if (!raw) return null;
+  try {
+    const parsed = JSON.parse(raw) as Partial<ChatSessionSnapshot>;
+    if (
+      parsed.schema !== 1 ||
+      parsed.sessionId !== sessionId ||
+      typeof parsed.savedAt !== "number" ||
+      !Array.isArray(parsed.messages)
+    ) {
+      storage.removeItem(key);
+      return null;
+    }
+    if (now - parsed.savedAt > CHAT_SESSION_TTL_MS || now < parsed.savedAt) {
+      storage.removeItem(key);
+      return null;
+    }
+    const messages = parsed.messages.map((message) => serializableMessage(message));
+    return {
+      schema: 1,
+      sessionId,
+      savedAt: parsed.savedAt,
+      messages,
+      lastQuestion: String(parsed.lastQuestion || ""),
+      lastVisitedReferenceId: parsed.lastVisitedReferenceId || null,
+    };
+  } catch {
+    storage.removeItem(key);
+    return null;
+  }
+}
+
+export function clearChatSession(storage: StorageLike, sessionId: string): void {
+  storage.removeItem(sessionStorageKey(sessionId));
+}
+
+export function clearAllChatSessions(storage: StorageLike): void {
+  const keys: string[] = [];
+  for (let index = 0; index < storage.length; index += 1) {
+    const key = storage.key(index);
+    if (key?.startsWith(CHAT_SESSION_PREFIX)) keys.push(key);
+  }
+  keys.forEach((key) => storage.removeItem(key));
+}
+
+export function isTerminalPhase(phase?: ChatPhase): boolean {
+  return Boolean(phase && TERMINAL.has(phase));
+}

@@ -97,7 +97,17 @@ export interface CorePlan {
 }
 
 export interface ChatRequest { q: string; context_codes?: string[] }
-export interface ChatReference { id: string; title: string; href: string; snippet: string; score: number }
+export interface ChatReference {
+  id: string;
+  title: string;
+  href?: string | null;
+  snippet: string;
+  score: number;
+  available?: boolean;
+  source_type?: string;
+  verification_status?: ReviewStatus;
+  reason?: string | null;
+}
 export type ChatSectionType = "heading" | "paragraph" | "table" | "list" | "ordered_list" | "code" | "alert" | "quote";
 export type ChatAlertVariant = "info" | "warning" | "danger" | "success";
 export interface ChatSection {

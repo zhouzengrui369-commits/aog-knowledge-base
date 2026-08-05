@@ -1,0 +1,54 @@
+[2026-08-03 +08:00]
+COMMAND: Read GitHub Issue #12 and comments.
+EXIT_CODE: 0
+OUTPUT_SUMMARY: Full 21-section review and five bounded issue IDs loaded. No secrets or real contact values copied.
+
+[2026-08-03 +08:00]
+COMMAND: Verify baseline commit b390629d1684d62a8d0d8c7f4126b4b928633bd8.
+EXIT_CODE: 0
+OUTPUT_SUMMARY: Baseline identity confirmed from GitHub commit metadata.
+
+[2026-08-03 +08:00]
+COMMAND: Create branch fix/exp-aog-20260803-focused-retest-r1 from exact baseline.
+EXIT_CODE: 0
+OUTPUT_SUMMARY: Bounded repair branch created; main was not modified.
+
+[2026-08-03 +08:00]
+COMMAND: Create GOAL.md, TASK.md, PLAN.md and DISPATCH_STATUS.md.
+EXIT_CODE: 0
+OUTPUT_SUMMARY: Candidate identity, P0/P1/P2 scope, non-goals and local evidence boundaries recorded.
+
+[2026-08-03 +08:00]
+COMMAND: Implement verification_policy.py and policy-enforced chat_safe.py.
+EXIT_CODE: 0
+OUTPUT_SUMMARY: Verification status is applied before context/generation; targeted non-VERIFIED city generation is blocked; policy logs contain IDs/status only.
+
+[2026-08-03 +08:00]
+COMMAND: Replace implicit reference fallback with explicit route contract.
+EXIT_CODE: 0
+OUTPUT_SUMMARY: city_contacts uses city contacts route; unsupported types are non-clickable and fail closed.
+
+[2026-08-03 +08:00]
+COMMAND: Implement auth-session-bound chat persistence and stream state machine.
+EXIT_CODE: 0
+OUTPUT_SUMMARY: Session TTL/rotation/logout cleanup and queued/retrieving/generating/done/error/cancelled transitions added.
+
+[2026-08-03 +08:00]
+COMMAND: Add accessible send, cancel, clear and status controls.
+EXIT_CODE: 0
+OUTPUT_SUMMARY: Stable accessible names, keyboard instructions, focus ring and live status region added.
+
+[2026-08-03 +08:00]
+COMMAND: Add backend/frontend focused regression tests and production-readiness CI coverage.
+EXIT_CODE: 0
+OUTPUT_SUMMARY: Verification contrast, reference routing, stream ordering/error terminal, session TTL/identity and accessibility contracts covered.
+
+[2026-08-03 +08:00]
+COMMAND: Open Draft PR #13 against main.
+EXIT_CODE: 0
+OUTPUT_SUMMARY: Remote code candidate submitted without deployment, merge, release or real-data import.
+
+[LOCAL FOCUSED RETEST — NOT EXECUTED REMOTELY]
+COMMAND: pytest focused backend suite; pnpm typecheck/lint/Vitest/build; real runtime focused retest; VoiceOver; real MiniMax 20-case.
+EXIT_CODE: NOT_RUN_REMOTE
+OUTPUT_SUMMARY: Must be executed by MiniMax Code on a clean frozen candidate. Code/CI may not substitute for runtime evidence.
