@@ -1,0 +1,57 @@
+name: parent-pm-governance
+
+on:
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Compile governance validator
+        run: python -m compileall validators
+
+      - name: Validate project installation
+        run: python validators/validate_install.py .
+
+      - name: Verify exact public Core lock
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          lock = json.loads(Path('.github/skills/chatgpt-parent-pm/GOVERNANCE_LOCK.json').read_text())
+          assert lock['core_repository'] == 'zhouzengrui369-commits/chatgpt-parent-pm'
+          assert lock['core_commit'] == '99e88020789603f17de715775b455e91e4e20b17'
+          assert lock['core_version'] == '0.1.0-alpha'
+          assert all(lock['policies'][key] is False for key in (
+              'direct_main_write', 'automatic_merge', 'automatic_release'
+          ))
+          print('PUBLIC_CORE_LOCK: PASS')
+          PY
+
+      - name: Verify non-destructive scope
+        shell: bash
+        run: |
+          set -euo pipefail
+          git diff --check origin/main...HEAD
+          changed="$(git diff --name-only origin/main...HEAD)"
+          printf '%s\n' "$changed"
+          if printf '%s\n' "$changed" | grep -Eq '^(aog-web/|AOG知识库/|PROJECT_STATE\.yaml$|reports/|scripts/|extractors/|tests/)'; then
+            echo 'Governance adoption touched a frozen product/data/evidence path.'
+            exit 1
+          fi
