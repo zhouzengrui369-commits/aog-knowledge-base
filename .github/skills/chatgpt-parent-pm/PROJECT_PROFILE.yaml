@@ -1,0 +1,44 @@
+project_id: aog-knowledge-base
+project_type: web-and-backend-production-service
+repository: zhouzengrui369-commits/aog-knowledge-base
+default_branch: main
+
+roles:
+  remote_parent_pm_and_coding_agent: chatgpt
+  local_deployment_agent: minimax-code
+  local_test_agent: codex
+
+paths:
+  active_goal: work/tasks/2026-08-05-adopt-public-parent-pm-r1/GOAL.md
+  project_status: PROJECT_STATUS.md
+  legacy_engineering_state: PROJECT_STATE.yaml
+  existing_ci: .github/workflows/ci.yml
+
+commands:
+  install: "backend: cd aog-web/backend && python -m pip install -e .; frontend: cd aog-web/frontend && pnpm install --frozen-lockfile"
+  test: "use the existing AOG GitHub workflows and Goal-specific focused tests"
+  build: "cd aog-web/frontend && pnpm build"
+  start: "use an exact-SHA local deployment contract; do not infer production configuration"
+
+policies:
+  direct_main_write: false
+  automatic_merge: false
+  automatic_release: false
+
+owner_only_actions:
+  - production_release
+  - cloudbase_deploy
+  - credentials
+  - billing
+  - real_data_import
+  - destructive_migration
+  - verification_status_change
+  - signing
+  - notarization
+
+project_invariants:
+  - preserve existing AOG data-governance and PII fail-closed controls
+  - synthetic evidence proves code paths only and never production-data readiness
+  - local deployment and Codex acceptance must bind to the same exact candidate SHA
+  - governance adoption has zero product completion weight
+  - existing PROJECT_STATE.yaml is not silently replaced by this profile
