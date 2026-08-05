@@ -15,6 +15,8 @@ jobs:
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - uses: actions/setup-python@v5
         with:
@@ -48,8 +50,12 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          git diff --check origin/main...HEAD
-          changed="$(git diff --name-only origin/main...HEAD)"
+          git fetch --no-tags origin main:refs/remotes/origin/main
+          base="$(git merge-base HEAD refs/remotes/origin/main)"
+          test -n "$base"
+          echo "SCOPE_BASE=$base"
+          git diff --check "$base...HEAD"
+          changed="$(git diff --name-only "$base...HEAD")"
           printf '%s\n' "$changed"
           if printf '%s\n' "$changed" | grep -Eq '^(aog-web/|AOG知识库/|PROJECT_STATE\.yaml$|reports/|scripts/|extractors/|tests/)'; then
             echo 'Governance adoption touched a frozen product/data/evidence path.'
