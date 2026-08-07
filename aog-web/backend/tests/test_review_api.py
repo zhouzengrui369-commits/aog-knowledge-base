@@ -147,5 +147,5 @@ async def test_review_api_is_read_only_and_does_not_promote_status(client, seede
     )
     assert response.status_code == 405
 
-    after = (await client.get("/api/review/city/H-%E8%B5%AB%E5%B0%94%E8%BE%9F%E5%9F%BA")).json()
+    after = (await client.get("/api/review/city/H-%E8%B5%AB%E5%B0%94%E8%BE%9B%E5%9F%BA")).json()
     assert after["review"]["review_status"] == "UNVERIFIED"
