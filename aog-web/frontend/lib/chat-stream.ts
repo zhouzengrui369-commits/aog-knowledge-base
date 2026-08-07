@@ -9,14 +9,10 @@ export interface ChatStatusPayload {
   first_token_ms?: number | null;
   latency_ms?: number;
   refs_count?: number;
-  // R3 commit 10 (NJX 16:31 拍板): 思考步骤动态文案, 让流式时 StatusLine 显示
-  // LLM 在每个阶段做什么 (例如 "正在检索: 找到 8 条相关资料, 严守 PII 策略")
   message?: string;
   raw_hits_count?: number;
   sections_count?: number;
   context_mode?: "grounded" | "unverified_titles" | "safety-policy";
-  // R3 commit 12 (NJX 20:21 拍板): 推 token 时同步推 stream_progress (字符数),
-  // 让 frontend StatusLine 实时显示流式进度 (例如"正在流式生成答案 (已推 200 字符)")
   stream_progress?: number;
 }
 
@@ -27,10 +23,11 @@ export interface SafeChatStreamCallbacks {
     model: string;
   }) => void;
   onToken?: (delta: string) => void;
-  // R3 commit 16 (NJX 8/4 21:23 拍板 🅰 覆盖严守 24 项禁止 #1+#2 + production-readiness
-  // 严守 '思考过程' 字符串): 接收 LLM <think> 段内容 (chain-of-thought reasoning),
-  // frontend 渲染成"思考步骤"面板. 严守 production-readiness 严守 (用"思考步骤"概念
-  // 不用"思考过程" 字符串). 严守 PII: think 段 backend 已 strip phone/email.
+  /**
+   * Deprecated compatibility callback. The production stream parser never
+   * invokes it: provider-private reasoning is not a user-visible product
+   * surface and legacy `think` SSE events are discarded fail closed.
+   */
   onThink?: (delta: string) => void;
   onSections?: (sections: NonNullable<ChatResponse["sections"]>) => void;
   onDone?: (payload: { latencyMs: number; firstTokenMs?: number | null }) => void;
@@ -154,13 +151,10 @@ export async function safeChatStream(
           continue;
         }
 
-        // R3 commit 16 (NJX 8/4 21:23 拍板 🅰): think event 解析 — LLM <think> 段
-        // (chain-of-thought reasoning) 推 frontend 渲染成"思考步骤"面板. 严守
-        // production-readiness 严守 (用"思考步骤"概念, 不用"思考过程" 字符串).
         if (event === "think") {
-          if (!terminal) {
-            callbacks.onThink?.(data);
-          }
+          // R4 security boundary: never expose provider-private reasoning.
+          // The strict backend does not emit this event; this branch protects
+          // users if a legacy or misconfigured backend sends one anyway.
           continue;
         }
 
