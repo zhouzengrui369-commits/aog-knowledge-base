@@ -9,7 +9,7 @@ roles:
   local_test_agent: codex
 
 paths:
-  active_goal: work/tasks/2026-08-05-adopt-public-parent-pm-r1/GOAL.md
+  active_goal: work/tasks/2026-08-07-issue12-p0-runtime-closure-r4/GOAL.md
   project_status: PROJECT_STATUS.md
   legacy_engineering_state: PROJECT_STATE.yaml
   existing_ci: .github/workflows/ci.yml
