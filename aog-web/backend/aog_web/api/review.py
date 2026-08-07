@@ -7,7 +7,9 @@ VERIFIED-only/fail-closed.
 """
 from __future__ import annotations
 
+import copy
 import hashlib
+import re
 from typing import Any, Dict, Optional
 
 import jwt
@@ -18,6 +20,17 @@ from aog_web.services.sqlite_client import get_sqlite_client
 from aog_web.services.verification_policy import VERIFIED, normalize_review_status
 
 router = APIRouter(prefix="/api/review", tags=["review"])
+
+# Structured contacts are permission-aware and already redacted by sqlite_client.
+# Candidate documents also contain free-text phone/email values in fields such as
+# warehouse, logistics and content_md. Those fields have no permission metadata,
+# so the review plane must fail closed rather than infer that a contact is public.
+_CN_MOBILE_RE = re.compile(r"(?<!\d)1[3-9]\d{9}(?!\d)")
+_EMAIL_RE = re.compile(r"\b[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}\b")
+_GENERIC_PHONE_REDACTION = "[联系方式已脱敏]"
+_GENERIC_EMAIL_REDACTION = "[邮箱已脱敏]"
+_WAREHOUSE_PHONE_REDACTION = "[联系方式已脱敏: 仓储联系人]"
+_WAREHOUSE_EMAIL_REDACTION = "[邮箱已脱敏: 仓储联系人]"
 
 
 def _require_authenticated_reviewer(
@@ -40,6 +53,74 @@ def _require_authenticated_reviewer(
         raise HTTPException(401, detail={"error": "review_auth_required", "reason": "invalid"}) from exc
     except Exception as exc:
         raise HTTPException(401, detail={"error": "review_auth_required", "reason": "invalid"}) from exc
+
+
+def _sanitize_text(
+    value: str,
+    *,
+    phone_replacement: str = _GENERIC_PHONE_REDACTION,
+    email_replacement: str = _GENERIC_EMAIL_REDACTION,
+) -> str:
+    sanitized = _CN_MOBILE_RE.sub(phone_replacement, value)
+    return _EMAIL_RE.sub(email_replacement, sanitized)
+
+
+def _sanitize_free_text(
+    value: Any,
+    *,
+    phone_replacement: str = _GENERIC_PHONE_REDACTION,
+    email_replacement: str = _GENERIC_EMAIL_REDACTION,
+) -> Any:
+    """Recursively redact contact-shaped values from untyped candidate fields."""
+    if isinstance(value, str):
+        return _sanitize_text(
+            value,
+            phone_replacement=phone_replacement,
+            email_replacement=email_replacement,
+        )
+    if isinstance(value, list):
+        return [
+            _sanitize_free_text(
+                item,
+                phone_replacement=phone_replacement,
+                email_replacement=email_replacement,
+            )
+            for item in value
+        ]
+    if isinstance(value, dict):
+        return {
+            key: _sanitize_free_text(
+                item,
+                phone_replacement=phone_replacement,
+                email_replacement=email_replacement,
+            )
+            for key, item in value.items()
+        }
+    return value
+
+
+def _sanitize_review_city(city: Dict[str, Any]) -> Dict[str, Any]:
+    """Return a review-safe copy while preserving permission-aware contacts.
+
+    ``contacts`` has explicit permission/redaction metadata and is sanitized by
+    ``sqlite_client``. Every other candidate field is untyped free text from the
+    knowledge source, so mobile numbers and emails are redacted fail closed.
+    Warehouse fields use a specific label so reviewers understand what was
+    removed without mistaking the placeholder for missing source content.
+    """
+    safe = copy.deepcopy(city)
+    for key, value in list(safe.items()):
+        if key == "contacts":
+            continue
+        if key == "warehouse":
+            safe[key] = _sanitize_free_text(
+                value,
+                phone_replacement=_WAREHOUSE_PHONE_REDACTION,
+                email_replacement=_WAREHOUSE_EMAIL_REDACTION,
+            )
+        else:
+            safe[key] = _sanitize_free_text(value)
+    return safe
 
 
 def _review_id(city: Dict[str, Any]) -> str:
@@ -100,12 +181,12 @@ def _summary(city: Dict[str, Any]) -> Dict[str, Any]:
         "city_status": city.get("status"),
         "review_status": review["review_status"],
         "confidence": review["confidence"],
-        "source_document": review["source_document"],
-        "source_location": review["source_location"],
-        "source_version": review["source_version"],
+        "source_document": _sanitize_free_text(review["source_document"]),
+        "source_location": _sanitize_free_text(review["source_location"]),
+        "source_version": _sanitize_free_text(review["source_version"]),
         "updated_at": review["updated_at"],
         "reviewed_at": review["reviewed_at"],
-        "reviewed_by": review["reviewed_by"],
+        "reviewed_by": _sanitize_free_text(review["reviewed_by"]),
         "pii_classification": review["pii_classification"],
         "review_visible": True,
         "operational_eligible": review["operational_eligible"],
@@ -156,11 +237,10 @@ async def get_review_city(
     if city is None:
         raise HTTPException(404, detail={"error": "review city not found", "code": code})
 
-    # sqlite_client already redacts non-public contact values. Unlike the
-    # operational release policy, review mode deliberately keeps candidate
-    # body/fleet/parts/logistics visible for human inspection.
-    result = dict(city)
-    review = _review_meta(city)
+    # Structured contact values are already permission-redacted by sqlite_client.
+    # Free-text candidate fields need an additional review-plane PII boundary.
+    result = _sanitize_review_city(city)
+    review = _review_meta(result)
     result.update(
         {
             "review": review,
