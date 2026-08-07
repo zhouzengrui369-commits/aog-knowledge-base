@@ -6,14 +6,15 @@ function source(path: string): string {
   return readFileSync(resolve(process.cwd(), path), "utf8");
 }
 
-describe("R5 knowledge review plane", () => {
-  it("adds a visible knowledge review entry and read-only queue", () => {
+describe("R5 knowledge review and browsing policy", () => {
+  it("adds a visible knowledge review entry and explains status-aware retrieval", () => {
     const nav = source("components/nav-bar.tsx");
     const page = source("app/review/page.tsx");
     expect(nav).toContain("知识审核");
     expect(nav).toContain('href: "/review"');
-    expect(page).toContain("待审核知识可见、可核对");
-    expect(page).toContain("审核浏览层 ≠ 生产执行层");
+    expect(page).toContain("待审核知识可见、可检索、可核对");
+    expect(page).toContain("知识可见 / AI 可检索 ≠ 已核验执行依据");
+    expect(page).toContain("可供 AI 状态感知检索");
     expect(page).toContain("不提供一键批准、批量改状态或数据源写回");
   });
 
@@ -26,17 +27,23 @@ describe("R5 knowledge review plane", () => {
     expect(candidate).not.toContain('href={`mailto:');
   });
 
-  it("links hidden operational content to the separate review plane", () => {
+  it("loads the authenticated candidate copy in normal knowledge browsing", () => {
     const detail = source("components/city-detail-client.tsx");
-    expect(detail).toContain("数据未审核，禁止用于实际处置");
-    expect(detail).toContain("进入知识审核（只读）");
-    expect(detail).toContain("运营页面继续隐藏未核验数据");
+    const candidate = source("components/candidate-city-tabs.tsx");
+    expect(detail).toContain("getReviewCity(found.code)");
+    expect(detail).toContain("待核验知识，可浏览 / 可供 AI 检索");
+    expect(detail).toContain("CandidateCityTabs");
+    expect(candidate).toContain("待核验知识已展开");
+    expect(candidate).toContain("可以浏览，也可以供 AI 检索");
+    expect(candidate).toContain("实际处置前需要核验");
   });
 
-  it("states review visibility is not operational or AI eligibility", () => {
+  it("separates AI retrieval from operational authority on review detail", () => {
     const detail = source("components/review-city-detail-client.tsx");
-    expect(detail).toContain("候选内容可读，但不可用于实际处置");
-    expect(detail).toContain("AOG AI 仍不会把它作为 VERIFIED 上下文");
-    expect(detail).toContain("R5 也不会在这里修改审核状态");
+    expect(detail).toContain("可读、可供 AI 检索，但尚不是已核验执行依据");
+    expect(detail).toContain("AI 可以转述这份知识库记录");
+    expect(detail).toContain("AI 检索");
+    expect(detail).toContain("执行依据");
+    expect(detail).toContain("R5 也不会在这里自动修改审核状态");
   });
 });
