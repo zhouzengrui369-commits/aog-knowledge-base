@@ -11,22 +11,26 @@
 
 ## User outcome
 
-An authenticated AOG knowledge owner can open the local product, browse pending-review knowledge, inspect provenance and candidate content, and understand exactly what still needs review. Pending content remains read-only and cannot be used as VERIFIED operational guidance or AI grounding until an explicit audited verification action occurs.
+An authenticated AOG user can browse the knowledge base and ask AI questions against the knowledge that actually exists, including pending-review records. Verification status remains visible and authoritative: candidate knowledge may be read and quoted, but only VERIFIED knowledge may be presented as confirmed operational authority.
 
-## Product policy
+## Product policy — Owner decision 2026-08-07
 
-AOG separates two independent concepts:
+AOG separates three independent concepts:
 
-1. **Review visibility** — whether an authenticated reviewer may inspect candidate knowledge.
-2. **Operational eligibility** — whether knowledge may be used for AOG execution or AI generation.
+1. **Knowledge visibility** — whether an authenticated user may inspect sanitized source/candidate knowledge.
+2. **AI retrievability** — whether authenticated AI may retrieve and summarize that knowledge while preserving its verification status.
+3. **Operational authority** — whether the knowledge may be treated as confirmed execution guidance.
 
 Rules:
 
-- pending content may be visible in the authenticated review surface when source content exists;
-- normal operational city API/UI stays fail-closed for non-VERIFIED content;
-- AI generation stays VERIFIED-only through the R4 strict router;
-- review mode is read-only in R5; status mutation remains Owner-controlled;
-- non-public contacts remain redacted and candidate contacts are not actionable links.
+- knowledge with actual source content remains browsable to authenticated users regardless of VERIFIED/UNVERIFIED/STALE status;
+- authenticated AI may retrieve sanitized knowledge across verification states and answer what the knowledge base records;
+- every AI reference preserves its `verification_status`; non-VERIFIED content must be phrased as pending/candidate knowledge, never silently promoted;
+- only VERIFIED knowledge may be represented as confirmed operational authority, guaranteed inventory, SLA or approved execution instruction;
+- private/controlled contact data remains redacted; knowledge visibility does not grant PII visibility;
+- public/unauthenticated operational APIs may remain fail-closed for non-VERIFIED candidate content;
+- review mode is read-only in R5; status mutation remains Owner-controlled and auditable;
+- provider-private reasoning remains non-public.
 
 ## llm_wiki reuse boundary
 
@@ -36,9 +40,11 @@ R5 reuses upstream architecture/protocol ideas (ingest queue, asynchronous revie
 
 - authenticated read-only review API;
 - pending knowledge queue and review detail;
+- ordinary authenticated city browsing that automatically loads sanitized candidate knowledge when operational data is not VERIFIED;
 - provenance/status/confidence visibility;
-- candidate knowledge content visible for review;
-- CTA from non-VERIFIED city page to review surface;
+- status-aware authenticated AI retrieval across verification states;
+- VERIFIED-only operational-authority semantics;
+- PII sanitization for free-text candidate knowledge;
 - backend/frontend regression tests;
 - AOG-specific llm_wiki reuse assessment;
 - local-first MiniMax/Codex acceptance contracts;
@@ -56,11 +62,12 @@ R5 reuses upstream architecture/protocol ideas (ingest queue, asynchronous revie
 ## Acceptance
 
 - unauthenticated review API rejected;
-- authenticated pending knowledge is browsable and candidate content is visible;
-- non-public contacts remain redacted;
-- review content is marked read-only/non-operational;
-- normal non-VERIFIED operational endpoint still hides candidate content;
-- strict AI remains VERIFIED-only;
+- authenticated pending knowledge is browsable and candidate content is visible from both review and normal knowledge-browsing paths;
+- private/controlled contact data and free-text phone/email values remain redacted;
+- authenticated AI can retrieve UNVERIFIED knowledge and clearly carries `verification_status=UNVERIFIED` into context/references;
+- non-VERIFIED AI answers describe candidate knowledge without upgrading it to confirmed operational authority;
+- unauthenticated UNVERIFIED chat remains fail-closed;
+- provider-private reasoning never leaves the backend;
 - navigation and review queue/detail work locally;
 - CI green on exact candidate;
 - MiniMax exact-SHA local deployment PASS;
