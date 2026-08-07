@@ -1,0 +1,12 @@
+{
+  "framework": "chatgpt-parent-pm",
+  "core_version": "0.1.0-alpha",
+  "core_repository": "zhouzengrui369-commits/chatgpt-parent-pm",
+  "core_commit": "99e88020789603f17de715775b455e91e4e20b17",
+  "project_profile": ".github/skills/chatgpt-parent-pm/PROJECT_PROFILE.yaml",
+  "policies": {
+    "direct_main_write": false,
+    "automatic_merge": false,
+    "automatic_release": false
+  }
+}
