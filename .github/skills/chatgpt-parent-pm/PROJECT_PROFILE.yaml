@@ -37,8 +37,10 @@ owner_only_actions:
   - notarization
 
 project_invariants:
-  - pending-review content must remain browsable through an authenticated review surface
-  - only VERIFIED content may enter operational AI generation or executable guidance
+  - pending-review knowledge with source content must remain browsable to authenticated users
+  - authenticated AI may retrieve sanitized knowledge across verification states and must preserve each source status
+  - only VERIFIED knowledge may be represented as confirmed operational authority or executable guidance
+  - non-VERIFIED operational details may be quoted only as pending knowledge and must require verification before real AOG action
   - preserve existing AOG data-governance and PII fail-closed controls
   - synthetic evidence proves code paths only and never production-data readiness
   - local deployment and Codex acceptance must bind to the same exact candidate SHA
