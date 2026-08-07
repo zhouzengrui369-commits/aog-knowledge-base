@@ -19,6 +19,7 @@ from aog_web.api import (
     files,
     health,
     reindex,
+    review,
     stats,
     sync,
 )
@@ -150,6 +151,7 @@ def create_app() -> FastAPI:
     app.include_router(health.router)
     app.include_router(auth.router)
     app.include_router(cities.router)
+    app.include_router(review.router)
     app.include_router(airlines.router)
     app.include_router(experiences.router)
     app.include_router(core_plans.router)
