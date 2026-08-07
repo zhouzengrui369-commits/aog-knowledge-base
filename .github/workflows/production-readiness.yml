@@ -43,6 +43,7 @@ jobs:
             tests/test_p0_experience_content.py \
             tests/test_exp_aog_focused_retest.py \
             tests/test_review_api.py \
+            tests/test_authenticated_knowledge_chat.py \
             -v --tb=short
 
   frontend-production:
