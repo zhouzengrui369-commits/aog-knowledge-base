@@ -51,14 +51,17 @@ export function ReviewCityDetailClient({ code }: { code: string }) {
         <div className={`mt-5 rounded-xl border p-5 ${pending ? "border-amber-200 bg-amber-50" : "border-emerald-200 bg-emerald-50"}`}>
           <div className="flex items-start gap-3">
             {pending ? <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0 text-amber-700" /> : <ShieldCheck className="mt-0.5 h-5 w-5 shrink-0 text-emerald-700" />}
-            <div><div className="font-semibold">{pending ? "审核浏览模式：候选内容可读，但不可用于实际处置" : "已核验记录：审核信息可复核"}</div><p className="mt-1 text-sm leading-6">{pending ? "该页面只用于人工核对来源和候选内容。AOG AI 仍不会把它作为 VERIFIED 上下文，R5 也不会在这里修改审核状态。" : "该记录已具备 operational / AI eligibility；本页面仍保持只读。"}</p></div>
+            <div><div className="font-semibold">{pending ? "候选知识：可读、可供 AI 检索，但尚不是已核验执行依据" : "已核验记录：可作为已确认知识依据"}</div><p className="mt-1 text-sm leading-6">{pending ? "AI 可以转述这份知识库记录，并必须明确标注为待核验；实际 AOG 处置前仍要核验。R5 也不会在这里自动修改审核状态。" : "该记录已是 VERIFIED；本页面仍保持只读，用于复核来源和审核元数据。"}</p></div>
           </div>
         </div>
 
         <header className="mt-6 rounded-2xl border border-ink-100 bg-white p-6 shadow-soft">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div><div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wider text-primary"><FileCheck2 className="h-4 w-4" />Review ID · {review.review_id}</div><h1 className="mt-2 text-3xl font-bold text-ink-900">{city.name} <span className="font-mono text-xl text-ink-400">{city.iata || "—"}</span></h1><p className="mt-2 text-sm text-ink-500">{city.code} · {city.region} · 状态 {review.review_status}</p></div>
-            <div className="rounded-lg border border-ink-100 bg-ink-50 px-4 py-3 text-right"><div className="text-[11px] text-ink-400">Operational / AI</div><div className={`mt-1 text-sm font-semibold ${review.operational_eligible ? "text-emerald-700" : "text-amber-800"}`}>{review.operational_eligible ? "可用 / 可用" : "不可用 / 不可用"}</div></div>
+            <div className="grid grid-cols-2 gap-2 text-right">
+              <div className="rounded-lg border border-ink-100 bg-ink-50 px-4 py-3"><div className="text-[11px] text-ink-400">AI 检索</div><div className={`mt-1 text-sm font-semibold ${review.ai_eligible ? "text-primary" : "text-ink-500"}`}>{review.ai_eligible ? "可检索" : "无候选内容"}</div></div>
+              <div className="rounded-lg border border-ink-100 bg-ink-50 px-4 py-3"><div className="text-[11px] text-ink-400">执行依据</div><div className={`mt-1 text-sm font-semibold ${review.operational_eligible ? "text-emerald-700" : "text-amber-800"}`}>{review.operational_eligible ? "已核验" : "待核验"}</div></div>
+            </div>
           </div>
 
           <div className="mt-6 grid gap-3 text-xs sm:grid-cols-2 lg:grid-cols-4">
