@@ -61,6 +61,52 @@ export interface City {
   logistics_mockup?: Array<{ type: string; note: string }>;
 }
 
+export interface ReviewCitySummary {
+  review_id: string;
+  code: string;
+  name: string;
+  iata: string;
+  region: string;
+  city_status: CityStatus;
+  review_status: ReviewStatus;
+  confidence?: number | null;
+  source_document?: string | null;
+  source_location?: string | null;
+  source_version?: string | null;
+  updated_at?: string | null;
+  reviewed_at?: string | null;
+  reviewed_by?: string | null;
+  pii_classification?: PiiClassification | null;
+  review_visible: boolean;
+  operational_eligible: boolean;
+  ai_eligible: boolean;
+  read_only: boolean;
+  has_candidate_content: boolean;
+}
+
+export interface ReviewMeta {
+  review_id: string;
+  review_status: ReviewStatus;
+  review_visible: boolean;
+  operational_eligible: boolean;
+  ai_eligible: boolean;
+  read_only: boolean;
+  source_document?: string | null;
+  source_location?: string | null;
+  source_version?: string | null;
+  updated_at?: string | null;
+  reviewed_at?: string | null;
+  reviewed_by?: string | null;
+  confidence?: number | null;
+  environment?: Environment | null;
+  pii_classification?: PiiClassification | null;
+}
+
+export interface ReviewCity extends City {
+  review_mode: true;
+  review: ReviewMeta;
+}
+
 export interface ExperienceContent {
   h: string;
   type: "p" | "list";

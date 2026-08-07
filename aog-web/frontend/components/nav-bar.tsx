@@ -2,11 +2,12 @@ import Link from "next/link";
 import { Plane } from "lucide-react";
 import { SearchBar } from "@/components/search-bar";
 
-export function NavBar({ active }: { active?: "home" | "experiences" | "airlines" }) {
+export function NavBar({ active }: { active?: "home" | "experiences" | "airlines" | "review" }) {
   const links = [
     { href: "/", key: "home", label: "首页" },
     { href: "/airlines", key: "airlines", label: "航司互援" },
     { href: "/experiences", key: "experiences", label: "保障经验" },
+    { href: "/review", key: "review", label: "知识审核" },
   ] as const;
 
   return (

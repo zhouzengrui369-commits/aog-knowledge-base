@@ -1,32 +1,88 @@
-# AOG Knowledge Base — Current Project Status Entry
+# AOG Knowledge Base — Current Project Status
 
-## Governance adoption
+## Development ownership
 
-- Active governance Goal: `GOAL-GOV-AOG-001`
-- Goal contract: `work/tasks/2026-08-05-adopt-public-parent-pm-r1/GOAL.md`
-- Public Core: `zhouzengrui369-commits/chatgpt-parent-pm@99e88020789603f17de715775b455e91e4e20b17`
-- Adoption branch: `chatgpt/adopt-public-parent-pm-r1`
-- Product weight: `0%`
-- Status: `PARTIAL PASS · IMPLEMENTED · CI/OWNER GATES PENDING`
+- Governance Core: `zhouzengrui369-commits/chatgpt-parent-pm@99e88020789603f17de715775b455e91e4e20b17`
+- ChatGPT: Remote Parent PM + Coding Agent
+- MiniMax Code: exact-SHA local deployment runner
+- Codex: real-operation test + product-experience auditor
+- Owner: product/data/cloud/release/final acceptance decisions
 
-## Existing project truth
+## Active Goal
 
-This file is a new Agent entry surface. It does **not** replace or rewrite `PROJECT_STATE.yaml`, existing GitHub pull requests, workflows, reports, deployment evidence, data-governance records, or product-review findings.
+- Goal: `GOAL-AOG-KNOWLEDGE-R5`
+- Contract: `work/tasks/2026-08-07-aog-knowledge-review-engine-r5/GOAL.md`
+- Development branch: `chatgpt/aog-knowledge-review-engine-r5`
+- Draft PR: `#16`
+- Parent issue: `#12`
+- Status: `OWNER_POLICY_UPDATE_IN_IMPLEMENTATION · LOCAL_AGENT_AUTHORIZATION_REVOKED_UNTIL_NEW_SOURCE_FREEZE`
 
-Observed adoption baseline:
+## Owner product decision — 2026-08-07
+
+The prior rule `UNVERIFIED = hidden from normal browsing and AI` is superseded.
+
+Current policy:
 
 ```text
-main = 1727a56aaa67ec2a29ab04076f0d8f84952b3e43
-latest merged product PR = #13
-public Parent PM Core = 99e88020789603f17de715775b455e91e4e20b17
+KNOWLEDGE EXISTS
+  ↓
+authenticated browsing = visible after PII sanitization
+  ↓
+authenticated AI retrieval = allowed with verification_status preserved
+  ↓
+operational authority = VERIFIED only
 ```
 
-## Product claim ceiling
+Therefore:
 
-This governance adoption changes no product behavior and proves no runtime, browser, accessibility, production-data, CloudBase, staging, signing, release, or Human Owner Gate.
+- UNVERIFIED/STALE knowledge is not treated as nonexistent;
+- an authenticated user may read candidate knowledge from normal knowledge browsing and the review plane;
+- authenticated AI may answer what candidate knowledge records, clearly labelled as pending/unverified;
+- only VERIFIED knowledge may be represented as confirmed execution guidance, guaranteed inventory, approved contact/action or SLA;
+- private/controlled contact data and free-text phone/email values remain redacted;
+- public/unauthenticated surfaces remain stricter and do not expose pending candidate knowledge;
+- provider-private reasoning stays non-public.
 
-The AOG product status must continue to be derived from its product PRs, runtime receipts, focused retests, data-readiness evidence, and Owner decisions.
+## PII finding clarification
 
-## Next allowed action
+The Codex P0 finding meant that a private/controlled 11-digit mobile number was embedded inside warehouse free text and bypassed the structured contact permission model. The fix redacts that contact-shaped value while preserving the warehouse, logistics, parts, fleet and plan knowledge around it. PII safety must never be implemented by hiding the entire knowledge record.
 
-Run the governance validator and GitHub workflow on this isolated Draft PR. Do not merge until the public Core lock, project profile, entry order, non-overwrite boundary, and GitHub delivery identity have been independently reviewed.
+## R5 product scope
+
+R5 now includes:
+
+- `nashsu/llm_wiki` architecture/protocol reuse assessment;
+- authenticated read-only review plane;
+- pending-review queue and candidate-content browsing;
+- ordinary city browsing that loads the sanitized candidate copy for logged-in users;
+- status-aware AI retrieval across verification states;
+- strict distinction between AI retrievability and VERIFIED operational authority;
+- free-text PII sanitization;
+- local-first product acceptance before Tencent Cloud public deployment.
+
+R5 still does **not** include Approve/Reject/comment/durable review decision ledger; that explicit follow-up remains Issue #17.
+
+## Deployment order
+
+All previously frozen R5 local candidates are superseded by this Owner policy update. Do not deploy an older SHA.
+
+```text
+ChatGPT policy/source update + CI
+→ freeze one new exact R5 SHA
+→ MiniMax focused local redeploy
+→ Codex focused test: normal browsing + UNVERIFIED AI retrieval + PII boundary
+→ Owner local customer-value acceptance
+→ separate Tencent Cloud deployment Goal
+```
+
+## Claim ceiling
+
+Not yet established for the new policy candidate:
+
+- new GitHub Source Gate PASS;
+- local normal-browsing knowledge visibility PASS;
+- authenticated UNVERIFIED AI retrieval PASS;
+- same-SHA MiniMax/Codex focused acceptance;
+- Tencent Cloud deployment;
+- release readiness;
+- Human Owner final gate.

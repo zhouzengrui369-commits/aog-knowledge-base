@@ -8,7 +8,6 @@ on:
 
 permissions:
   contents: read
-
 defaults:
   run:
     shell: bash
@@ -43,6 +42,8 @@ jobs:
             tests/test_experiences.py \
             tests/test_p0_experience_content.py \
             tests/test_exp_aog_focused_retest.py \
+            tests/test_review_api.py \
+            tests/test_authenticated_knowledge_chat.py \
             -v --tb=short
 
   frontend-production:
@@ -77,7 +78,8 @@ jobs:
           pnpm exec vitest run \
             tests/api-mock-isolation.test.ts \
             tests/production-readiness.test.ts \
-            tests/exp-aog-focused-retest.test.ts
+            tests/exp-aog-focused-retest.test.ts \
+            tests/review-knowledge.test.ts
       - name: Production build
         working-directory: aog-web/frontend
         env:
@@ -127,6 +129,8 @@ jobs:
           test -f work/tasks/2026-08-03-exp-aog-focused-retest-r1/GOAL.md
           test -f work/tasks/2026-08-03-exp-aog-focused-retest-r1/TASK.md
           test -f work/tasks/2026-08-03-exp-aog-focused-retest-r1/PLAN.md
+          test -f work/tasks/2026-08-07-aog-knowledge-review-engine-r5/GOAL.md
+          test -f docs/LLM_WIKI_REUSE_ASSESSMENT_AOG_R5.md
 
   all-production-checks:
     name: All production checks passed

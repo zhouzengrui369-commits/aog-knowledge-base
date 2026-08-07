@@ -46,18 +46,25 @@ jobs:
           print('PUBLIC_CORE_LOCK: PASS')
           PY
 
-      - name: Verify non-destructive scope
+      - name: Verify repository and governance diff discipline
         shell: bash
         run: |
           set -euo pipefail
           git fetch --no-tags origin main:refs/remotes/origin/main
           base="$(git merge-base HEAD refs/remotes/origin/main)"
           test -n "$base"
-          echo "SCOPE_BASE=$base"
+          echo "GOAL_BASE=$base"
           git diff --check "$base...HEAD"
           changed="$(git diff --name-only "$base...HEAD")"
           printf '%s\n' "$changed"
-          if printf '%s\n' "$changed" | grep -Eq '^(aog-web/|AOG知识库/|PROJECT_STATE\.yaml$|reports/|scripts/|extractors/|tests/)'; then
-            echo 'Governance adoption touched a frozen product/data/evidence path.'
-            exit 1
-          fi
+
+          # The adoption-only workflow used to reject every product path.
+          # After adoption, product Goals are expected to change approved source
+          # paths. Persistent governance instead fails closed if the framework
+          # lock or adapter disappears, or unsafe automation policies are set.
+          test -f AGENTS.md
+          test -f PROJECT_STATUS.md
+          test -f .github/skills/chatgpt-parent-pm/SKILL.md
+          test -f .github/skills/chatgpt-parent-pm/PROJECT_PROFILE.yaml
+          test -f .github/skills/chatgpt-parent-pm/GOVERNANCE_LOCK.json
+          python validators/validate_install.py .
