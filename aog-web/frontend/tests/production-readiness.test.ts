@@ -62,12 +62,17 @@ describe("AOG production UI contracts", () => {
     expect(list).not.toContain("用 AI 总结");
   });
 
-  it("fails closed for unverified city data and defines SLA ownership", () => {
+  it("keeps pending knowledge visible while separating operational authority", () => {
     const detail = source("components/city-detail-client.tsx");
+    const candidate = source("components/candidate-city-tabs.tsx");
     const tabs = source("components/city-tabs.tsx");
-    expect(detail).toContain("数据未审核，禁止用于实际处置");
+    expect(detail).toContain("getReviewCity(found.code)");
+    expect(detail).toContain("待核验知识，可浏览 / 可供 AI 检索");
+    expect(detail).toContain("只有 VERIFIED 才能作为已确认的执行依据");
     expect(detail).toContain("执行责任方：当班航材 AOG 工程师");
     expect(detail).toContain("不代表航司、机场、供应商或本平台对外 SLA");
+    expect(candidate).toContain("待核验知识已展开");
+    expect(candidate).toContain("实际处置前需要核验");
     expect(tabs).toContain("city.data_available !== false");
     expect(tabs).toContain("重复记录已按单位、电话、邮箱和职责去重");
   });
