@@ -1,9 +1,9 @@
 """Authenticated read-only knowledge review API.
 
-R5 separates review visibility from operational eligibility. Candidate city
-content may be inspected by an authenticated reviewer without changing its
-verification status. Normal operational APIs and AI generation remain
-VERIFIED-only/fail-closed.
+R5 separates knowledge visibility/retrieval from operational verification.
+Candidate city content may be inspected by an authenticated reviewer and may be
+retrieved by authenticated AI after PII sanitization without changing its
+verification status. Only VERIFIED material is operationally authoritative.
 """
 from __future__ import annotations
 
@@ -136,16 +136,31 @@ def _review_id(city: Dict[str, Any]) -> str:
     return "review-city-" + hashlib.sha256(material.encode("utf-8")).hexdigest()[:16]
 
 
+def _has_candidate_content(city: Dict[str, Any]) -> bool:
+    return bool(
+        str(city.get("content_md") or "").strip()
+        or city.get("fleet")
+        or city.get("parts")
+        or city.get("contacts")
+        or any(str(value or "").strip() for value in (city.get("logistics") or {}).values())
+        or str((city.get("warehouse") or {}).get("location") or "").strip()
+    )
+
+
 def _review_meta(city: Dict[str, Any]) -> Dict[str, Any]:
     trust = city.get("trust") or {}
     status = normalize_review_status(trust.get("review_status"))
-    eligible = status == VERIFIED
+    operational_eligible = status == VERIFIED
+    ai_retrievable = _has_candidate_content(city)
     return {
         "review_id": _review_id(city),
         "review_status": status,
         "review_visible": True,
-        "operational_eligible": eligible,
-        "ai_eligible": eligible,
+        "operational_eligible": operational_eligible,
+        # Backward-compatible field: in R5.1 this means the knowledge can enter
+        # status-aware AI retrieval, not that it is VERIFIED operational truth.
+        "ai_eligible": ai_retrievable,
+        "ai_retrievable": ai_retrievable,
         "read_only": True,
         "source_document": trust.get("source_document"),
         "source_location": trust.get("source_location"),
@@ -157,17 +172,6 @@ def _review_meta(city: Dict[str, Any]) -> Dict[str, Any]:
         "environment": trust.get("environment"),
         "pii_classification": trust.get("pii_classification"),
     }
-
-
-def _has_candidate_content(city: Dict[str, Any]) -> bool:
-    return bool(
-        str(city.get("content_md") or "").strip()
-        or city.get("fleet")
-        or city.get("parts")
-        or city.get("contacts")
-        or any(str(value or "").strip() for value in (city.get("logistics") or {}).values())
-        or str((city.get("warehouse") or {}).get("location") or "").strip()
-    )
 
 
 def _summary(city: Dict[str, Any]) -> Dict[str, Any]:
@@ -191,6 +195,7 @@ def _summary(city: Dict[str, Any]) -> Dict[str, Any]:
         "review_visible": True,
         "operational_eligible": review["operational_eligible"],
         "ai_eligible": review["ai_eligible"],
+        "ai_retrievable": review["ai_retrievable"],
         "read_only": True,
         "has_candidate_content": _has_candidate_content(city),
     }
@@ -248,7 +253,7 @@ async def get_review_city(
             "data_available": review["operational_eligible"],
             "operational_notice": None
             if review["operational_eligible"]
-            else "候选内容仅用于审核阅读；未核验前禁止用于实际 AOG 处置或 AI 生成。",
+            else "候选内容可用于浏览和状态感知的 AI 检索；尚未 VERIFIED，实际 AOG 处置前必须核验。",
         }
     )
     return result
