@@ -9,7 +9,7 @@ roles:
   local_test_agent: codex
 
 paths:
-  active_goal: work/tasks/2026-08-07-issue12-p0-runtime-closure-r4/GOAL.md
+  active_goal: work/tasks/2026-08-07-aog-knowledge-review-engine-r5/GOAL.md
   project_status: PROJECT_STATUS.md
   legacy_engineering_state: PROJECT_STATE.yaml
   existing_ci: .github/workflows/ci.yml
@@ -37,8 +37,9 @@ owner_only_actions:
   - notarization
 
 project_invariants:
+  - pending-review content must remain browsable through an authenticated review surface
+  - only VERIFIED content may enter operational AI generation or executable guidance
   - preserve existing AOG data-governance and PII fail-closed controls
   - synthetic evidence proves code paths only and never production-data readiness
   - local deployment and Codex acceptance must bind to the same exact candidate SHA
-  - governance adoption has zero product completion weight
   - existing PROJECT_STATE.yaml is not silently replaced by this profile
