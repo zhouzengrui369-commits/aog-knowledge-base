@@ -8,84 +8,26 @@
 - Codex role: real-operation test + product-experience auditor
 - Owner role: product/data/CloudBase/release/final acceptance decisions
 
-## Active Goal
+## R4 status
 
 - Goal: `GOAL-AOG-ISSUE12-R4`
-- Contract: `work/tasks/2026-08-07-issue12-p0-runtime-closure-r4/GOAL.md`
-- Input `main`: `62d53b42e7994131a762f93db0e0410e4a917ce3`
-- Development branch: `chatgpt/issue12-p0-runtime-closure-r4`
-- Draft PR: `#15`
-- Parent issue: `#12`
-- Product weight: `0%` — safety/runtime closure, no feature completion credit
-- Status: `GITHUB_SOURCE_GATE_PASS · MINIMAX_EXACT_SHA_AUTHORIZED · CODEX_HOLD_PENDING_MINIMAX`
+- Previous candidate: `8f99777322e2a13bf5d42de31954e195d40ca967`
+- Status: `SUPERSEDED_BY_OWNER_SCOPE_UPDATE`
+- MiniMax authorization: `REVOKED`
 
-## Takeover audit and source repair
+The R4 safety fixes remain valid input to the successor, but the candidate must not be deployed independently because Owner updated product requirements before local handoff.
 
-Takeover source review found two P0 regressions on the former production path:
+## Successor requirements
 
-1. the verification policy quarantined UNVERIFIED hits, but historical `chat_safe.py` later reintroduced `raw_hits` into LLM context;
-2. provider-private `<think>` content was emitted as a public SSE event and could be rendered by the frontend.
+The next Goal must additionally:
 
-R4 adds a strict production router and switches `main.py` to it. The historical router remains in Git history for audit, but is no longer mounted as the production chat API. The frontend also discards legacy `think` events defensively.
+1. evaluate `nashsu/llm_wiki` source-level reuse for the AOG knowledge-management engine;
+2. make pending-review knowledge browsable in an authenticated, read-only review surface;
+3. preserve the strict boundary that only VERIFIED content may drive operational AI/execution;
+4. provide a practical review queue rather than hiding most of the knowledge base;
+5. treat local acceptance as the immediate deployment gate before Tencent Cloud public deployment;
+6. keep cloud writes, credentials, billing, real-data mutation, and verification decisions under explicit Owner authority.
 
-## Source Gate
+## Claim ceiling
 
-The R4 code candidate reached all-green GitHub source gates before this status transition:
-
-- parent-pm-governance: PASS;
-- production-readiness: PASS;
-- aog-ci: PASS;
-- staging-validation: PASS.
-
-Because this status update changes the branch Head, the exact deployable SHA is **not written inside this self-referential file**. Parent PM must record the final CI-green PR Head in a non-mutating PR receipt after the final workflow run. MiniMax may execute only that receipt-bound SHA.
-
-## Local execution state
-
-### MiniMax Code
-
-Authorized **after** Parent PM posts the final candidate-freeze receipt on PR #15.
-
-Read:
-
-`work/tasks/2026-08-07-issue12-p0-runtime-closure-r4/MINIMAX_DEPLOYMENT.md`
-
-MiniMax must not edit or commit source. Its PASS is deployment/technical evidence only.
-
-### Codex
-
-`HOLD_PENDING_MINIMAX_RECEIPT`
-
-Codex starts only after MiniMax returns a coherent receipt for the exact same frozen candidate.
-
-Read:
-
-`work/tasks/2026-08-07-issue12-p0-runtime-closure-r4/CODEX_FOCUSED_RETEST.md`
-
-## Current claim ceiling
-
-Still **not established**:
-
-- local exact-SHA deployment PASS;
-- Issue #12 focused runtime retest PASS;
-- VoiceOver PASS;
-- real MiniMax 20-case `0/20` PASS on the final R4 candidate;
-- CloudBase deployment;
-- production-data readiness;
-- release readiness;
-- Human Owner Gate.
-
-## Existing truth preserved
-
-`PROJECT_STATE.yaml` remains legacy engineering-version history and is not silently rewritten. Existing product-review reports, release manifests, data-governance records, PII gates and deployment scripts remain authoritative for their own evidence scopes.
-
-## Next sequence
-
-```text
-final GitHub CI on PR #15 Head
-→ Parent PM non-mutating candidate-freeze receipt
-→ MiniMax exact-SHA local deploy/technical receipt
-→ Codex same-SHA focused product retest
-→ ChatGPT forward fix if needed
-→ focused redeploy/retest
-→ Owner final gate
-```
+R4 is not a valid local/runtime/release candidate anymore. No prior R4 CI or source PASS may be reused as a deployment authorization for the successor.
