@@ -23,7 +23,7 @@ async def test_review_api_requires_authenticated_session(client, seeded_sqlite) 
 
 
 @pytest.mark.asyncio
-async def test_pending_review_list_is_browsable_but_not_operational(client, seeded_sqlite) -> None:
+async def test_pending_review_list_is_browsable_and_ai_retrievable_but_not_operational(client, seeded_sqlite) -> None:
     await _login(client)
     response = await client.get("/api/review/cities")
     assert response.status_code == 200, response.text
@@ -35,7 +35,8 @@ async def test_pending_review_list_is_browsable_but_not_operational(client, seed
     assert hel["review_status"] == "UNVERIFIED"
     assert hel["review_visible"] is True
     assert hel["operational_eligible"] is False
-    assert hel["ai_eligible"] is False
+    assert hel["ai_eligible"] is True
+    assert hel["ai_retrievable"] is True
     assert hel["read_only"] is True
     assert hel["has_candidate_content"] is True
     assert hel["review_id"].startswith("review-city-")
@@ -54,13 +55,15 @@ async def test_pending_review_detail_keeps_candidate_content_with_pii_redaction(
     assert city["review_mode"] is True
     assert city["review"]["review_status"] == "UNVERIFIED"
     assert city["review"]["operational_eligible"] is False
-    assert city["review"]["ai_eligible"] is False
+    assert city["review"]["ai_eligible"] is True
+    assert city["review"]["ai_retrievable"] is True
     assert city["review"]["read_only"] is True
     assert "国际外站" in city["content_md"]
     assert city["fleet"]
     assert city["parts"]
     assert city["logistics"]["air"] == "6h"
-    assert "仅用于审核阅读" in city["operational_notice"]
+    assert "AI 检索" in city["operational_notice"]
+    assert "实际 AOG 处置前必须核验" in city["operational_notice"]
 
     contacts = {item["org"]: item for item in city["contacts"]}
     assert contacts["Satair Finland"]["phone"] == ["REDACTED"]
@@ -123,7 +126,8 @@ async def test_review_detail_redacts_phone_and_email_from_free_text(client, seed
 
 @pytest.mark.asyncio
 async def test_operational_endpoint_still_hides_same_unverified_candidate(client, seeded_sqlite) -> None:
-    # The new review plane must not weaken the existing public/operational plane.
+    # Public/operational API stays fail-closed. The authenticated UI loads the
+    # review copy separately when the user is browsing knowledge.
     response = await client.get("/api/city/H-%E8%B5%AB%E5%B0%94%E8%BE%9B%E5%9F%BA")
     assert response.status_code == 200, response.text
     city = response.json()
