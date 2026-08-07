@@ -6,6 +6,7 @@ import pytest
 from aog_web.api import chat_safe
 from aog_web.api.chat_safe import _build_context_block, _reference_from_hit
 from aog_web.services.verification_policy import (
+    CityTrustRecord,
     RetrievalPolicyResult,
     apply_retrieval_policy,
     blocked_city_answer,
@@ -137,32 +138,130 @@ def test_context_includes_code_assigned_verification_status() -> None:
 
 
 @pytest.mark.asyncio
-async def test_unverified_stream_keeps_refs_intermediate_until_done(client, seeded_sqlite) -> None:
-    # NJX 8/4 12:02 拍板 "修报错": UNVERIFIED 城市不再 return early 阻断 grounded,
-    # fall through 到 grounded FTS5 retrieval (跟 b390629d chat.py 行为一致).
-    # 严守 PII 风险: LLM context 只含 VERIFIED eligible hits (annotation_hit 强制 verification_status=VERIFIED).
-    # Test 仍验证: phase 顺序 queued → retrieving → refs → generating → token → done, 没 error.
+async def test_unverified_stream_returns_policy_boundary_without_model(
+    client, monkeypatch
+) -> None:
+    sensitive = "未核验内部保障能力 SECRET-R4"
+    raw_hit = _hit("city", "U-测试丙", sensitive)
+    policy = RetrievalPolicyResult(
+        hits=[],
+        blocked_targets=[
+            CityTrustRecord(
+                code="U-测试丙",
+                name="测试丙",
+                iata="TCC",
+                pinyin="测试丙",
+                review_status="UNVERIFIED",
+            )
+        ],
+        target_codes=["U-测试丙"],
+        quarantined_count=1,
+    )
+
+    async def fake_policy(request, body):
+        return [raw_hit], policy
+
+    def forbidden_llm(*args, **kwargs):
+        raise AssertionError("LLM must not be created for an UNVERIFIED target")
+
+    monkeypatch.setattr(chat_safe, "_retrieve_with_policy", fake_policy)
+    monkeypatch.setattr(chat_safe, "get_llm", forbidden_llm)
+
     response = await client.post(
-        "/api/chat/stream",
-        json={"q": "上海浦东 AOG 如何处置"},
+        "/api/chat/stream", json={"q": "测试丙 AOG 如何处置"}
     )
     assert response.status_code == 200
     stream = response.text
-    markers = [
-        '"phase": "queued"',
-        '"phase": "retrieving"',
-        "event: refs",
-        '"phase": "generating"',
-        "event: token",
-        '"phase": "done"',
-        "event: done",
-    ]
-    positions = [stream.find(marker) for marker in markers]
-    assert all(position >= 0 for position in positions), stream[:1000]
-    assert positions == sorted(positions)
-    # R3 commit 3 (NJX 12:02 拍板) 后: UNVERIFIED 走 grounded, 不再返 "UNVERIFIED / 不可用于操作" 边界答案
-    # 仍验证 grounded 流完整性: phase 顺序 + token 事件 + 没 error
+    assert "UNVERIFIED / 不可用于操作" in stream
+    assert sensitive not in stream
+    assert "event: think" not in stream
+    assert "event: done" in stream
     assert "event: error" not in stream
+
+
+@pytest.mark.asyncio
+async def test_mixed_retrieval_sends_only_verified_hits_to_model(
+    client, monkeypatch
+) -> None:
+    secret = "UNVERIFIED-SECRET-R4"
+    unverified = _hit("city", "U-测试丙", secret)
+    verified = _hit("experience", "exp-verified", "VERIFIED-CONTENT-R4")
+    verified["metadata"]["verification_status"] = "VERIFIED"
+    policy = RetrievalPolicyResult(
+        hits=[verified],
+        blocked_targets=[],
+        target_codes=[],
+        quarantined_count=1,
+    )
+    captured: list[dict] = []
+
+    async def fake_policy(request, body):
+        return [unverified, verified], policy
+
+    class CapturingLLM:
+        model = "fixture-live-provider"
+
+        async def chat(self, messages, **kwargs):
+            captured.extend(messages)
+            return "## 已核验答案\n\n仅依据已核验资料。"
+
+        async def close(self):
+            return None
+
+    monkeypatch.setattr(chat_safe, "_retrieve_with_policy", fake_policy)
+    monkeypatch.setattr(chat_safe, "get_llm", lambda settings: CapturingLLM())
+
+    response = await client.post("/api/chat", json={"q": "一般保障问题"})
+    assert response.status_code == 200
+    sent = "\n".join(str(item.get("content") or "") for item in captured)
+    assert "VERIFIED-CONTENT-R4" in sent
+    assert secret not in sent
+    assert response.json()["references"][0]["verification_status"] == "VERIFIED"
+
+
+@pytest.mark.asyncio
+async def test_provider_private_reasoning_never_leaves_stream(
+    client, monkeypatch
+) -> None:
+    verified = _hit("experience", "exp-verified", "VERIFIED-CONTENT-R4")
+    verified["metadata"]["verification_status"] = "VERIFIED"
+    policy = RetrievalPolicyResult(
+        hits=[verified],
+        blocked_targets=[],
+        target_codes=[],
+        quarantined_count=0,
+    )
+
+    async def fake_policy(request, body):
+        return [verified], policy
+
+    class ReasoningLLM:
+        model = "fixture-live-provider"
+
+        async def stream_chat(self, messages, **kwargs):
+            for chunk in (
+                "<thi",
+                "nk>PRIVATE-CHAIN-OF-THOUGHT-R4",
+                "</thi",
+                "nk>## 已核验答案\n\n",
+                "公开内容。",
+            ):
+                yield chunk
+
+        async def close(self):
+            return None
+
+    monkeypatch.setattr(chat_safe, "_retrieve_with_policy", fake_policy)
+    monkeypatch.setattr(chat_safe, "get_llm", lambda settings: ReasoningLLM())
+
+    response = await client.post("/api/chat/stream", json={"q": "一般保障问题"})
+    assert response.status_code == 200
+    stream = response.text
+    assert "PRIVATE-CHAIN-OF-THOUGHT-R4" not in stream
+    assert "event: think" not in stream
+    assert "已核验答案" in stream
+    assert "公开内容" in stream
+    assert "event: done" in stream
 
 
 @pytest.mark.asyncio
@@ -173,7 +272,7 @@ async def test_stream_error_is_terminal_and_never_followed_by_done(
     verified_hit["metadata"]["verification_status"] = "VERIFIED"
 
     async def fake_policy(request, body):
-        return RetrievalPolicyResult(
+        return [verified_hit], RetrievalPolicyResult(
             hits=[verified_hit],
             blocked_targets=[],
             target_codes=[],
